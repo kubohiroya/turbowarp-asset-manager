@@ -1,3 +1,5 @@
+import definitions from './block-definitions.json' with {type: 'json'};
+
 export const EXTENSION_ID = 'twAssetManager';
 export const EXTENSION_VERSION = '2026-07-02-fixed-2-ts';
 
@@ -6,8 +8,19 @@ const DB_VERSION = 1;
 const STORE_NAME = 'assets';
 
 type BlockArgs = Record<string, unknown>;
+type BlockTypeName = 'COMMAND' | 'BOOLEAN' | 'REPORTER';
+interface DefinitionArgument { type: 'STRING'; defaultValue: string; }
+interface DefinitionBlock {
+  opcode: string;
+  blockType: BlockTypeName;
+  text: string;
+  description: string;
+  arguments: Record<string, DefinitionArgument>;
+}
 interface AssetRecord { name: string; url: string; mimeType: string; data: ArrayBuffer; cachedAt: number; }
 interface MemoryAsset extends AssetRecord { skinId: number | null; }
+
+const blockDefinitions = definitions.blocks as readonly DefinitionBlock[];
 
 export function normalizeName(value: unknown): string {
   return String(value ?? '').trim();
@@ -38,28 +51,11 @@ export class AssetManagerExtension {
   private readonly playingAudio = new Set<HTMLAudioElement>();
 
   getInfo() {
-    const t = Scratch.translate;
-    const command = Scratch.BlockType.COMMAND;
-    const string = Scratch.ArgumentType.STRING;
     return {
       id: EXTENSION_ID,
-      name: t('Asset Manager'),
+      name: Scratch.translate(definitions.extensionName),
       color1: '#5b7cfa', color2: '#425ed8', color3: '#2f46aa',
-      blocks: [
-        {opcode: 'loadAsset', blockType: command, text: t('load asset from URL [URL] or cache as [NAME]'), arguments: {URL: {type: string, defaultValue: 'https://example.com/asset.png'}, NAME: {type: string, defaultValue: 'asset1'}}},
-        {opcode: 'deleteMemoryAsset', blockType: command, text: t('delete asset [NAME] from memory'), arguments: {NAME: {type: string, defaultValue: 'asset1'}}},
-        {opcode: 'deleteAllMemoryAssets', blockType: command, text: t('delete all assets from memory')},
-        {opcode: 'deleteCachedAsset', blockType: command, text: t('delete asset [NAME] from cache'), arguments: {NAME: {type: string, defaultValue: 'asset1'}}},
-        {opcode: 'deleteAllCachedAssets', blockType: command, text: t('delete all assets from cache')},
-        {opcode: 'isLoaded', blockType: Scratch.BlockType.BOOLEAN, text: t('asset [NAME] is loaded'), arguments: {NAME: {type: string, defaultValue: 'asset1'}}},
-        {opcode: 'setThisSpriteSkin', blockType: command, text: t('set this sprite skin to asset [NAME]'), arguments: {NAME: {type: string, defaultValue: 'asset1'}}},
-        {opcode: 'setSpriteSkin', blockType: command, text: t('set [SPRITE] skin to asset [NAME] (compatibility)'), arguments: {SPRITE: {type: string, defaultValue: 'Sprite1'}, NAME: {type: string, defaultValue: 'asset1'}}},
-        {opcode: 'setStageSkin', blockType: command, text: t('set stage backdrop to asset [NAME]'), arguments: {NAME: {type: string, defaultValue: 'background1'}}},
-        {opcode: 'playSound', blockType: command, text: t('play asset [NAME] as sound'), arguments: {NAME: {type: string, defaultValue: 'sound1'}}},
-        {opcode: 'playSoundUntilDone', blockType: command, text: t('play asset [NAME] as sound until done'), arguments: {NAME: {type: string, defaultValue: 'sound1'}}},
-        {opcode: 'getAssetMimeType', blockType: Scratch.BlockType.REPORTER, text: t('MIME type of asset [NAME]'), arguments: {NAME: {type: string, defaultValue: 'asset1'}}},
-        {opcode: 'getVersion', blockType: Scratch.BlockType.REPORTER, text: t('Asset Manager version')}
-      ]
+      blocks: blockDefinitions.map((block) => this.toScratchBlock(block))
     };
   }
 
@@ -120,6 +116,27 @@ export class AssetManagerExtension {
     return asset ? normalizeMimeType(asset.mimeType, asset.url || name) : '';
   }
   getVersion(): string { return EXTENSION_VERSION; }
+
+  private toScratchBlock(block: DefinitionBlock): Record<string, unknown> {
+    return {
+      opcode: block.opcode,
+      blockType: Scratch.BlockType[block.blockType],
+      text: Scratch.translate(block.text),
+      ...(Object.keys(block.arguments).length > 0
+        ? {
+            arguments: Object.fromEntries(
+              Object.entries(block.arguments).map(([name, argument]) => [
+                name,
+                {
+                  type: Scratch.ArgumentType[argument.type],
+                  defaultValue: argument.defaultValue
+                }
+              ])
+            )
+          }
+        : {})
+    };
+  }
 
   private openDatabase(): Promise<IDBDatabase> {
     return new Promise((resolve, reject) => {
