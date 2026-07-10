@@ -8,7 +8,9 @@
     "typecheck": "tsc --noEmit",
     "build": "vite build",
     "test": "vitest run",
-    "check": "npm run typecheck && npm run test && npm run build"
+    "docs": "node scripts/generate-readme.mjs",
+    "docs:check": "npm run docs && git diff --exit-code -- README.md",
+    "check": "npm run typecheck && npm run test && npm run build && npm run docs:check"
   },
   "devDependencies": {
     "@kubohiroya/vite-plugin-turbowarp-extension": "github:kubohiroya/vite-plugin-turbowarp-extension#a96b1ad92a5b9954d99c68b5e4a318c0722ec9e6",
