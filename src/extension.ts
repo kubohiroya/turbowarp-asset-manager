@@ -5,45 +5,30 @@ const DB_NAME = 'tw-asset-manager';
 const DB_VERSION = 1;
 const STORE_NAME = 'assets';
 
-interface AssetRecord {
-  name: string;
-  url: string;
-  mimeType: string;
-  data: ArrayBuffer;
-  cachedAt: number;
-}
-
-interface MemoryAsset extends AssetRecord {
-  skinId: number | null;
-}
-
 type BlockArgs = Record<string, unknown>;
+interface AssetRecord { name: string; url: string; mimeType: string; data: ArrayBuffer; cachedAt: number; }
+interface MemoryAsset extends AssetRecord { skinId: number | null; }
 
 export function normalizeName(value: unknown): string {
   return String(value ?? '').trim();
 }
 
-export function guessMimeType(urlOrName: unknown): string {
-  const value = String(urlOrName ?? '').toLowerCase().split('?')[0]?.split('#')[0] ?? '';
-  if (value.endsWith('.svg')) return 'image/svg+xml';
-  if (value.endsWith('.png')) return 'image/png';
-  if (value.endsWith('.jpg') || value.endsWith('.jpeg')) return 'image/jpeg';
-  if (value.endsWith('.webp')) return 'image/webp';
-  if (value.endsWith('.gif')) return 'image/gif';
-  if (value.endsWith('.mp3')) return 'audio/mpeg';
-  if (value.endsWith('.wav')) return 'audio/wav';
-  if (value.endsWith('.ogg')) return 'audio/ogg';
-  if (value.endsWith('.m4a')) return 'audio/mp4';
-  if (value.endsWith('.aac')) return 'audio/aac';
-  return 'application/octet-stream';
+export function guessMimeType(value: unknown): string {
+  const name = String(value ?? '').toLowerCase().split('?')[0]?.split('#')[0] ?? '';
+  const types: Array<[string[], string]> = [
+    [['.svg'], 'image/svg+xml'], [['.png'], 'image/png'], [['.jpg', '.jpeg'], 'image/jpeg'],
+    [['.webp'], 'image/webp'], [['.gif'], 'image/gif'], [['.mp3'], 'audio/mpeg'],
+    [['.wav'], 'audio/wav'], [['.ogg'], 'audio/ogg'], [['.m4a'], 'audio/mp4'], [['.aac'], 'audio/aac']
+  ];
+  return types.find(([extensions]) => extensions.some((extension) => name.endsWith(extension)))?.[1]
+    ?? 'application/octet-stream';
 }
 
 export function normalizeMimeType(mimeType: unknown, urlOrName: unknown): string {
   const raw = String(mimeType ?? '').split(';')[0]?.trim().toLowerCase() ?? '';
-  if (!raw || raw === 'application/octet-stream' || raw === 'binary/octet-stream') {
-    return guessMimeType(urlOrName);
-  }
-  return raw;
+  return !raw || raw === 'application/octet-stream' || raw === 'binary/octet-stream'
+    ? guessMimeType(urlOrName)
+    : raw;
 }
 
 export class AssetManagerExtension {
@@ -53,28 +38,27 @@ export class AssetManagerExtension {
   private readonly playingAudio = new Set<HTMLAudioElement>();
 
   getInfo() {
+    const t = Scratch.translate;
     const command = Scratch.BlockType.COMMAND;
     const string = Scratch.ArgumentType.STRING;
     return {
       id: EXTENSION_ID,
-      name: 'Asset Manager',
-      color1: '#5b7cfa',
-      color2: '#425ed8',
-      color3: '#2f46aa',
+      name: t('Asset Manager'),
+      color1: '#5b7cfa', color2: '#425ed8', color3: '#2f46aa',
       blocks: [
-        {opcode: 'loadAsset', blockType: command, text: 'アセットをURL [URL] またはキャッシュから [NAME] として読み込む', arguments: {URL: {type: string, defaultValue: 'https://example.com/asset.png'}, NAME: {type: string, defaultValue: 'asset1'}}},
-        {opcode: 'deleteMemoryAsset', blockType: command, text: 'アセット [NAME] をメモリから削除する', arguments: {NAME: {type: string, defaultValue: 'asset1'}}},
-        {opcode: 'deleteAllMemoryAssets', blockType: command, text: 'アセットをメモリから全て削除する'},
-        {opcode: 'deleteCachedAsset', blockType: command, text: 'アセット [NAME] をキャッシュから削除する', arguments: {NAME: {type: string, defaultValue: 'asset1'}}},
-        {opcode: 'deleteAllCachedAssets', blockType: command, text: 'アセットをキャッシュから全て削除する'},
-        {opcode: 'isLoaded', blockType: Scratch.BlockType.BOOLEAN, text: 'アセット [NAME] が読み込まれた', arguments: {NAME: {type: string, defaultValue: 'asset1'}}},
-        {opcode: 'setThisSpriteSkin', blockType: command, text: 'このスプライトの見た目をアセット [NAME] にする', arguments: {NAME: {type: string, defaultValue: 'asset1'}}},
-        {opcode: 'setSpriteSkin', blockType: command, text: '[SPRITE] の見た目をアセット [NAME] にする（互換用）', arguments: {SPRITE: {type: string, defaultValue: 'Sprite1'}, NAME: {type: string, defaultValue: 'asset1'}}},
-        {opcode: 'setStageSkin', blockType: command, text: 'ステージの背景をアセット [NAME] にする', arguments: {NAME: {type: string, defaultValue: 'background1'}}},
-        {opcode: 'playSound', blockType: command, text: 'サウンドとしてアセット [NAME] を鳴らす', arguments: {NAME: {type: string, defaultValue: 'sound1'}}},
-        {opcode: 'playSoundUntilDone', blockType: command, text: 'サウンドとしてアセット [NAME] を終わるまで鳴らす', arguments: {NAME: {type: string, defaultValue: 'sound1'}}},
-        {opcode: 'getAssetMimeType', blockType: Scratch.BlockType.REPORTER, text: 'アセット [NAME] のMIMEタイプ', arguments: {NAME: {type: string, defaultValue: 'asset1'}}},
-        {opcode: 'getVersion', blockType: Scratch.BlockType.REPORTER, text: 'Asset Manager バージョン'}
+        {opcode: 'loadAsset', blockType: command, text: t('load asset from URL [URL] or cache as [NAME]'), arguments: {URL: {type: string, defaultValue: 'https://example.com/asset.png'}, NAME: {type: string, defaultValue: 'asset1'}}},
+        {opcode: 'deleteMemoryAsset', blockType: command, text: t('delete asset [NAME] from memory'), arguments: {NAME: {type: string, defaultValue: 'asset1'}}},
+        {opcode: 'deleteAllMemoryAssets', blockType: command, text: t('delete all assets from memory')},
+        {opcode: 'deleteCachedAsset', blockType: command, text: t('delete asset [NAME] from cache'), arguments: {NAME: {type: string, defaultValue: 'asset1'}}},
+        {opcode: 'deleteAllCachedAssets', blockType: command, text: t('delete all assets from cache')},
+        {opcode: 'isLoaded', blockType: Scratch.BlockType.BOOLEAN, text: t('asset [NAME] is loaded'), arguments: {NAME: {type: string, defaultValue: 'asset1'}}},
+        {opcode: 'setThisSpriteSkin', blockType: command, text: t('set this sprite skin to asset [NAME]'), arguments: {NAME: {type: string, defaultValue: 'asset1'}}},
+        {opcode: 'setSpriteSkin', blockType: command, text: t('set [SPRITE] skin to asset [NAME] (compatibility)'), arguments: {SPRITE: {type: string, defaultValue: 'Sprite1'}, NAME: {type: string, defaultValue: 'asset1'}}},
+        {opcode: 'setStageSkin', blockType: command, text: t('set stage backdrop to asset [NAME]'), arguments: {NAME: {type: string, defaultValue: 'background1'}}},
+        {opcode: 'playSound', blockType: command, text: t('play asset [NAME] as sound'), arguments: {NAME: {type: string, defaultValue: 'sound1'}}},
+        {opcode: 'playSoundUntilDone', blockType: command, text: t('play asset [NAME] as sound until done'), arguments: {NAME: {type: string, defaultValue: 'sound1'}}},
+        {opcode: 'getAssetMimeType', blockType: Scratch.BlockType.REPORTER, text: t('MIME type of asset [NAME]'), arguments: {NAME: {type: string, defaultValue: 'asset1'}}},
+        {opcode: 'getVersion', blockType: Scratch.BlockType.REPORTER, text: t('Asset Manager version')}
       ]
     };
   }
@@ -83,19 +67,11 @@ export class AssetManagerExtension {
     const name = normalizeName(args.NAME);
     const url = normalizeName(args.URL);
     if (!name) throw new Error('Asset name is empty.');
-
-    let record: AssetRecord | null;
-    if (url) {
-      const fetched = await this.fetchAsset(url, name);
-      record = {name, url, mimeType: fetched.mimeType, data: fetched.data, cachedAt: Date.now()};
-      await this.cachePut(record);
-    } else {
-      record = await this.cacheGet(name);
-      if (!record) throw new Error(`Asset is not cached and URL is empty: ${name}`);
-    }
-
-    const oldAsset = this.memoryAssets.get(name);
-    this.deleteSkinIfExists(oldAsset);
+    const record = url
+      ? await this.fetchAndCache(url, name)
+      : await this.cacheGet(name);
+    if (!record) throw new Error(`Asset is not cached and URL is empty: ${name}`);
+    this.deleteSkinIfExists(this.memoryAssets.get(name));
     this.memoryAssets.set(name, {...record, mimeType: normalizeMimeType(record.mimeType, record.url || name), skinId: null});
   }
 
@@ -114,17 +90,9 @@ export class AssetManagerExtension {
     this.playingAudio.clear();
   }
 
-  async deleteCachedAsset(args: BlockArgs): Promise<void> {
-    await this.cacheDelete(normalizeName(args.NAME));
-  }
-
-  async deleteAllCachedAssets(): Promise<void> {
-    await this.cacheClear();
-  }
-
-  isLoaded(args: BlockArgs): boolean {
-    return this.memoryAssets.has(normalizeName(args.NAME));
-  }
+  async deleteCachedAsset(args: BlockArgs): Promise<void> { await this.cacheDelete(normalizeName(args.NAME)); }
+  async deleteAllCachedAssets(): Promise<void> { await this.cacheClear(); }
+  isLoaded(args: BlockArgs): boolean { return this.memoryAssets.has(normalizeName(args.NAME)); }
 
   async setThisSpriteSkin(args: BlockArgs, util: ScratchBlockUtility): Promise<void> {
     if (!util.target || util.target.isStage) throw new Error('This block must be used on a sprite or its clone.');
@@ -132,9 +100,9 @@ export class AssetManagerExtension {
   }
 
   async setSpriteSkin(args: BlockArgs): Promise<void> {
-    const spriteName = normalizeName(args.SPRITE);
-    const target = this.findTargetByName(spriteName);
-    if (!target) throw new Error(`Sprite not found: ${spriteName}`);
+    const name = normalizeName(args.SPRITE);
+    const target = this.findTargetByName(name);
+    if (!target) throw new Error(`Sprite not found: ${name}`);
     this.applySkinToTarget(target, await this.ensureSkin(args.NAME));
   }
 
@@ -144,78 +112,49 @@ export class AssetManagerExtension {
     this.applySkinToTarget(stage, await this.ensureSkin(args.NAME));
   }
 
-  async playSound(args: BlockArgs): Promise<void> {
-    await this.playSoundAsset(args.NAME, false);
-  }
-
-  async playSoundUntilDone(args: BlockArgs): Promise<void> {
-    await this.playSoundAsset(args.NAME, true);
-  }
-
+  async playSound(args: BlockArgs): Promise<void> { await this.playSoundAsset(args.NAME, false); }
+  async playSoundUntilDone(args: BlockArgs): Promise<void> { await this.playSoundAsset(args.NAME, true); }
   getAssetMimeType(args: BlockArgs): string {
     const name = normalizeName(args.NAME);
     const asset = this.memoryAssets.get(name);
     return asset ? normalizeMimeType(asset.mimeType, asset.url || name) : '';
   }
-
-  getVersion(): string {
-    return EXTENSION_VERSION;
-  }
+  getVersion(): string { return EXTENSION_VERSION; }
 
   private openDatabase(): Promise<IDBDatabase> {
     return new Promise((resolve, reject) => {
       const request = indexedDB.open(DB_NAME, DB_VERSION);
       request.onupgradeneeded = () => {
-        if (!request.result.objectStoreNames.contains(STORE_NAME)) {
-          request.result.createObjectStore(STORE_NAME, {keyPath: 'name'});
-        }
+        if (!request.result.objectStoreNames.contains(STORE_NAME)) request.result.createObjectStore(STORE_NAME, {keyPath: 'name'});
       };
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error);
     });
   }
 
-  private async cacheGet(name: string): Promise<AssetRecord | null> {
+  private async transaction<T>(mode: IDBTransactionMode, action: (store: IDBObjectStore) => IDBRequest<T>): Promise<T> {
     const database = await this.openDatabase();
     return new Promise((resolve, reject) => {
-      const request = database.transaction(STORE_NAME, 'readonly').objectStore(STORE_NAME).get(name);
-      request.onsuccess = () => resolve((request.result as AssetRecord | undefined) ?? null);
+      const request = action(database.transaction(STORE_NAME, mode).objectStore(STORE_NAME));
+      request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error);
     });
   }
 
-  private async cachePut(record: AssetRecord): Promise<void> {
-    const database = await this.openDatabase();
-    await new Promise<void>((resolve, reject) => {
-      const request = database.transaction(STORE_NAME, 'readwrite').objectStore(STORE_NAME).put(record);
-      request.onsuccess = () => resolve();
-      request.onerror = () => reject(request.error);
-    });
+  private async cacheGet(name: string): Promise<AssetRecord | null> {
+    return (await this.transaction<AssetRecord | undefined>('readonly', (store) => store.get(name))) ?? null;
   }
+  private async cachePut(record: AssetRecord): Promise<void> { await this.transaction('readwrite', (store) => store.put(record)); }
+  private async cacheDelete(name: string): Promise<void> { await this.transaction('readwrite', (store) => store.delete(name)); }
+  private async cacheClear(): Promise<void> { await this.transaction('readwrite', (store) => store.clear()); }
 
-  private async cacheDelete(name: string): Promise<void> {
-    const database = await this.openDatabase();
-    await new Promise<void>((resolve, reject) => {
-      const request = database.transaction(STORE_NAME, 'readwrite').objectStore(STORE_NAME).delete(name);
-      request.onsuccess = () => resolve();
-      request.onerror = () => reject(request.error);
-    });
-  }
-
-  private async cacheClear(): Promise<void> {
-    const database = await this.openDatabase();
-    await new Promise<void>((resolve, reject) => {
-      const request = database.transaction(STORE_NAME, 'readwrite').objectStore(STORE_NAME).clear();
-      request.onsuccess = () => resolve();
-      request.onerror = () => reject(request.error);
-    });
-  }
-
-  private async fetchAsset(url: string, name: string): Promise<{mimeType: string; data: ArrayBuffer}> {
+  private async fetchAndCache(url: string, name: string): Promise<AssetRecord> {
     const response = await fetch(url);
     if (!response.ok) throw new Error(`Failed to fetch asset "${name}": ${response.status} ${response.statusText}`);
     const blob = await response.blob();
-    return {mimeType: normalizeMimeType(blob.type || response.headers.get('Content-Type'), url), data: await blob.arrayBuffer()};
+    const record = {name, url, mimeType: normalizeMimeType(blob.type || response.headers.get('Content-Type'), url), data: await blob.arrayBuffer(), cachedAt: Date.now()};
+    await this.cachePut(record);
+    return record;
   }
 
   private findTargetByName(name: string): TurboWarpTarget | null {
@@ -232,7 +171,6 @@ export class AssetManagerExtension {
     asset.mimeType = normalizeMimeType(asset.mimeType, asset.url || name);
     if (!asset.mimeType.startsWith('image/')) throw new Error(`Asset is not an image: ${name} (${asset.mimeType})`);
     if (asset.skinId !== null) return asset.skinId;
-
     const blob = new Blob([asset.data], {type: asset.mimeType});
     asset.skinId = asset.mimeType === 'image/svg+xml'
       ? this.renderer.createSVGSkin(await blob.text())
@@ -247,9 +185,7 @@ export class AssetManagerExtension {
   }
 
   private applySkinToTarget(target: TurboWarpTarget, skinId: number): void {
-    if (target.drawableID === undefined || target.drawableID === null) {
-      throw new Error(`Target drawable not found: ${target.sprite?.name ?? 'unknown'}`);
-    }
+    if (target.drawableID === undefined || target.drawableID === null) throw new Error(`Target drawable not found: ${target.sprite?.name ?? 'unknown'}`);
     this.renderer.updateDrawableSkinId(target.drawableID, skinId);
     target.emitVisualChange?.();
     this.runtime.requestRedraw?.();
@@ -261,7 +197,6 @@ export class AssetManagerExtension {
     if (!asset) throw new Error(`Asset is not loaded: ${name}`);
     asset.mimeType = normalizeMimeType(asset.mimeType, asset.url || name);
     if (!asset.mimeType.startsWith('audio/')) throw new Error(`Asset is not audio: ${name} (${asset.mimeType})`);
-
     const objectUrl = URL.createObjectURL(new Blob([asset.data], {type: asset.mimeType}));
     const audio = new Audio(objectUrl);
     this.playingAudio.add(audio);
