@@ -2,7 +2,6 @@
   "name": "@kubohiroya/turbowarp-asset-manager",
   "version": "0.1.0",
   "author": "Hiroya Kubo <hiroya@cuc.ac.jp>",
-  "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite build --watch",
