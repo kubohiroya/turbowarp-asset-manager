@@ -1,0 +1,2 @@
+minimumReleaseAgeExclude:
+  - '@kubohiroya/vite-plugin-turbowarp-extension@0.1.0'
