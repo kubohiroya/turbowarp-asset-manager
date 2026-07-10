@@ -1,0 +1,18 @@
+{
+  "extensionName": "Asset Manager",
+  "blocks": [
+    {"opcode":"loadAsset","blockType":"COMMAND","text":"load asset from URL [URL] or cache as [NAME]","description":"Loads an image or audio asset from the supplied URL, or from IndexedDB when the URL is empty.","arguments":{"URL":{"type":"STRING","defaultValue":"https://example.com/asset.png"},"NAME":{"type":"STRING","defaultValue":"asset1"}}},
+    {"opcode":"deleteMemoryAsset","blockType":"COMMAND","text":"delete asset [NAME] from memory","description":"Removes one loaded asset from memory and releases any associated renderer skin.","arguments":{"NAME":{"type":"STRING","defaultValue":"asset1"}}},
+    {"opcode":"deleteAllMemoryAssets","blockType":"COMMAND","text":"delete all assets from memory","description":"Removes all loaded assets from memory and stops tracked audio playback.","arguments":{}},
+    {"opcode":"deleteCachedAsset","blockType":"COMMAND","text":"delete asset [NAME] from cache","description":"Deletes one named asset from the IndexedDB cache.","arguments":{"NAME":{"type":"STRING","defaultValue":"asset1"}}},
+    {"opcode":"deleteAllCachedAssets","blockType":"COMMAND","text":"delete all assets from cache","description":"Clears all assets from the IndexedDB cache.","arguments":{}},
+    {"opcode":"isLoaded","blockType":"BOOLEAN","text":"asset [NAME] is loaded","description":"Returns whether the named asset is currently loaded in memory.","arguments":{"NAME":{"type":"STRING","defaultValue":"asset1"}}},
+    {"opcode":"setThisSpriteSkin","blockType":"COMMAND","text":"set this sprite skin to asset [NAME]","description":"Applies a loaded image asset to the current sprite or clone.","arguments":{"NAME":{"type":"STRING","defaultValue":"asset1"}}},
+    {"opcode":"setSpriteSkin","blockType":"COMMAND","text":"set [SPRITE] skin to asset [NAME] (compatibility)","description":"Applies a loaded image asset to a named sprite. This block is retained for compatibility.","arguments":{"SPRITE":{"type":"STRING","defaultValue":"Sprite1"},"NAME":{"type":"STRING","defaultValue":"asset1"}}},
+    {"opcode":"setStageSkin","blockType":"COMMAND","text":"set stage backdrop to asset [NAME]","description":"Applies a loaded image asset to the stage drawable.","arguments":{"NAME":{"type":"STRING","defaultValue":"background1"}}},
+    {"opcode":"playSound","blockType":"COMMAND","text":"play asset [NAME] as sound","description":"Starts playback of a loaded audio asset without waiting for completion.","arguments":{"NAME":{"type":"STRING","defaultValue":"sound1"}}},
+    {"opcode":"playSoundUntilDone","blockType":"COMMAND","text":"play asset [NAME] as sound until done","description":"Plays a loaded audio asset and waits until playback ends or fails.","arguments":{"NAME":{"type":"STRING","defaultValue":"sound1"}}},
+    {"opcode":"getAssetMimeType","blockType":"REPORTER","text":"MIME type of asset [NAME]","description":"Returns the normalized MIME type of a loaded asset.","arguments":{"NAME":{"type":"STRING","defaultValue":"asset1"}}},
+    {"opcode":"getVersion","blockType":"REPORTER","text":"Asset Manager version","description":"Returns the Asset Manager implementation version.","arguments":{}}
+  ]
+}
