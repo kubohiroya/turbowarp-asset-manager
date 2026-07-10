@@ -1,0 +1,28 @@
+name: Render extension icon
+
+on:
+  push:
+    branches: [docs/add-extension-icon]
+    paths:
+      - assets/extension-icon.svg
+      - .github/workflows/render-icon.yml
+
+permissions:
+  contents: write
+
+jobs:
+  render:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: docs/add-extension-icon
+      - run: sudo apt-get update && sudo apt-get install -y librsvg2-bin
+      - run: rsvg-convert -w 600 -h 300 assets/extension-icon.svg -o assets/extension-icon.png
+      - run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add assets/extension-icon.png
+          git diff --cached --quiet || git commit -m "Add PNG icon preview"
+          git push
