@@ -18,10 +18,15 @@ interface TurboWarpRuntime {
   requestRedraw?(): void;
 }
 interface ScratchBlockUtility { target: TurboWarpTarget; }
+interface ScratchTranslate {
+  (text: string): string;
+  (message: {default: string; description?: string}, placeholders?: Record<string, string | number>): string;
+}
 interface ScratchApi {
   extensions: { unsandboxed: boolean; register(extension: unknown): void };
   BlockType: Record<'COMMAND' | 'BOOLEAN' | 'REPORTER', string>;
   ArgumentType: Record<'STRING', string>;
+  translate: ScratchTranslate;
   vm: { runtime: TurboWarpRuntime };
 }
 declare const Scratch: ScratchApi;
