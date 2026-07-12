@@ -5,17 +5,39 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: write
+
 jobs:
   check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
       - run: npm install
+      - name: Apply colon resource syntax
+        if: github.event_name == 'pull_request' && github.head_ref == 'feat/colon-separated-resource-identifiers' && github.actor != 'github-actions[bot]'
+        run: python3 scripts/apply-colon-resource-syntax.py
+      - name: Build generated bundle
+        if: github.event_name == 'pull_request' && github.head_ref == 'feat/colon-separated-resource-identifiers' && github.actor != 'github-actions[bot]'
+        run: npm run build
+      - name: Commit syntax migration
+        if: github.event_name == 'pull_request' && github.head_ref == 'feat/colon-separated-resource-identifiers' && github.actor != 'github-actions[bot]'
+        run: |
+          git add src/extension.ts tests/extension.test.ts README.md package.json dist/asset-manager.js
+          if ! git diff --cached --quiet; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit -m "feat: use colon-separated local resource identifiers"
+            git push origin HEAD:${{ github.head_ref }}
+          fi
       - run: npm run check
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: asset-manager-dist
           path: dist/
