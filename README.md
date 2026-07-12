@@ -2,6 +2,12 @@
 
 An IndexedDB-backed image and audio asset manager for TurboWarp projects. It can also register costumes, stage backdrops, and sounds already stored in the current `.sb3` project.
 
+## Installation
+
+Download [`dist/asset-manager.js`](dist/asset-manager.js), then open TurboWarp Desktop and load it as a local custom extension. Enable **Run extension without sandbox** when prompted.
+
+The built JavaScript file is committed to this repository so that users do not need to install Node.js or run the build process.
+
 ## Features
 
 - register external image and audio URLs;
@@ -192,7 +198,7 @@ Regenerate block documentation after changing `src/block-definitions.json`:
 npm run docs
 ```
 
-The build produces `dist/asset-manager.js`.
+The build produces `dist/asset-manager.js`. Commit the rebuilt file whenever the extension source changes.
 
 This extension accesses TurboWarp VM and renderer internals and must be loaded unsandboxed.
 
