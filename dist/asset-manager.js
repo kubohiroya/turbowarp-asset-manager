@@ -17,7 +17,7 @@
     blocks
   };
   const EXTENSION_ID = "twAssetManager";
-  const EXTENSION_VERSION = "2026-07-12-project-local-assets";
+  const EXTENSION_VERSION = "2026-07-12-colon-resource-identifiers";
   const DB_NAME = "tw-asset-manager";
   const DB_VERSION = 1;
   const STORE_NAME = "assets";
@@ -58,31 +58,36 @@
     const payload = resourceId.slice(separatorIndex + 1).trim();
     switch (scheme) {
       case "costume": {
-        const [spriteName, costumeName] = splitSourceAndAssetName(payload, "costume");
+        const [spriteName, costumeName] = splitLocalResourcePair(payload, "costume");
         return { kind: "costume", spriteName, costumeName };
       }
       case "background": {
-        if (!payload) throw new Error("Background name is empty.");
-        return { kind: "background", backgroundName: payload };
+        return { kind: "background", backgroundName: parseLocalResourceName(payload, "Background") };
       }
       case "sound": {
-        const [spriteName, soundName] = splitSourceAndAssetName(payload, "sound");
+        const [spriteName, soundName] = splitLocalResourcePair(payload, "sound");
         return { kind: "sound", spriteName, soundName };
       }
       default:
         throw new Error(`Unsupported resource scheme: ${scheme}`);
     }
   }
-  function splitSourceAndAssetName(payload, scheme) {
-    const commaIndex = payload.indexOf(",");
-    if (commaIndex < 0) {
-      throw new Error(`${scheme} resource must specify a source and asset name separated by a comma.`);
+  function splitLocalResourcePair(payload, scheme) {
+    const parts = payload.split(":");
+    if (parts.length !== 2) {
+      throw new Error(`${scheme} resource must specify a source and asset name separated by exactly one colon.`);
     }
-    const sourceName = payload.slice(0, commaIndex).trim();
-    const assetName = payload.slice(commaIndex + 1).trim();
+    const sourceName = parts[0]?.trim() ?? "";
+    const assetName = parts[1]?.trim() ?? "";
     if (!sourceName) throw new Error(`${scheme} source name is empty.`);
     if (!assetName) throw new Error(`${scheme} asset name is empty.`);
     return [sourceName, assetName];
+  }
+  function parseLocalResourceName(payload, label) {
+    const name = payload.trim();
+    if (!name) throw new Error(`${label} name is empty.`);
+    if (name.includes(":")) throw new Error(`${label} name must not contain a colon.`);
+    return name;
   }
   class AssetManagerExtension {
     constructor() {

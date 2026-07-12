@@ -59,21 +59,30 @@ describe('parseResourceIdentifier', () => {
   });
 
   it('recognizes project-local resource schemes', () => {
-    expect(parseResourceIdentifier('costume:Hero,normal')).toEqual({
+    expect(parseResourceIdentifier('costume:Hero:normal')).toEqual({
       kind: 'costume', spriteName: 'Hero', costumeName: 'normal'
     });
     expect(parseResourceIdentifier('background:forest')).toEqual({
       kind: 'background', backgroundName: 'forest'
     });
-    expect(parseResourceIdentifier('sound:@stage,opening')).toEqual({
+    expect(parseResourceIdentifier('sound:@stage:opening')).toEqual({
       kind: 'sound', spriteName: '@stage', soundName: 'opening'
     });
   });
 
-  it('rejects unknown schemes and incomplete identifiers', () => {
+  it('allows commas as ordinary characters without quoting or escaping', () => {
+    expect(parseResourceIdentifier('costume:人物,主人公:通常,正面')).toEqual({
+      kind: 'costume', spriteName: '人物,主人公', costumeName: '通常,正面'
+    });
+  });
+
+  it('rejects the old comma separator and ambiguous colon usage', () => {
     expect(() => parseResourceIdentifier('ftp://example.com/a.png')).toThrow('Unsupported resource scheme');
-    expect(() => parseResourceIdentifier('costume:Hero')).toThrow('separated by a comma');
+    expect(() => parseResourceIdentifier('costume:Hero,normal')).toThrow('exactly one colon');
+    expect(() => parseResourceIdentifier('costume:Hero:normal:alternate')).toThrow('exactly one colon');
+    expect(() => parseResourceIdentifier('sound:Hero')).toThrow('exactly one colon');
     expect(() => parseResourceIdentifier('background:')).toThrow('Background name is empty');
+    expect(() => parseResourceIdentifier('background:forest:night')).toThrow('must not contain a colon');
   });
 });
 
@@ -151,7 +160,7 @@ describe('project-local assets', () => {
     if (!heroCostume || !forestBackdrop) throw new Error('Test costumes are missing.');
 
     delete heroCostume.skinId;
-    await extension.registerAsset({RESOURCE_ID: 'costume:Hero,normal', NAME: 'hero-lazy'});
+    await extension.registerAsset({RESOURCE_ID: 'costume:Hero:normal', NAME: 'hero-lazy'});
     heroCostume.skinId = 42;
     await extension.setStageSkin({NAME: 'hero-lazy'});
     expect(updateDrawableSkinId).toHaveBeenLastCalledWith(0, 42);
@@ -165,7 +174,7 @@ describe('project-local assets', () => {
 
   it('borrows costume and backdrop skins without destroying them', async () => {
     const extension = new AssetManagerExtension();
-    await extension.registerAsset({RESOURCE_ID: 'costume:Hero,normal', NAME: 'hero'});
+    await extension.registerAsset({RESOURCE_ID: 'costume:Hero:normal', NAME: 'hero'});
     await extension.setStageSkin({NAME: 'hero'});
     expect(updateDrawableSkinId).toHaveBeenLastCalledWith(0, 42);
 
@@ -180,12 +189,12 @@ describe('project-local assets', () => {
 
   it('plays sprite and stage sounds through the owning sound bank', async () => {
     const extension = new AssetManagerExtension();
-    await extension.registerAsset({RESOURCE_ID: 'sound:Hero,hello', NAME: 'voice'});
+    await extension.registerAsset({RESOURCE_ID: 'sound:Hero:hello', NAME: 'voice'});
     await extension.playSoundUntilDone({NAME: 'voice'});
     expect(playSound).toHaveBeenLastCalledWith(sprite, 'sound-id');
     expect(extension.getAssetMimeType({NAME: 'voice'})).toBe('audio/wav');
 
-    await extension.registerAsset({RESOURCE_ID: 'sound:@stage,opening', NAME: 'opening'});
+    await extension.registerAsset({RESOURCE_ID: 'sound:@stage:opening', NAME: 'opening'});
     await extension.playSoundUntilDone({NAME: 'opening'});
     expect(playSound).toHaveBeenLastCalledWith(stage, 'stage-sound-id');
   });
