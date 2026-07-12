@@ -1,0 +1,35 @@
+name: Apply PR 18 review fixes
+
+on:
+  push:
+    branches:
+      - feat/issue-8-project-local-assets
+    paths:
+      - scripts/apply-pr18-review-fixes.py
+      - .github/workflows/apply-pr18-review-fixes.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/issue-8-project-local-assets
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install
+      - run: python3 scripts/apply-pr18-review-fixes.py
+      - run: npm run check
+      - name: Commit review fixes
+        run: |
+          git add src/extension.ts tests/extension.test.ts dist/asset-manager.js
+          if ! git diff --cached --quiet; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit -m "fix: address PR review feedback"
+            git push origin HEAD:feat/issue-8-project-local-assets
+          fi
