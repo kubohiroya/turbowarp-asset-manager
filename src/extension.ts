@@ -141,6 +141,7 @@ export class AssetManagerExtension {
   private readonly soundAssets = new Map<string, SoundAssetReference>();
   private readonly assetRegistry = new Map<string, AssetKind>();
   private readonly playingAudio = new Set<HTMLAudioElement>();
+  private readonly registrationVersions = new Map<string, number>();
 
   getInfo() {
     return {
@@ -183,6 +184,9 @@ export class AssetManagerExtension {
   }
 
   deleteAllMemoryAssets(): void {
+    for (const name of this.registrationVersions.keys()) {
+      this.registrationVersions.set(name, (this.registrationVersions.get(name) ?? 0) + 1);
+    }
     for (const asset of this.externalAssets.values()) this.deleteOwnedSkinIfExists(asset);
     this.externalAssets.clear();
     this.costumeAssets.clear();
@@ -283,10 +287,18 @@ export class AssetManagerExtension {
     return name;
   }
 
+  private nextRegistrationVersion(name: string): number {
+    const version = (this.registrationVersions.get(name) ?? 0) + 1;
+    this.registrationVersions.set(name, version);
+    return version;
+  }
+
   private async registerExternalAsset(url: string, name: string): Promise<void> {
+    const version = this.nextRegistrationVersion(name);
     const record = url
       ? await this.fetchAndCache(url, name)
       : await this.cacheGet(name);
+    if (this.registrationVersions.get(name) !== version) return;
     if (!record) throw new Error(`Asset is not cached and URL is empty: ${name}`);
     this.unregisterAsset(name);
     this.externalAssets.set(name, {
@@ -303,7 +315,6 @@ export class AssetManagerExtension {
     if (!target) throw new Error(`Sprite not found: ${spriteName}`);
     const costume = this.findCostume(target, costumeName, null);
     if (!costume) throw new Error(`Costume not found: ${spriteName}/${costumeName}`);
-    if (typeof costume.skinId !== 'number') throw new Error(`Costume skin is not available: ${spriteName}/${costumeName}`);
     this.unregisterAsset(name);
     this.costumeAssets.set(name, {
       kind: 'costume',
@@ -321,7 +332,6 @@ export class AssetManagerExtension {
     const stage = this.getStageTarget();
     const costume = this.findCostume(stage, backgroundName, null);
     if (!costume) throw new Error(`Background not found: ${backgroundName}`);
-    if (typeof costume.skinId !== 'number') throw new Error(`Background skin is not available: ${backgroundName}`);
     this.unregisterAsset(name);
     this.costumeAssets.set(name, {
       kind: 'costume',
@@ -341,8 +351,6 @@ export class AssetManagerExtension {
     if (!target) throw new Error(`Sound source not found: ${spriteName}`);
     const sound = this.findSound(target, soundName, null);
     if (!sound) throw new Error(`Sound not found: ${spriteName}/${soundName}`);
-    if (!sound.soundId) throw new Error(`Sound ID is not available: ${spriteName}/${soundName}`);
-    if (!target.sprite?.soundBank) throw new Error(`Sound bank is not available: ${spriteName}`);
     this.unregisterAsset(name);
     this.soundAssets.set(name, {
       kind: 'sound',
@@ -357,6 +365,7 @@ export class AssetManagerExtension {
   }
 
   private unregisterAsset(name: string): void {
+    this.nextRegistrationVersion(name);
     const kind = this.assetRegistry.get(name);
     if (!kind) return;
     if (kind === 'external') {
@@ -571,10 +580,18 @@ export class AssetManagerExtension {
     audio.addEventListener('error', cleanup, {once: true});
     const playPromise = audio.play();
     if (!waitUntilDone) {
-      void playPromise.catch((error) => console.warn(`Failed to play audio asset "${name}"`, error));
+      void playPromise.catch((error) => {
+        console.warn(`Failed to play audio asset "${name}"`, error);
+        cleanup();
+      });
       return;
     }
-    await playPromise;
+    try {
+      await playPromise;
+    } catch (error) {
+      cleanup();
+      throw error;
+    }
     await new Promise<void>((resolve) => {
       audio.addEventListener('ended', () => resolve(), {once: true});
       audio.addEventListener('error', () => resolve(), {once: true});

@@ -1,10 +1,36 @@
-import {beforeEach, describe, expect, it, vi} from 'vitest';
+import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {
   AssetManagerExtension,
   guessMimeType,
   normalizeMimeType,
   parseResourceIdentifier
 } from '../src/extension.js';
+
+interface TestExternalAsset {
+  kind: 'external';
+  name: string;
+  url: string;
+  mimeType: string;
+  data: ArrayBuffer;
+  cachedAt: number;
+  skinId: number | null;
+}
+
+interface TestExtensionInternals {
+  externalAssets: Map<string, TestExternalAsset>;
+  assetRegistry: Map<string, 'external' | 'costume' | 'sound'>;
+  fetchAndCache(url: string, name: string): Promise<TestExternalAsset>;
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return {promise, resolve, reject};
+}
 
 describe('guessMimeType', () => {
   it('recognizes image and audio extensions', () => {
@@ -82,6 +108,10 @@ describe('project-local assets', () => {
     }
   };
 
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   beforeEach(() => {
     updateDrawableSkinId.mockClear();
     destroySkin.mockClear();
@@ -114,6 +144,25 @@ describe('project-local assets', () => {
     expect(blocks.find((block) => block.opcode === 'registerAsset')).toBeDefined();
   });
 
+  it('allows project images to register before renderer skins are initialized', async () => {
+    const extension = new AssetManagerExtension();
+    const heroCostume = sprite.sprite?.costumes[0];
+    const forestBackdrop = stage.sprite?.costumes[0];
+    if (!heroCostume || !forestBackdrop) throw new Error('Test costumes are missing.');
+
+    delete heroCostume.skinId;
+    await extension.registerAsset({RESOURCE_ID: 'costume:Hero,normal', NAME: 'hero-lazy'});
+    heroCostume.skinId = 42;
+    await extension.setStageSkin({NAME: 'hero-lazy'});
+    expect(updateDrawableSkinId).toHaveBeenLastCalledWith(0, 42);
+
+    delete forestBackdrop.skinId;
+    await extension.registerAsset({RESOURCE_ID: 'background:forest', NAME: 'forest-lazy'});
+    forestBackdrop.skinId = 99;
+    await extension.setThisSpriteSkin({NAME: 'forest-lazy'}, {target: sprite});
+    expect(updateDrawableSkinId).toHaveBeenLastCalledWith(7, 99);
+  });
+
   it('borrows costume and backdrop skins without destroying them', async () => {
     const extension = new AssetManagerExtension();
     await extension.registerAsset({RESOURCE_ID: 'costume:Hero,normal', NAME: 'hero'});
@@ -139,6 +188,85 @@ describe('project-local assets', () => {
     await extension.registerAsset({RESOURCE_ID: 'sound:@stage,opening', NAME: 'opening'});
     await extension.playSoundUntilDone({NAME: 'opening'});
     expect(playSound).toHaveBeenLastCalledWith(stage, 'stage-sound-id');
+  });
+
+  it('keeps the newest external registration when requests finish out of order', async () => {
+    const extension = new AssetManagerExtension();
+    const internals = extension as unknown as TestExtensionInternals;
+    const slow = deferred<TestExternalAsset>();
+    const fast = deferred<TestExternalAsset>();
+    vi.spyOn(internals, 'fetchAndCache').mockImplementation((url) =>
+      url.includes('slow') ? slow.promise : fast.promise
+    );
+
+    const slowRegistration = extension.registerAsset({
+      RESOURCE_ID: 'https://example.com/slow.png', NAME: 'shared'
+    });
+    const fastRegistration = extension.registerAsset({
+      RESOURCE_ID: 'https://example.com/fast.png', NAME: 'shared'
+    });
+
+    fast.resolve({
+      kind: 'external', name: 'shared', url: 'https://example.com/fast.png',
+      mimeType: 'image/png', data: new ArrayBuffer(0), cachedAt: 2, skinId: null
+    });
+    await fastRegistration;
+    slow.resolve({
+      kind: 'external', name: 'shared', url: 'https://example.com/slow.png',
+      mimeType: 'image/png', data: new ArrayBuffer(0), cachedAt: 1, skinId: null
+    });
+    await slowRegistration;
+
+    expect(internals.externalAssets.get('shared')?.url).toBe('https://example.com/fast.png');
+  });
+
+  it('invalidates a pending external registration when the name is unregistered', async () => {
+    const extension = new AssetManagerExtension();
+    const internals = extension as unknown as TestExtensionInternals;
+    const pending = deferred<TestExternalAsset>();
+    vi.spyOn(internals, 'fetchAndCache').mockReturnValue(pending.promise);
+
+    const registration = extension.registerAsset({
+      RESOURCE_ID: 'https://example.com/pending.png', NAME: 'pending'
+    });
+    extension.deleteMemoryAsset({NAME: 'pending'});
+    pending.resolve({
+      kind: 'external', name: 'pending', url: 'https://example.com/pending.png',
+      mimeType: 'image/png', data: new ArrayBuffer(0), cachedAt: 1, skinId: null
+    });
+    await registration;
+
+    expect(extension.isLoaded({NAME: 'pending'})).toBe(false);
+  });
+
+  it('cleans up external audio when play rejects', async () => {
+    const extension = new AssetManagerExtension();
+    const internals = extension as unknown as TestExtensionInternals;
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal('URL', {
+      createObjectURL: vi.fn(() => 'blob:test-audio'),
+      revokeObjectURL
+    });
+    vi.stubGlobal('Audio', class {
+      currentTime = 0;
+      addEventListener = vi.fn();
+      pause = vi.fn();
+      play = vi.fn(() => Promise.reject(new Error('play blocked')));
+      constructor(_url: string) {}
+    });
+    internals.externalAssets.set('audio', {
+      kind: 'external', name: 'audio', url: 'https://example.com/audio.mp3',
+      mimeType: 'audio/mpeg', data: new ArrayBuffer(0), cachedAt: 1, skinId: null
+    });
+    internals.assetRegistry.set('audio', 'external');
+
+    await expect(extension.playSoundUntilDone({NAME: 'audio'})).rejects.toThrow('play blocked');
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:test-audio');
+
+    revokeObjectURL.mockClear();
+    await extension.playSound({NAME: 'audio'});
+    await Promise.resolve();
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:test-audio');
   });
 
   it('reports explicit type mismatches', async () => {
