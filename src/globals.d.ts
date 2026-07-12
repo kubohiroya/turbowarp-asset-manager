@@ -4,8 +4,29 @@ interface TurboWarpRenderer {
   destroySkin(skinId: number): void;
   updateDrawableSkinId(drawableId: number, skinId: number): void;
 }
-interface TurboWarpSprite { name: string; }
+interface TurboWarpCostume {
+  name: string;
+  assetId?: string;
+  skinId?: number;
+  dataFormat?: string;
+}
+interface TurboWarpSound {
+  name: string;
+  assetId?: string;
+  soundId?: string;
+  dataFormat?: string;
+}
+interface TurboWarpSoundBank {
+  playSound(target: TurboWarpTarget, soundId: string): Promise<unknown> | unknown;
+}
+interface TurboWarpSprite {
+  name: string;
+  costumes: TurboWarpCostume[];
+  sounds: TurboWarpSound[];
+  soundBank?: TurboWarpSoundBank;
+}
 interface TurboWarpTarget {
+  id: string;
   isStage: boolean;
   isOriginal?: boolean;
   drawableID?: number | null;
