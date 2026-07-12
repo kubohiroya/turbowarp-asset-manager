@@ -1,6 +1,6 @@
 {
   "name": "@kubohiroya/turbowarp-asset-manager",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "author": "Hiroya Kubo <hiroya@cuc.ac.jp>",
   "type": "module",
   "scripts": {
@@ -9,8 +9,9 @@
     "build": "vite build",
     "test": "vitest run",
     "docs": "node scripts/generate-readme.mjs",
-    "docs:check": "pnpm run docs && git diff --exit-code -- README.md",
-    "check": "pnpm run typecheck && npm run test && npm run build && npm run docs:check"
+    "docs:check": "npm run docs && git diff --exit-code -- README.md",
+    "check:dist": "npm run build && git diff --exit-code -- dist",
+    "check": "npm run typecheck && npm run test && npm run build && npm run docs:check && npm run check:dist"
   },
   "devDependencies": {
     "@kubohiroya/vite-plugin-turbowarp-extension": "0.1.0",

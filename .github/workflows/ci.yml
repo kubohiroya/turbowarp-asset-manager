@@ -15,3 +15,7 @@ jobs:
           node-version: 22
       - run: npm install
       - run: npm run check
+      - uses: actions/upload-artifact@v4
+        with:
+          name: asset-manager-dist
+          path: dist/

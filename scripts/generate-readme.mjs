@@ -27,6 +27,9 @@ function renderBlock(block) {
     ['Type', titleCase(block.blockType)],
     ['Opcode', `\`${block.opcode}\``]
   ];
+  if (block.hideFromPalette) {
+    rows.push(['Palette', 'Hidden (legacy compatibility)']);
+  }
   for (const [name, argument] of Object.entries(block.arguments ?? {})) {
     rows.push([
       `\`${name}\``,

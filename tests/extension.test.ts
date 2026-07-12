@@ -1,5 +1,36 @@
-import {describe, expect, it} from 'vitest';
-import {guessMimeType, normalizeMimeType} from '../src/extension.js';
+import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
+import {
+  AssetManagerExtension,
+  guessMimeType,
+  normalizeMimeType,
+  parseResourceIdentifier
+} from '../src/extension.js';
+
+interface TestExternalAsset {
+  kind: 'external';
+  name: string;
+  url: string;
+  mimeType: string;
+  data: ArrayBuffer;
+  cachedAt: number;
+  skinId: number | null;
+}
+
+interface TestExtensionInternals {
+  externalAssets: Map<string, TestExternalAsset>;
+  assetRegistry: Map<string, 'external' | 'costume' | 'sound'>;
+  fetchAndCache(url: string, name: string): Promise<TestExternalAsset>;
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return {promise, resolve, reject};
+}
 
 describe('guessMimeType', () => {
   it('recognizes image and audio extensions', () => {
@@ -15,5 +46,232 @@ describe('normalizeMimeType', () => {
 
   it('uses the file extension for generic binary MIME types', () => {
     expect(normalizeMimeType('application/octet-stream', 'image.svg')).toBe('image/svg+xml');
+  });
+});
+
+describe('parseResourceIdentifier', () => {
+  it('recognizes URLs and an empty cache resource', () => {
+    expect(parseResourceIdentifier('https://example.com/a.png')).toEqual({
+      kind: 'external',
+      url: 'https://example.com/a.png'
+    });
+    expect(parseResourceIdentifier('')).toEqual({kind: 'cache'});
+  });
+
+  it('recognizes project-local resource schemes', () => {
+    expect(parseResourceIdentifier('costume:Hero,normal')).toEqual({
+      kind: 'costume', spriteName: 'Hero', costumeName: 'normal'
+    });
+    expect(parseResourceIdentifier('background:forest')).toEqual({
+      kind: 'background', backgroundName: 'forest'
+    });
+    expect(parseResourceIdentifier('sound:@stage,opening')).toEqual({
+      kind: 'sound', spriteName: '@stage', soundName: 'opening'
+    });
+  });
+
+  it('rejects unknown schemes and incomplete identifiers', () => {
+    expect(() => parseResourceIdentifier('ftp://example.com/a.png')).toThrow('Unsupported resource scheme');
+    expect(() => parseResourceIdentifier('costume:Hero')).toThrow('separated by a comma');
+    expect(() => parseResourceIdentifier('background:')).toThrow('Background name is empty');
+  });
+});
+
+describe('project-local assets', () => {
+  const updateDrawableSkinId = vi.fn();
+  const destroySkin = vi.fn();
+  const playSound = vi.fn(() => Promise.resolve());
+
+  const soundBank = {playSound};
+  const sprite: TurboWarpTarget = {
+    id: 'sprite-id',
+    isStage: false,
+    isOriginal: true,
+    drawableID: 7,
+    sprite: {
+      name: 'Hero',
+      costumes: [{name: 'normal', assetId: 'costume-asset', skinId: 42, dataFormat: 'png'}],
+      sounds: [{name: 'hello', assetId: 'sound-asset', soundId: 'sound-id', dataFormat: 'wav'}],
+      soundBank
+    }
+  };
+  const stage: TurboWarpTarget = {
+    id: 'stage-id',
+    isStage: true,
+    isOriginal: true,
+    drawableID: 0,
+    sprite: {
+      name: 'Stage',
+      costumes: [{name: 'forest', assetId: 'background-asset', skinId: 99, dataFormat: 'svg'}],
+      sounds: [{name: 'opening', assetId: 'stage-sound-asset', soundId: 'stage-sound-id', dataFormat: 'mp3'}],
+      soundBank
+    }
+  };
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  beforeEach(() => {
+    updateDrawableSkinId.mockClear();
+    destroySkin.mockClear();
+    playSound.mockClear();
+
+    vi.stubGlobal('Scratch', {
+      vm: {
+        runtime: {
+          renderer: {
+            createSVGSkin: vi.fn(() => 1),
+            createBitmapSkin: vi.fn(() => 2),
+            destroySkin,
+            updateDrawableSkinId
+          },
+          targets: [stage, sprite],
+          requestRedraw: vi.fn()
+        }
+      },
+      extensions: {unsandboxed: true, register: vi.fn()},
+      BlockType: {COMMAND: 'command', BOOLEAN: 'boolean', REPORTER: 'reporter'},
+      ArgumentType: {STRING: 'string'},
+      translate: (text: string) => text
+    });
+  });
+
+  it('keeps the legacy opcode hidden and exposes the resource registration opcode', () => {
+    const extension = new AssetManagerExtension();
+    const blocks = extension.getInfo().blocks;
+    expect(blocks.find((block) => block.opcode === 'loadAsset')).toMatchObject({hideFromPalette: true});
+    expect(blocks.find((block) => block.opcode === 'registerAsset')).toBeDefined();
+  });
+
+  it('allows project images to register before renderer skins are initialized', async () => {
+    const extension = new AssetManagerExtension();
+    const heroCostume = sprite.sprite?.costumes[0];
+    const forestBackdrop = stage.sprite?.costumes[0];
+    if (!heroCostume || !forestBackdrop) throw new Error('Test costumes are missing.');
+
+    delete heroCostume.skinId;
+    await extension.registerAsset({RESOURCE_ID: 'costume:Hero,normal', NAME: 'hero-lazy'});
+    heroCostume.skinId = 42;
+    await extension.setStageSkin({NAME: 'hero-lazy'});
+    expect(updateDrawableSkinId).toHaveBeenLastCalledWith(0, 42);
+
+    delete forestBackdrop.skinId;
+    await extension.registerAsset({RESOURCE_ID: 'background:forest', NAME: 'forest-lazy'});
+    forestBackdrop.skinId = 99;
+    await extension.setThisSpriteSkin({NAME: 'forest-lazy'}, {target: sprite});
+    expect(updateDrawableSkinId).toHaveBeenLastCalledWith(7, 99);
+  });
+
+  it('borrows costume and backdrop skins without destroying them', async () => {
+    const extension = new AssetManagerExtension();
+    await extension.registerAsset({RESOURCE_ID: 'costume:Hero,normal', NAME: 'hero'});
+    await extension.setStageSkin({NAME: 'hero'});
+    expect(updateDrawableSkinId).toHaveBeenLastCalledWith(0, 42);
+
+    extension.deleteMemoryAsset({NAME: 'hero'});
+    expect(destroySkin).not.toHaveBeenCalled();
+
+    await extension.registerAsset({RESOURCE_ID: 'background:forest', NAME: 'forest'});
+    await extension.setThisSpriteSkin({NAME: 'forest'}, {target: sprite});
+    expect(updateDrawableSkinId).toHaveBeenLastCalledWith(7, 99);
+    expect(extension.getAssetMimeType({NAME: 'forest'})).toBe('image/svg+xml');
+  });
+
+  it('plays sprite and stage sounds through the owning sound bank', async () => {
+    const extension = new AssetManagerExtension();
+    await extension.registerAsset({RESOURCE_ID: 'sound:Hero,hello', NAME: 'voice'});
+    await extension.playSoundUntilDone({NAME: 'voice'});
+    expect(playSound).toHaveBeenLastCalledWith(sprite, 'sound-id');
+    expect(extension.getAssetMimeType({NAME: 'voice'})).toBe('audio/wav');
+
+    await extension.registerAsset({RESOURCE_ID: 'sound:@stage,opening', NAME: 'opening'});
+    await extension.playSoundUntilDone({NAME: 'opening'});
+    expect(playSound).toHaveBeenLastCalledWith(stage, 'stage-sound-id');
+  });
+
+  it('keeps the newest external registration when requests finish out of order', async () => {
+    const extension = new AssetManagerExtension();
+    const internals = extension as unknown as TestExtensionInternals;
+    const slow = deferred<TestExternalAsset>();
+    const fast = deferred<TestExternalAsset>();
+    vi.spyOn(internals, 'fetchAndCache').mockImplementation((url) =>
+      url.includes('slow') ? slow.promise : fast.promise
+    );
+
+    const slowRegistration = extension.registerAsset({
+      RESOURCE_ID: 'https://example.com/slow.png', NAME: 'shared'
+    });
+    const fastRegistration = extension.registerAsset({
+      RESOURCE_ID: 'https://example.com/fast.png', NAME: 'shared'
+    });
+
+    fast.resolve({
+      kind: 'external', name: 'shared', url: 'https://example.com/fast.png',
+      mimeType: 'image/png', data: new ArrayBuffer(0), cachedAt: 2, skinId: null
+    });
+    await fastRegistration;
+    slow.resolve({
+      kind: 'external', name: 'shared', url: 'https://example.com/slow.png',
+      mimeType: 'image/png', data: new ArrayBuffer(0), cachedAt: 1, skinId: null
+    });
+    await slowRegistration;
+
+    expect(internals.externalAssets.get('shared')?.url).toBe('https://example.com/fast.png');
+  });
+
+  it('invalidates a pending external registration when the name is unregistered', async () => {
+    const extension = new AssetManagerExtension();
+    const internals = extension as unknown as TestExtensionInternals;
+    const pending = deferred<TestExternalAsset>();
+    vi.spyOn(internals, 'fetchAndCache').mockReturnValue(pending.promise);
+
+    const registration = extension.registerAsset({
+      RESOURCE_ID: 'https://example.com/pending.png', NAME: 'pending'
+    });
+    extension.deleteMemoryAsset({NAME: 'pending'});
+    pending.resolve({
+      kind: 'external', name: 'pending', url: 'https://example.com/pending.png',
+      mimeType: 'image/png', data: new ArrayBuffer(0), cachedAt: 1, skinId: null
+    });
+    await registration;
+
+    expect(extension.isLoaded({NAME: 'pending'})).toBe(false);
+  });
+
+  it('cleans up external audio when play rejects', async () => {
+    const extension = new AssetManagerExtension();
+    const internals = extension as unknown as TestExtensionInternals;
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal('URL', {
+      createObjectURL: vi.fn(() => 'blob:test-audio'),
+      revokeObjectURL
+    });
+    vi.stubGlobal('Audio', class {
+      currentTime = 0;
+      addEventListener = vi.fn();
+      pause = vi.fn();
+      play = vi.fn(() => Promise.reject(new Error('play blocked')));
+      constructor(_url: string) {}
+    });
+    internals.externalAssets.set('audio', {
+      kind: 'external', name: 'audio', url: 'https://example.com/audio.mp3',
+      mimeType: 'audio/mpeg', data: new ArrayBuffer(0), cachedAt: 1, skinId: null
+    });
+    internals.assetRegistry.set('audio', 'external');
+
+    await expect(extension.playSoundUntilDone({NAME: 'audio'})).rejects.toThrow('play blocked');
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:test-audio');
+
+    revokeObjectURL.mockClear();
+    await extension.playSound({NAME: 'audio'});
+    await Promise.resolve();
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:test-audio');
+  });
+
+  it('reports explicit type mismatches', async () => {
+    const extension = new AssetManagerExtension();
+    await extension.registerAsset({RESOURCE_ID: 'background:forest', NAME: 'forest'});
+    await expect(extension.playSound({NAME: 'forest'})).rejects.toThrow('Asset is not audio');
   });
 });
