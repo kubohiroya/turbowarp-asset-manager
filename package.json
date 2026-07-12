@@ -1,6 +1,6 @@
 {
   "name": "@kubohiroya/turbowarp-asset-manager",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "author": "Hiroya Kubo <hiroya@cuc.ac.jp>",
   "type": "module",
   "scripts": {
