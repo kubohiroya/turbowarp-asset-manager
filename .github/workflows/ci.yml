@@ -5,16 +5,34 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: write
+
 jobs:
   check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
       - run: npm install
+      - name: Apply PR review fixes
+        if: github.event_name == 'pull_request' && github.actor != 'github-actions[bot]'
+        run: python3 scripts/apply-pr18-review-fixes.py
       - run: npm run check
+      - name: Commit PR review fixes
+        if: github.event_name == 'pull_request' && github.actor != 'github-actions[bot]'
+        run: |
+          git add src/extension.ts tests/extension.test.ts dist/asset-manager.js
+          if ! git diff --cached --quiet; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit -m "fix: address PR review feedback"
+            git push origin HEAD:${{ github.head_ref }}
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: asset-manager-dist
