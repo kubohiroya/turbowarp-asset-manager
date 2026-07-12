@@ -9,7 +9,7 @@
     "build": "vite build",
     "test": "vitest run",
     "docs": "node scripts/generate-readme.mjs",
-    "docs:check": "pnpm run docs && git diff --exit-code -- README.md",
+    "docs:check": "pnpm run docs && git diff --exit-code -- README.md dist/asset-manager.js",
     "check": "pnpm run typecheck && npm run test && npm run build && npm run docs:check"
   },
   "devDependencies": {
