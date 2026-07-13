@@ -62,8 +62,8 @@ describe('parseResourceIdentifier', () => {
     expect(parseResourceIdentifier('costume:Hero:normal')).toEqual({
       kind: 'costume', spriteName: 'Hero', costumeName: 'normal'
     });
-    expect(parseResourceIdentifier('background:forest')).toEqual({
-      kind: 'background', backgroundName: 'forest'
+    expect(parseResourceIdentifier('backdrop:forest')).toEqual({
+      kind: 'backdrop', backdropName: 'forest'
     });
     expect(parseResourceIdentifier('sound:@stage:opening')).toEqual({
       kind: 'sound', spriteName: '@stage', soundName: 'opening'
@@ -81,8 +81,8 @@ describe('parseResourceIdentifier', () => {
     expect(() => parseResourceIdentifier('costume:Hero,normal')).toThrow('exactly one colon');
     expect(() => parseResourceIdentifier('costume:Hero:normal:alternate')).toThrow('exactly one colon');
     expect(() => parseResourceIdentifier('sound:Hero')).toThrow('exactly one colon');
-    expect(() => parseResourceIdentifier('background:')).toThrow('Background name is empty');
-    expect(() => parseResourceIdentifier('background:forest:night')).toThrow('must not contain a colon');
+    expect(() => parseResourceIdentifier('backdrop:')).toThrow('Backdrop name is empty');
+    expect(() => parseResourceIdentifier('backdrop:forest:night')).toThrow('must not contain a colon');
   });
 });
 
@@ -166,7 +166,7 @@ describe('project-local assets', () => {
     expect(updateDrawableSkinId).toHaveBeenLastCalledWith(0, 42);
 
     delete forestBackdrop.skinId;
-    await extension.registerAsset({RESOURCE_ID: 'background:forest', NAME: 'forest-lazy'});
+    await extension.registerAsset({RESOURCE_ID: 'backdrop:forest', NAME: 'forest-lazy'});
     forestBackdrop.skinId = 99;
     await extension.setThisSpriteSkin({NAME: 'forest-lazy'}, {target: sprite});
     expect(updateDrawableSkinId).toHaveBeenLastCalledWith(7, 99);
@@ -181,7 +181,7 @@ describe('project-local assets', () => {
     extension.deleteMemoryAsset({NAME: 'hero'});
     expect(destroySkin).not.toHaveBeenCalled();
 
-    await extension.registerAsset({RESOURCE_ID: 'background:forest', NAME: 'forest'});
+    await extension.registerAsset({RESOURCE_ID: 'backdrop:forest', NAME: 'forest'});
     await extension.setThisSpriteSkin({NAME: 'forest'}, {target: sprite});
     expect(updateDrawableSkinId).toHaveBeenLastCalledWith(7, 99);
     expect(extension.getAssetMimeType({NAME: 'forest'})).toBe('image/svg+xml');
@@ -280,7 +280,7 @@ describe('project-local assets', () => {
 
   it('reports explicit type mismatches', async () => {
     const extension = new AssetManagerExtension();
-    await extension.registerAsset({RESOURCE_ID: 'background:forest', NAME: 'forest'});
+    await extension.registerAsset({RESOURCE_ID: 'backdrop:forest', NAME: 'forest'});
     await expect(extension.playSound({NAME: 'forest'})).rejects.toThrow('Asset is not audio');
   });
 });

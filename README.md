@@ -29,7 +29,7 @@ The `register resource [RESOURCE_ID] as asset [NAME]` block accepts the followin
 ```text
 https://example.com/asset.png
 costume:Sprite1:costume1
-background:backdrop1
+backdrop:backdrop1
 sound:Sprite1:sound1
 sound:@stage:stage-sound1
 ```
@@ -142,7 +142,7 @@ Applies a registered external image, sprite costume, or stage backdrop to the st
 |---|---|
 | Type | Command |
 | Opcode | `setStageSkin` |
-| `NAME` | String, default: `background1` |
+| `NAME` | String, default: `backdrop1` |
 
 ### `play asset [NAME] as sound`
 
