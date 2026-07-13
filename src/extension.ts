@@ -1,7 +1,7 @@
 import definitions from './block-definitions.json' with {type: 'json'};
 
 export const EXTENSION_ID = 'twAssetManager';
-export const EXTENSION_VERSION = '2026-07-13-costume-name-fallback';
+export const EXTENSION_VERSION = '2026-07-13-registration-error-reporters';
 
 const DB_NAME = 'tw-asset-manager';
 const DB_VERSION = 1;
@@ -62,11 +62,22 @@ interface SoundAssetReference {
 export type ParsedResourceIdentifier =
   | {kind: 'cache'}
   | {kind: 'external'; url: string}
-  | {kind: 'costume'; spriteName: string; costumeName: string}
+  | {kind: 'costume'; spriteName: string; costumeName: string | null}
   | {kind: 'backdrop'; backdropName: string}
   | {kind: 'sound'; spriteName: string; soundName: string};
 
 const blockDefinitions = definitions.blocks as readonly DefinitionBlock[];
+
+class AssetRegistrationError extends Error {
+  constructor(
+    readonly assetErrorType: string,
+    readonly assetErrorLabel: string,
+    message: string
+  ) {
+    super(message);
+    this.name = 'AssetRegistrationError';
+  }
+}
 
 export function normalizeName(value: unknown): string {
   return String(value ?? '').trim();
@@ -92,7 +103,7 @@ export function normalizeMimeType(mimeType: unknown, urlOrName: unknown): string
 
 export function parseResourceIdentifier(
   value: unknown,
-  fallbackCostumeName?: unknown
+  fallbackAssetName?: unknown
 ): ParsedResourceIdentifier {
   const resourceId = normalizeName(value);
   if (!resourceId) return {kind: 'cache'};
@@ -100,6 +111,17 @@ export function parseResourceIdentifier(
 
   const separatorIndex = resourceId.indexOf(':');
   if (separatorIndex < 0) {
+    const fallbackName = normalizeName(fallbackAssetName);
+    const bareScheme = resourceId.toLowerCase();
+    if (bareScheme === 'costume' && fallbackName) {
+      return {kind: 'costume', spriteName: fallbackName, costumeName: null};
+    }
+    if (bareScheme === 'backdrop' && fallbackName) {
+      return {kind: 'backdrop', backdropName: fallbackName};
+    }
+    if (bareScheme === 'sound' && fallbackName) {
+      return {kind: 'sound', spriteName: STAGE_RESOURCE_NAME, soundName: fallbackName};
+    }
     throw new Error(`Unsupported resource identifier: ${resourceId}`);
   }
 
@@ -108,14 +130,14 @@ export function parseResourceIdentifier(
 
   switch (scheme) {
     case 'costume': {
-      const [spriteName, costumeName] = splitCostumeResourcePair(payload, fallbackCostumeName);
+      const [spriteName, costumeName] = splitLocalResourcePair(payload, 'costume', fallbackAssetName);
       return {kind: 'costume', spriteName, costumeName};
     }
     case 'backdrop': {
       return {kind: 'backdrop', backdropName: parseLocalResourceName(payload, 'Backdrop')};
     }
     case 'sound': {
-      const [spriteName, soundName] = splitLocalResourcePair(payload, 'sound');
+      const [spriteName, soundName] = splitLocalResourcePair(payload, 'sound', fallbackAssetName);
       return {kind: 'sound', spriteName, soundName};
     }
     default:
@@ -123,18 +145,18 @@ export function parseResourceIdentifier(
   }
 }
 
-function splitCostumeResourcePair(payload: string, fallbackCostumeName: unknown): [string, string] {
-  if (!payload.includes(':') && fallbackCostumeName !== undefined) {
+function splitLocalResourcePair(
+  payload: string,
+  scheme: string,
+  fallbackAssetName?: unknown
+): [string, string] {
+  if (!payload.includes(':') && fallbackAssetName !== undefined) {
     const spriteName = payload.trim();
-    const costumeName = normalizeName(fallbackCostumeName);
-    if (!spriteName) throw new Error('costume source name is empty.');
-    if (!costumeName) throw new Error('costume asset name is empty.');
-    return [spriteName, costumeName];
+    const assetName = normalizeName(fallbackAssetName);
+    if (!spriteName) throw new Error(`${scheme} source name is empty.`);
+    if (!assetName) throw new Error(`${scheme} asset name is empty.`);
+    return [spriteName, assetName];
   }
-  return splitLocalResourcePair(payload, 'costume');
-}
-
-function splitLocalResourcePair(payload: string, scheme: string): [string, string] {
   const parts = payload.split(':');
   if (parts.length !== 2) {
     throw new Error(`${scheme} resource must specify a source and asset name separated by exactly one colon.`);
@@ -162,6 +184,9 @@ export class AssetManagerExtension {
   private readonly assetRegistry = new Map<string, AssetKind>();
   private readonly playingAudio = new Set<HTMLAudioElement>();
   private readonly registrationVersions = new Map<string, number>();
+  private lastAssetErrorType = '';
+  private lastAssetErrorLabel = '';
+  private assetErrorVersion = 0;
 
   getInfo() {
     return {
@@ -173,24 +198,61 @@ export class AssetManagerExtension {
   }
 
   async registerAsset(args: BlockArgs): Promise<void> {
-    const name = this.requireAssetName(args.NAME);
-    const resource = parseResourceIdentifier(args.RESOURCE_ID, name);
-    switch (resource.kind) {
-      case 'cache':
-        await this.registerExternalAsset('', name);
-        return;
-      case 'external':
-        await this.registerExternalAsset(resource.url, name);
-        return;
-      case 'costume':
-        this.registerCostumeReference(name, resource.spriteName, resource.costumeName);
-        return;
-      case 'backdrop':
-        this.registerBackdropReference(name, resource.backdropName);
-        return;
-      case 'sound':
-        this.registerSoundReference(name, resource.spriteName, resource.soundName);
+    const errorVersion = ++this.assetErrorVersion;
+    this.clearAssetError();
+    let fallbackType = 'asset-name';
+    let fallbackLabel = normalizeName(args.NAME);
+    try {
+      const name = this.requireAssetName(args.NAME);
+      fallbackType = 'resource-id';
+      fallbackLabel = normalizeName(args.RESOURCE_ID);
+      const resource = parseResourceIdentifier(args.RESOURCE_ID, name);
+      switch (resource.kind) {
+        case 'cache':
+          fallbackType = 'cache';
+          fallbackLabel = name;
+          await this.registerExternalAsset('', name);
+          return;
+        case 'external':
+          fallbackType = 'external';
+          fallbackLabel = resource.url;
+          await this.registerExternalAsset(resource.url, name);
+          return;
+        case 'costume':
+          fallbackType = 'costume';
+          fallbackLabel = resource.costumeName ?? name;
+          this.registerCostumeReference(name, resource.spriteName, resource.costumeName);
+          return;
+        case 'backdrop':
+          fallbackType = 'backdrop';
+          fallbackLabel = resource.backdropName;
+          this.registerBackdropReference(name, resource.backdropName);
+          return;
+        case 'sound':
+          fallbackType = 'sound';
+          fallbackLabel = resource.soundName;
+          this.registerSoundReference(name, resource.spriteName, resource.soundName);
+      }
+    } catch (error) {
+      if (this.assetErrorVersion === errorVersion) {
+        if (error instanceof AssetRegistrationError) {
+          this.lastAssetErrorType = error.assetErrorType;
+          this.lastAssetErrorLabel = error.assetErrorLabel;
+        } else {
+          this.lastAssetErrorType = fallbackType;
+          this.lastAssetErrorLabel = fallbackLabel;
+        }
+      }
+      throw error;
     }
+  }
+
+  assetErrorType(): string {
+    return this.lastAssetErrorType;
+  }
+
+  assetErrorLabel(): string {
+    return this.lastAssetErrorLabel;
   }
 
   /** Legacy opcode retained for existing projects. */
@@ -307,6 +369,11 @@ export class AssetManagerExtension {
     return name;
   }
 
+  private clearAssetError(): void {
+    this.lastAssetErrorType = '';
+    this.lastAssetErrorLabel = '';
+  }
+
   private nextRegistrationVersion(name: string): number {
     const version = (this.registrationVersions.get(name) ?? 0) + 1;
     this.registrationVersions.set(name, version);
@@ -330,11 +397,34 @@ export class AssetManagerExtension {
     this.assetRegistry.set(name, 'external');
   }
 
-  private registerCostumeReference(name: string, spriteName: string, costumeName: string): void {
+  private registerCostumeReference(
+    name: string,
+    spriteName: string,
+    costumeName: string | null
+  ): void {
     const target = this.findTargetByName(spriteName);
-    if (!target) throw new Error(`Sprite not found: ${spriteName}`);
-    const costume = this.findCostume(target, costumeName, null);
-    if (!costume) throw new Error(`Costume not found: ${spriteName}/${costumeName}`);
+    if (!target) {
+      throw new AssetRegistrationError('sprite', spriteName, `Sprite not found: ${spriteName}`);
+    }
+    const costumes = target.sprite?.costumes ?? [];
+    const costume = costumeName === null
+      ? costumes.find((candidate) => candidate.name === name) ?? (costumes.length === 1 ? costumes[0] : null)
+      : this.findCostume(target, costumeName, null);
+    if (!costume && costumeName === null && costumes.length > 1) {
+      throw new AssetRegistrationError(
+        'costume',
+        name,
+        `Costume shorthand is ambiguous: ${spriteName} has multiple costumes and none is named ${name}.`
+      );
+    }
+    const resolvedCostumeName = costume?.name ?? costumeName ?? name;
+    if (!costume) {
+      throw new AssetRegistrationError(
+        'costume',
+        resolvedCostumeName,
+        `Costume not found: ${spriteName}/${resolvedCostumeName}`
+      );
+    }
     this.unregisterAsset(name);
     this.costumeAssets.set(name, {
       kind: 'costume',
@@ -342,7 +432,7 @@ export class AssetManagerExtension {
       targetId: target.id,
       targetName: spriteName,
       isStage: false,
-      costumeName,
+      costumeName: resolvedCostumeName,
       assetId: costume.assetId ?? null
     });
     this.assetRegistry.set(name, 'costume');
@@ -351,7 +441,9 @@ export class AssetManagerExtension {
   private registerBackdropReference(name: string, backdropName: string): void {
     const stage = this.getStageTarget();
     const costume = this.findCostume(stage, backdropName, null);
-    if (!costume) throw new Error(`Backdrop not found: ${backdropName}`);
+    if (!costume) {
+      throw new AssetRegistrationError('backdrop', backdropName, `Backdrop not found: ${backdropName}`);
+    }
     this.unregisterAsset(name);
     this.costumeAssets.set(name, {
       kind: 'costume',
@@ -368,9 +460,13 @@ export class AssetManagerExtension {
   private registerSoundReference(name: string, spriteName: string, soundName: string): void {
     const isStage = spriteName.toLowerCase() === STAGE_RESOURCE_NAME;
     const target = isStage ? this.getStageTarget() : this.findTargetByName(spriteName);
-    if (!target) throw new Error(`Sound source not found: ${spriteName}`);
+    if (!target) {
+      throw new AssetRegistrationError('sprite', spriteName, `Sound source not found: ${spriteName}`);
+    }
     const sound = this.findSound(target, soundName, null);
-    if (!sound) throw new Error(`Sound not found: ${spriteName}/${soundName}`);
+    if (!sound) {
+      throw new AssetRegistrationError('sound', soundName, `Sound not found: ${spriteName}/${soundName}`);
+    }
     this.unregisterAsset(name);
     this.soundAssets.set(name, {
       kind: 'sound',

@@ -30,12 +30,43 @@ The `register resource [RESOURCE_ID] as asset [NAME]` block accepts the followin
 https://example.com/asset.png
 costume:Sprite1:costume1
 costume:Sprite1
+costume
 backdrop:backdrop1
+backdrop
 sound:Sprite1:sound1
+sound:Sprite1
 sound:@stage:stage-sound1
+sound
 ```
 
-An empty `RESOURCE_ID` reloads the external asset named by `NAME` from IndexedDB. A `costume:` identifier may omit the costume name; `costume:Sprite1` uses the registered asset `NAME` as the costume name. Otherwise, in `costume:` and `sound:` identifiers, exactly one colon separates the source target name from the costume or sound name. Colons cannot be used inside local sprite, costume, backdrop, or sound names. Commas are ordinary name characters. Double quotes and backslashes have no quoting or escaping role and are not interpreted specially.
+An empty `RESOURCE_ID` reloads the external asset named by `NAME` from IndexedDB. Project-local identifiers support these shorthands:
+
+- `costume:Sprite1` uses `NAME` as the costume name.
+- `costume` uses `NAME` as the sprite name. It selects a costume with the same name, or the sprite's only costume. It fails when multiple costumes exist and none has that name.
+- `backdrop` uses `NAME` as the stage backdrop name.
+- `sound:Sprite1` uses `NAME` as the sprite sound name.
+- `sound` uses `NAME` as the stage sound name.
+
+Fully specified `costume:` and `sound:` identifiers use exactly one colon between the source target name and the costume or sound name. Colons cannot be used inside local sprite, costume, backdrop, or sound names. Commas are ordinary name characters. Double quotes and backslashes have no quoting or escaping role and are not interpreted specially.
+
+## Registration errors
+
+The `asset registration error type` and `asset registration error label` Reporter blocks expose the latest `register resource` failure to other scripts and variable monitors. Registration still reports its original error to TurboWarp. Starting a new registration clears both values; a failure then sets them again. Concurrent registrations use the most recently started registration for these Reporter values.
+
+The type Reporter returns these stable tokens:
+
+| Type | Label |
+|---|---|
+| `sprite` | Missing sprite name |
+| `costume` | Missing or ambiguous costume name |
+| `backdrop` | Missing backdrop name |
+| `sound` | Missing sound name |
+| `asset-name` | Invalid registration asset name |
+| `resource-id` | Invalid resource identifier |
+| `cache` | Asset name missing from the cache |
+| `external` | External resource URL that failed |
+
+Both Reporters return an empty string after a successful registration.
 
 The old `load asset from URL [URL] or cache as [NAME]` opcode remains available to existing projects, but it is hidden from the block palette.
 
@@ -53,6 +84,24 @@ Registers an external URL, cached asset, sprite costume, stage backdrop, or proj
 | Opcode | `registerAsset` |
 | `RESOURCE_ID` | String, default: `https://example.com/asset.png` |
 | `NAME` | String, default: `asset1` |
+
+### `asset registration error type`
+
+Returns the stable type token for the most recent asset registration error, or an empty string when the latest registration succeeded.
+
+| Property | Value |
+|---|---|
+| Type | Reporter |
+| Opcode | `assetErrorType` |
+
+### `asset registration error label`
+
+Returns the missing or invalid name associated with the most recent asset registration error, or an empty string when the latest registration succeeded.
+
+| Property | Value |
+|---|---|
+| Type | Reporter |
+| Opcode | `assetErrorLabel` |
 
 ### `load asset from URL [URL] or cache as [NAME]`
 

@@ -82,6 +82,21 @@ describe('parseResourceIdentifier', () => {
     });
   });
 
+  it('fills omitted local resource parts from the registered asset name', () => {
+    expect(parseResourceIdentifier('costume', 'Turtle')).toEqual({
+      kind: 'costume', spriteName: 'Turtle', costumeName: null
+    });
+    expect(parseResourceIdentifier('backdrop', 'Stars')).toEqual({
+      kind: 'backdrop', backdropName: 'Stars'
+    });
+    expect(parseResourceIdentifier('sound:Urashima', 'Rip')).toEqual({
+      kind: 'sound', spriteName: 'Urashima', soundName: 'Rip'
+    });
+    expect(parseResourceIdentifier('sound', 'Guitar Chords2')).toEqual({
+      kind: 'sound', spriteName: '@stage', soundName: 'Guitar Chords2'
+    });
+  });
+
   it('rejects the old comma separator and ambiguous colon usage', () => {
     expect(() => parseResourceIdentifier('ftp://example.com/a.png')).toThrow('Unsupported resource scheme');
     expect(() => parseResourceIdentifier('costume:Hero,normal')).toThrow('exactly one colon');
@@ -111,6 +126,48 @@ describe('project-local assets', () => {
       soundBank
     }
   };
+  const turtle: TurboWarpTarget = {
+    id: 'turtle-id',
+    isStage: false,
+    isOriginal: true,
+    drawableID: 8,
+    sprite: {
+      name: 'Turtle',
+      costumes: [{name: 'walk', assetId: 'turtle-costume', skinId: 43, dataFormat: 'svg'}],
+      sounds: [],
+      soundBank
+    }
+  };
+  const twin: TurboWarpTarget = {
+    id: 'twin-id',
+    isStage: false,
+    isOriginal: true,
+    drawableID: 9,
+    sprite: {
+      name: 'Twin',
+      costumes: [
+        {name: 'idle', assetId: 'twin-idle', skinId: 44, dataFormat: 'png'},
+        {name: 'Twin', assetId: 'twin-named', skinId: 45, dataFormat: 'png'}
+      ],
+      sounds: [],
+      soundBank
+    }
+  };
+  const ambiguous: TurboWarpTarget = {
+    id: 'ambiguous-id',
+    isStage: false,
+    isOriginal: true,
+    drawableID: 10,
+    sprite: {
+      name: 'Ambiguous',
+      costumes: [
+        {name: 'one', assetId: 'ambiguous-one', skinId: 46, dataFormat: 'png'},
+        {name: 'two', assetId: 'ambiguous-two', skinId: 47, dataFormat: 'png'}
+      ],
+      sounds: [],
+      soundBank
+    }
+  };
   const stage: TurboWarpTarget = {
     id: 'stage-id',
     isStage: true,
@@ -118,8 +175,26 @@ describe('project-local assets', () => {
     drawableID: 0,
     sprite: {
       name: 'Stage',
-      costumes: [{name: 'forest', assetId: 'background-asset', skinId: 99, dataFormat: 'svg'}],
-      sounds: [{name: 'opening', assetId: 'stage-sound-asset', soundId: 'stage-sound-id', dataFormat: 'mp3'}],
+      costumes: [
+        {name: 'forest', assetId: 'background-asset', skinId: 99, dataFormat: 'svg'},
+        {name: 'Stars', assetId: 'stars-asset', skinId: 100, dataFormat: 'svg'}
+      ],
+      sounds: [
+        {name: 'opening', assetId: 'stage-sound-asset', soundId: 'stage-sound-id', dataFormat: 'mp3'},
+        {name: 'Guitar Chords2', assetId: 'guitar-asset', soundId: 'guitar-sound-id', dataFormat: 'wav'}
+      ],
+      soundBank
+    }
+  };
+  const urashima: TurboWarpTarget = {
+    id: 'urashima-id',
+    isStage: false,
+    isOriginal: true,
+    drawableID: 11,
+    sprite: {
+      name: 'Urashima',
+      costumes: [],
+      sounds: [{name: 'Rip', assetId: 'rip-asset', soundId: 'rip-sound-id', dataFormat: 'wav'}],
       soundBank
     }
   };
@@ -142,7 +217,7 @@ describe('project-local assets', () => {
             destroySkin,
             updateDrawableSkinId
           },
-          targets: [stage, sprite],
+          targets: [stage, sprite, turtle, twin, ambiguous, urashima],
           requestRedraw: vi.fn()
         }
       },
@@ -158,6 +233,43 @@ describe('project-local assets', () => {
     const blocks = extension.getInfo().blocks;
     expect(blocks.find((block) => block.opcode === 'loadAsset')).toMatchObject({hideFromPalette: true});
     expect(blocks.find((block) => block.opcode === 'registerAsset')).toBeDefined();
+    expect(blocks.find((block) => block.opcode === 'assetErrorType')).toBeDefined();
+    expect(blocks.find((block) => block.opcode === 'assetErrorLabel')).toBeDefined();
+  });
+
+  it('reports structured asset registration errors and clears them after success', async () => {
+    const extension = new AssetManagerExtension();
+    expect(extension.assetErrorType()).toBe('');
+    expect(extension.assetErrorLabel()).toBe('');
+
+    await expect(extension.registerAsset({RESOURCE_ID: 'costume:Missing:walk', NAME: 'missing'}))
+      .rejects.toThrow('Sprite not found');
+    expect(extension.assetErrorType()).toBe('sprite');
+    expect(extension.assetErrorLabel()).toBe('Missing');
+
+    await expect(extension.registerAsset({RESOURCE_ID: 'costume:Hero:missing', NAME: 'missing'}))
+      .rejects.toThrow('Costume not found');
+    expect(extension.assetErrorType()).toBe('costume');
+    expect(extension.assetErrorLabel()).toBe('missing');
+
+    await expect(extension.registerAsset({RESOURCE_ID: 'backdrop:missing', NAME: 'missing'}))
+      .rejects.toThrow('Backdrop not found');
+    expect(extension.assetErrorType()).toBe('backdrop');
+    expect(extension.assetErrorLabel()).toBe('missing');
+
+    await expect(extension.registerAsset({RESOURCE_ID: 'sound:Hero:missing', NAME: 'missing'}))
+      .rejects.toThrow('Sound not found');
+    expect(extension.assetErrorType()).toBe('sound');
+    expect(extension.assetErrorLabel()).toBe('missing');
+
+    await expect(extension.registerAsset({RESOURCE_ID: 'ftp://example.com/a.png', NAME: 'invalid'}))
+      .rejects.toThrow('Unsupported resource scheme');
+    expect(extension.assetErrorType()).toBe('resource-id');
+    expect(extension.assetErrorLabel()).toBe('ftp://example.com/a.png');
+
+    await extension.registerAsset({RESOURCE_ID: 'costume:Hero:normal', NAME: 'hero'});
+    expect(extension.assetErrorType()).toBe('');
+    expect(extension.assetErrorLabel()).toBe('');
   });
 
   it('allows project images to register before renderer skins are initialized', async () => {
@@ -204,6 +316,30 @@ describe('project-local assets', () => {
       .rejects.toThrow('costume source name is empty');
   });
 
+  it('resolves bare costume resources only when the choice is unambiguous', async () => {
+    const extension = new AssetManagerExtension();
+
+    await extension.registerAsset({RESOURCE_ID: 'costume', NAME: 'Turtle'});
+    await extension.setStageSkin({NAME: 'Turtle'});
+    expect(updateDrawableSkinId).toHaveBeenLastCalledWith(0, 43);
+
+    await extension.registerAsset({RESOURCE_ID: 'costume', NAME: 'Twin'});
+    await extension.setStageSkin({NAME: 'Twin'});
+    expect(updateDrawableSkinId).toHaveBeenLastCalledWith(0, 45);
+
+    await expect(extension.registerAsset({RESOURCE_ID: 'costume', NAME: 'Ambiguous'}))
+      .rejects.toThrow('Costume shorthand is ambiguous');
+    expect(extension.assetErrorType()).toBe('costume');
+    expect(extension.assetErrorLabel()).toBe('Ambiguous');
+  });
+
+  it('resolves bare backdrop resources from the registered asset name', async () => {
+    const extension = new AssetManagerExtension();
+    await extension.registerAsset({RESOURCE_ID: 'backdrop', NAME: 'Stars'});
+    await extension.setThisSpriteSkin({NAME: 'Stars'}, {target: sprite});
+    expect(updateDrawableSkinId).toHaveBeenLastCalledWith(7, 100);
+  });
+
   it('plays sprite and stage sounds through the owning sound bank', async () => {
     const extension = new AssetManagerExtension();
     await extension.registerAsset({RESOURCE_ID: 'sound:Hero:hello', NAME: 'voice'});
@@ -214,6 +350,18 @@ describe('project-local assets', () => {
     await extension.registerAsset({RESOURCE_ID: 'sound:@stage:opening', NAME: 'opening'});
     await extension.playSoundUntilDone({NAME: 'opening'});
     expect(playSound).toHaveBeenLastCalledWith(stage, 'stage-sound-id');
+  });
+
+  it('resolves omitted sprite and stage sound names from the registered asset name', async () => {
+    const extension = new AssetManagerExtension();
+
+    await extension.registerAsset({RESOURCE_ID: 'sound:Urashima', NAME: 'Rip'});
+    await extension.playSoundUntilDone({NAME: 'Rip'});
+    expect(playSound).toHaveBeenLastCalledWith(urashima, 'rip-sound-id');
+
+    await extension.registerAsset({RESOURCE_ID: 'sound', NAME: 'Guitar Chords2'});
+    await extension.playSoundUntilDone({NAME: 'Guitar Chords2'});
+    expect(playSound).toHaveBeenLastCalledWith(stage, 'guitar-sound-id');
   });
 
   it('keeps the newest external registration when requests finish out of order', async () => {
@@ -244,6 +392,23 @@ describe('project-local assets', () => {
     await slowRegistration;
 
     expect(internals.externalAssets.get('shared')?.url).toBe('https://example.com/fast.png');
+  });
+
+  it('does not let an older registration failure overwrite newer Reporter state', async () => {
+    const extension = new AssetManagerExtension();
+    const internals = extension as unknown as TestExtensionInternals;
+    const pending = deferred<TestExternalAsset>();
+    vi.spyOn(internals, 'fetchAndCache').mockReturnValue(pending.promise);
+
+    const olderRegistration = extension.registerAsset({
+      RESOURCE_ID: 'https://example.com/older.png', NAME: 'older'
+    });
+    await extension.registerAsset({RESOURCE_ID: 'costume:Hero:normal', NAME: 'newer'});
+    pending.reject(new Error('older request failed'));
+    await expect(olderRegistration).rejects.toThrow('older request failed');
+
+    expect(extension.assetErrorType()).toBe('');
+    expect(extension.assetErrorLabel()).toBe('');
   });
 
   it('invalidates a pending external registration when the name is unregistered', async () => {
