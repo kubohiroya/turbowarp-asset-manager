@@ -233,6 +233,43 @@ describe('project-local assets', () => {
     const blocks = extension.getInfo().blocks;
     expect(blocks.find((block) => block.opcode === 'loadAsset')).toMatchObject({hideFromPalette: true});
     expect(blocks.find((block) => block.opcode === 'registerAsset')).toBeDefined();
+    expect(blocks.find((block) => block.opcode === 'assetErrorType')).toBeDefined();
+    expect(blocks.find((block) => block.opcode === 'assetErrorLabel')).toBeDefined();
+  });
+
+  it('reports structured asset registration errors and clears them after success', async () => {
+    const extension = new AssetManagerExtension();
+    expect(extension.assetErrorType()).toBe('');
+    expect(extension.assetErrorLabel()).toBe('');
+
+    await expect(extension.registerAsset({RESOURCE_ID: 'costume:Missing:walk', NAME: 'missing'}))
+      .rejects.toThrow('Sprite not found');
+    expect(extension.assetErrorType()).toBe('sprite');
+    expect(extension.assetErrorLabel()).toBe('Missing');
+
+    await expect(extension.registerAsset({RESOURCE_ID: 'costume:Hero:missing', NAME: 'missing'}))
+      .rejects.toThrow('Costume not found');
+    expect(extension.assetErrorType()).toBe('costume');
+    expect(extension.assetErrorLabel()).toBe('missing');
+
+    await expect(extension.registerAsset({RESOURCE_ID: 'backdrop:missing', NAME: 'missing'}))
+      .rejects.toThrow('Backdrop not found');
+    expect(extension.assetErrorType()).toBe('backdrop');
+    expect(extension.assetErrorLabel()).toBe('missing');
+
+    await expect(extension.registerAsset({RESOURCE_ID: 'sound:Hero:missing', NAME: 'missing'}))
+      .rejects.toThrow('Sound not found');
+    expect(extension.assetErrorType()).toBe('sound');
+    expect(extension.assetErrorLabel()).toBe('missing');
+
+    await expect(extension.registerAsset({RESOURCE_ID: 'ftp://example.com/a.png', NAME: 'invalid'}))
+      .rejects.toThrow('Unsupported resource scheme');
+    expect(extension.assetErrorType()).toBe('resource-id');
+    expect(extension.assetErrorLabel()).toBe('ftp://example.com/a.png');
+
+    await extension.registerAsset({RESOURCE_ID: 'costume:Hero:normal', NAME: 'hero'});
+    expect(extension.assetErrorType()).toBe('');
+    expect(extension.assetErrorLabel()).toBe('');
   });
 
   it('allows project images to register before renderer skins are initialized', async () => {
@@ -292,6 +329,8 @@ describe('project-local assets', () => {
 
     await expect(extension.registerAsset({RESOURCE_ID: 'costume', NAME: 'Ambiguous'}))
       .rejects.toThrow('Costume shorthand is ambiguous');
+    expect(extension.assetErrorType()).toBe('costume');
+    expect(extension.assetErrorLabel()).toBe('Ambiguous');
   });
 
   it('resolves bare backdrop resources from the registered asset name', async () => {
@@ -353,6 +392,23 @@ describe('project-local assets', () => {
     await slowRegistration;
 
     expect(internals.externalAssets.get('shared')?.url).toBe('https://example.com/fast.png');
+  });
+
+  it('does not let an older registration failure overwrite newer Reporter state', async () => {
+    const extension = new AssetManagerExtension();
+    const internals = extension as unknown as TestExtensionInternals;
+    const pending = deferred<TestExternalAsset>();
+    vi.spyOn(internals, 'fetchAndCache').mockReturnValue(pending.promise);
+
+    const olderRegistration = extension.registerAsset({
+      RESOURCE_ID: 'https://example.com/older.png', NAME: 'older'
+    });
+    await extension.registerAsset({RESOURCE_ID: 'costume:Hero:normal', NAME: 'newer'});
+    pending.reject(new Error('older request failed'));
+    await expect(olderRegistration).rejects.toThrow('older request failed');
+
+    expect(extension.assetErrorType()).toBe('');
+    expect(extension.assetErrorLabel()).toBe('');
   });
 
   it('invalidates a pending external registration when the name is unregistered', async () => {
