@@ -17,7 +17,7 @@
     blocks
   };
   const EXTENSION_ID = "twAssetManager";
-  const EXTENSION_VERSION = "2026-07-13-costume-name-fallback";
+  const EXTENSION_VERSION = "2026-07-13-local-resource-shorthands";
   const DB_NAME = "tw-asset-manager";
   const DB_VERSION = 1;
   const STORE_NAME = "assets";
@@ -46,43 +46,51 @@
     const raw = String(mimeType ?? "").split(";")[0]?.trim().toLowerCase() ?? "";
     return !raw || raw === "application/octet-stream" || raw === "binary/octet-stream" ? guessMimeType(urlOrName) : raw;
   }
-  function parseResourceIdentifier(value, fallbackCostumeName) {
+  function parseResourceIdentifier(value, fallbackAssetName) {
     const resourceId = normalizeName(value);
     if (!resourceId) return { kind: "cache" };
     if (/^https?:\/\//i.test(resourceId)) return { kind: "external", url: resourceId };
     const separatorIndex = resourceId.indexOf(":");
     if (separatorIndex < 0) {
+      const fallbackName = normalizeName(fallbackAssetName);
+      const bareScheme = resourceId.toLowerCase();
+      if (bareScheme === "costume" && fallbackName) {
+        return { kind: "costume", spriteName: fallbackName, costumeName: null };
+      }
+      if (bareScheme === "backdrop" && fallbackName) {
+        return { kind: "backdrop", backdropName: fallbackName };
+      }
+      if (bareScheme === "sound" && fallbackName) {
+        return { kind: "sound", spriteName: STAGE_RESOURCE_NAME, soundName: fallbackName };
+      }
       throw new Error(`Unsupported resource identifier: ${resourceId}`);
     }
     const scheme = resourceId.slice(0, separatorIndex).trim().toLowerCase();
     const payload = resourceId.slice(separatorIndex + 1).trim();
     switch (scheme) {
       case "costume": {
-        const [spriteName, costumeName] = splitCostumeResourcePair(payload, fallbackCostumeName);
+        const [spriteName, costumeName] = splitLocalResourcePair(payload, "costume", fallbackAssetName);
         return { kind: "costume", spriteName, costumeName };
       }
       case "backdrop": {
         return { kind: "backdrop", backdropName: parseLocalResourceName(payload, "Backdrop") };
       }
       case "sound": {
-        const [spriteName, soundName] = splitLocalResourcePair(payload, "sound");
+        const [spriteName, soundName] = splitLocalResourcePair(payload, "sound", fallbackAssetName);
         return { kind: "sound", spriteName, soundName };
       }
       default:
         throw new Error(`Unsupported resource scheme: ${scheme}`);
     }
   }
-  function splitCostumeResourcePair(payload, fallbackCostumeName) {
-    if (!payload.includes(":") && fallbackCostumeName !== void 0) {
+  function splitLocalResourcePair(payload, scheme, fallbackAssetName) {
+    if (!payload.includes(":") && fallbackAssetName !== void 0) {
       const spriteName = payload.trim();
-      const costumeName = normalizeName(fallbackCostumeName);
-      if (!spriteName) throw new Error("costume source name is empty.");
-      if (!costumeName) throw new Error("costume asset name is empty.");
-      return [spriteName, costumeName];
+      const assetName2 = normalizeName(fallbackAssetName);
+      if (!spriteName) throw new Error(`${scheme} source name is empty.`);
+      if (!assetName2) throw new Error(`${scheme} asset name is empty.`);
+      return [spriteName, assetName2];
     }
-    return splitLocalResourcePair(payload, "costume");
-  }
-  function splitLocalResourcePair(payload, scheme) {
     const parts = payload.split(":");
     if (parts.length !== 2) {
       throw new Error(`${scheme} resource must specify a source and asset name separated by exactly one colon.`);
@@ -263,8 +271,13 @@
     registerCostumeReference(name, spriteName, costumeName) {
       const target = this.findTargetByName(spriteName);
       if (!target) throw new Error(`Sprite not found: ${spriteName}`);
-      const costume = this.findCostume(target, costumeName, null);
-      if (!costume) throw new Error(`Costume not found: ${spriteName}/${costumeName}`);
+      const costumes = target.sprite?.costumes ?? [];
+      const costume = costumeName === null ? costumes.find((candidate) => candidate.name === name) ?? (costumes.length === 1 ? costumes[0] : null) : this.findCostume(target, costumeName, null);
+      if (!costume && costumeName === null && costumes.length > 1) {
+        throw new Error(`Costume shorthand is ambiguous: ${spriteName} has multiple costumes and none is named ${name}.`);
+      }
+      const resolvedCostumeName = costume?.name ?? costumeName ?? name;
+      if (!costume) throw new Error(`Costume not found: ${spriteName}/${resolvedCostumeName}`);
       this.unregisterAsset(name);
       this.costumeAssets.set(name, {
         kind: "costume",
@@ -272,7 +285,7 @@
         targetId: target.id,
         targetName: spriteName,
         isStage: false,
-        costumeName,
+        costumeName: resolvedCostumeName,
         assetId: costume.assetId ?? null
       });
       this.assetRegistry.set(name, "costume");
