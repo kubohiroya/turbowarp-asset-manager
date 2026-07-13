@@ -1,7 +1,7 @@
 import definitions from './block-definitions.json' with {type: 'json'};
 
 export const EXTENSION_ID = 'twAssetManager';
-export const EXTENSION_VERSION = '2026-07-12-colon-resource-identifiers';
+export const EXTENSION_VERSION = '2026-07-13-backdrop-resource-identifier';
 
 const DB_NAME = 'tw-asset-manager';
 const DB_VERSION = 1;
@@ -63,7 +63,7 @@ export type ParsedResourceIdentifier =
   | {kind: 'cache'}
   | {kind: 'external'; url: string}
   | {kind: 'costume'; spriteName: string; costumeName: string}
-  | {kind: 'background'; backgroundName: string}
+  | {kind: 'backdrop'; backdropName: string}
   | {kind: 'sound'; spriteName: string; soundName: string};
 
 const blockDefinitions = definitions.blocks as readonly DefinitionBlock[];
@@ -108,8 +108,8 @@ export function parseResourceIdentifier(value: unknown): ParsedResourceIdentifie
       const [spriteName, costumeName] = splitLocalResourcePair(payload, 'costume');
       return {kind: 'costume', spriteName, costumeName};
     }
-    case 'background': {
-      return {kind: 'background', backgroundName: parseLocalResourceName(payload, 'Background')};
+    case 'backdrop': {
+      return {kind: 'backdrop', backdropName: parseLocalResourceName(payload, 'Backdrop')};
     }
     case 'sound': {
       const [spriteName, soundName] = splitLocalResourcePair(payload, 'sound');
@@ -171,8 +171,8 @@ export class AssetManagerExtension {
       case 'costume':
         this.registerCostumeReference(name, resource.spriteName, resource.costumeName);
         return;
-      case 'background':
-        this.registerBackgroundReference(name, resource.backgroundName);
+      case 'backdrop':
+        this.registerBackdropReference(name, resource.backdropName);
         return;
       case 'sound':
         this.registerSoundReference(name, resource.spriteName, resource.soundName);
@@ -334,10 +334,10 @@ export class AssetManagerExtension {
     this.assetRegistry.set(name, 'costume');
   }
 
-  private registerBackgroundReference(name: string, backgroundName: string): void {
+  private registerBackdropReference(name: string, backdropName: string): void {
     const stage = this.getStageTarget();
-    const costume = this.findCostume(stage, backgroundName, null);
-    if (!costume) throw new Error(`Background not found: ${backgroundName}`);
+    const costume = this.findCostume(stage, backdropName, null);
+    if (!costume) throw new Error(`Backdrop not found: ${backdropName}`);
     this.unregisterAsset(name);
     this.costumeAssets.set(name, {
       kind: 'costume',
@@ -345,7 +345,7 @@ export class AssetManagerExtension {
       targetId: stage.id,
       targetName: STAGE_RESOURCE_NAME,
       isStage: true,
-      costumeName: backgroundName,
+      costumeName: backdropName,
       assetId: costume.assetId ?? null
     });
     this.assetRegistry.set(name, 'costume');
