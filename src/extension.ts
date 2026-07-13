@@ -1,7 +1,7 @@
 import definitions from './block-definitions.json' with {type: 'json'};
 
 export const EXTENSION_ID = 'twAssetManager';
-export const EXTENSION_VERSION = '2026-07-13-backdrop-resource-identifier';
+export const EXTENSION_VERSION = '2026-07-13-costume-name-fallback';
 
 const DB_NAME = 'tw-asset-manager';
 const DB_VERSION = 1;
@@ -90,7 +90,10 @@ export function normalizeMimeType(mimeType: unknown, urlOrName: unknown): string
     : raw;
 }
 
-export function parseResourceIdentifier(value: unknown): ParsedResourceIdentifier {
+export function parseResourceIdentifier(
+  value: unknown,
+  fallbackCostumeName?: unknown
+): ParsedResourceIdentifier {
   const resourceId = normalizeName(value);
   if (!resourceId) return {kind: 'cache'};
   if (/^https?:\/\//i.test(resourceId)) return {kind: 'external', url: resourceId};
@@ -105,7 +108,7 @@ export function parseResourceIdentifier(value: unknown): ParsedResourceIdentifie
 
   switch (scheme) {
     case 'costume': {
-      const [spriteName, costumeName] = splitLocalResourcePair(payload, 'costume');
+      const [spriteName, costumeName] = splitCostumeResourcePair(payload, fallbackCostumeName);
       return {kind: 'costume', spriteName, costumeName};
     }
     case 'backdrop': {
@@ -118,6 +121,17 @@ export function parseResourceIdentifier(value: unknown): ParsedResourceIdentifie
     default:
       throw new Error(`Unsupported resource scheme: ${scheme}`);
   }
+}
+
+function splitCostumeResourcePair(payload: string, fallbackCostumeName: unknown): [string, string] {
+  if (!payload.includes(':') && fallbackCostumeName !== undefined) {
+    const spriteName = payload.trim();
+    const costumeName = normalizeName(fallbackCostumeName);
+    if (!spriteName) throw new Error('costume source name is empty.');
+    if (!costumeName) throw new Error('costume asset name is empty.');
+    return [spriteName, costumeName];
+  }
+  return splitLocalResourcePair(payload, 'costume');
 }
 
 function splitLocalResourcePair(payload: string, scheme: string): [string, string] {
@@ -160,7 +174,7 @@ export class AssetManagerExtension {
 
   async registerAsset(args: BlockArgs): Promise<void> {
     const name = this.requireAssetName(args.NAME);
-    const resource = parseResourceIdentifier(args.RESOURCE_ID);
+    const resource = parseResourceIdentifier(args.RESOURCE_ID, name);
     switch (resource.kind) {
       case 'cache':
         await this.registerExternalAsset('', name);

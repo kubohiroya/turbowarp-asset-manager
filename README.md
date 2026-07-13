@@ -29,12 +29,13 @@ The `register resource [RESOURCE_ID] as asset [NAME]` block accepts the followin
 ```text
 https://example.com/asset.png
 costume:Sprite1:costume1
+costume:Sprite1
 backdrop:backdrop1
 sound:Sprite1:sound1
 sound:@stage:stage-sound1
 ```
 
-An empty `RESOURCE_ID` reloads the external asset named by `NAME` from IndexedDB. In `costume:` and `sound:` identifiers, exactly one colon separates the source target name from the costume or sound name. Colons cannot be used inside local sprite, costume, backdrop, or sound names. Commas are ordinary name characters. Double quotes and backslashes have no quoting or escaping role and are not interpreted specially.
+An empty `RESOURCE_ID` reloads the external asset named by `NAME` from IndexedDB. A `costume:` identifier may omit the costume name; `costume:Sprite1` uses the registered asset `NAME` as the costume name. Otherwise, in `costume:` and `sound:` identifiers, exactly one colon separates the source target name from the costume or sound name. Colons cannot be used inside local sprite, costume, backdrop, or sound names. Commas are ordinary name characters. Double quotes and backslashes have no quoting or escaping role and are not interpreted specially.
 
 The old `load asset from URL [URL] or cache as [NAME]` opcode remains available to existing projects, but it is hidden from the block palette.
 

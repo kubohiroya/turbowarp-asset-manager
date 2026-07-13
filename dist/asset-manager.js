@@ -17,7 +17,7 @@
     blocks
   };
   const EXTENSION_ID = "twAssetManager";
-  const EXTENSION_VERSION = "2026-07-13-backdrop-resource-identifier";
+  const EXTENSION_VERSION = "2026-07-13-costume-name-fallback";
   const DB_NAME = "tw-asset-manager";
   const DB_VERSION = 1;
   const STORE_NAME = "assets";
@@ -46,7 +46,7 @@
     const raw = String(mimeType ?? "").split(";")[0]?.trim().toLowerCase() ?? "";
     return !raw || raw === "application/octet-stream" || raw === "binary/octet-stream" ? guessMimeType(urlOrName) : raw;
   }
-  function parseResourceIdentifier(value) {
+  function parseResourceIdentifier(value, fallbackCostumeName) {
     const resourceId = normalizeName(value);
     if (!resourceId) return { kind: "cache" };
     if (/^https?:\/\//i.test(resourceId)) return { kind: "external", url: resourceId };
@@ -58,7 +58,7 @@
     const payload = resourceId.slice(separatorIndex + 1).trim();
     switch (scheme) {
       case "costume": {
-        const [spriteName, costumeName] = splitLocalResourcePair(payload, "costume");
+        const [spriteName, costumeName] = splitCostumeResourcePair(payload, fallbackCostumeName);
         return { kind: "costume", spriteName, costumeName };
       }
       case "backdrop": {
@@ -71,6 +71,16 @@
       default:
         throw new Error(`Unsupported resource scheme: ${scheme}`);
     }
+  }
+  function splitCostumeResourcePair(payload, fallbackCostumeName) {
+    if (!payload.includes(":") && fallbackCostumeName !== void 0) {
+      const spriteName = payload.trim();
+      const costumeName = normalizeName(fallbackCostumeName);
+      if (!spriteName) throw new Error("costume source name is empty.");
+      if (!costumeName) throw new Error("costume asset name is empty.");
+      return [spriteName, costumeName];
+    }
+    return splitLocalResourcePair(payload, "costume");
   }
   function splitLocalResourcePair(payload, scheme) {
     const parts = payload.split(":");
@@ -112,7 +122,7 @@
     }
     async registerAsset(args) {
       const name = this.requireAssetName(args.NAME);
-      const resource = parseResourceIdentifier(args.RESOURCE_ID);
+      const resource = parseResourceIdentifier(args.RESOURCE_ID, name);
       switch (resource.kind) {
         case "cache":
           await this.registerExternalAsset("", name);

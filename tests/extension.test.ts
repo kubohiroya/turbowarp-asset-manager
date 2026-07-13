@@ -76,9 +76,16 @@ describe('parseResourceIdentifier', () => {
     });
   });
 
+  it('uses a supplied fallback for an omitted costume name', () => {
+    expect(parseResourceIdentifier('costume:Hero', 'normal')).toEqual({
+      kind: 'costume', spriteName: 'Hero', costumeName: 'normal'
+    });
+  });
+
   it('rejects the old comma separator and ambiguous colon usage', () => {
     expect(() => parseResourceIdentifier('ftp://example.com/a.png')).toThrow('Unsupported resource scheme');
     expect(() => parseResourceIdentifier('costume:Hero,normal')).toThrow('exactly one colon');
+    expect(() => parseResourceIdentifier('costume:Hero:', 'normal')).toThrow('asset name is empty');
     expect(() => parseResourceIdentifier('costume:Hero:normal:alternate')).toThrow('exactly one colon');
     expect(() => parseResourceIdentifier('sound:Hero')).toThrow('exactly one colon');
     expect(() => parseResourceIdentifier('backdrop:')).toThrow('Backdrop name is empty');
@@ -185,6 +192,16 @@ describe('project-local assets', () => {
     await extension.setThisSpriteSkin({NAME: 'forest'}, {target: sprite});
     expect(updateDrawableSkinId).toHaveBeenLastCalledWith(7, 99);
     expect(extension.getAssetMimeType({NAME: 'forest'})).toBe('image/svg+xml');
+  });
+
+  it('uses the registered asset name when the costume name is omitted', async () => {
+    const extension = new AssetManagerExtension();
+    await extension.registerAsset({RESOURCE_ID: 'costume:Hero', NAME: 'normal'});
+    await extension.setStageSkin({NAME: 'normal'});
+    expect(updateDrawableSkinId).toHaveBeenLastCalledWith(0, 42);
+
+    await expect(extension.registerAsset({RESOURCE_ID: 'costume:', NAME: 'normal'}))
+      .rejects.toThrow('costume source name is empty');
   });
 
   it('plays sprite and stage sounds through the owning sound bank', async () => {
