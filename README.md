@@ -16,6 +16,7 @@ The built JavaScript file is committed to this repository so that users do not n
 - register sprite costumes and stage backdrops without copying their renderer skins;
 - register sprite and stage sounds without copying their audio data;
 - apply image assets to the current sprite, a named sprite, or the stage;
+- animate named actors with background loops or one-shot costume sequences;
 - play audio assets with or without waiting for completion;
 - normalize missing or generic MIME types from file extensions;
 - release only renderer skins owned by Asset Manager when registrations are removed.
@@ -37,6 +38,19 @@ sound:@stage:stage-sound1
 An empty `RESOURCE_ID` reloads the external asset named by `NAME` from IndexedDB. In `costume:` and `sound:` identifiers, exactly one colon separates the source target name from the costume or sound name. Colons cannot be used inside local sprite, costume, backdrop, or sound names. Commas are ordinary name characters. Double quotes and backslashes have no quoting or escaping role and are not interpreted specially.
 
 The old `load asset from URL [URL] or cache as [NAME]` opcode remains available to existing projects, but it is hidden from the block palette.
+
+## Actor animation input
+
+The actor animation blocks receive two ordinary string arguments:
+
+```text
+COSTUMES = Fish1,Fish2,Fish3
+DURATIONS = 0.5,0.5,1.0
+```
+
+`COSTUMES` is a comma-separated string of registered image asset names. `DURATIONS` is a comma-separated string of positive display durations in seconds. The two strings must contain the same number of items.
+
+Starting a new loop or sequence replaces the actor's existing animation. A sequence runs once in the background and leaves its final skin displayed. Setting the actor skin or explicitly stopping the animation cancels the active loop or sequence.
 
 ## Blocks
 
@@ -77,7 +91,7 @@ Unregisters one asset. Owned external renderer skins are released; project costu
 
 ### `delete all assets from memory`
 
-Unregisters all assets, releases owned external renderer skins, and stops tracked external audio playback.
+Unregisters all assets, releases owned external renderer skins, stops actor animations, and stops tracked external audio playback.
 
 | Property | Value |
 |---|---|
@@ -125,7 +139,7 @@ Applies a registered external image, sprite costume, or stage backdrop to the cu
 
 ### `set [SPRITE] skin to asset [NAME] (compatibility)`
 
-Applies a registered external image, sprite costume, or stage backdrop to a named sprite. This block is retained for compatibility.
+Stops any actor animation and applies a registered external image, sprite costume, or stage backdrop to a named sprite. This block is retained for compatibility.
 
 | Property | Value |
 |---|---|
@@ -133,6 +147,40 @@ Applies a registered external image, sprite costume, or stage backdrop to a name
 | Opcode | `setSpriteSkin` |
 | `SPRITE` | String, default: `Sprite1` |
 | `NAME` | String, default: `asset1` |
+
+### `loop actor [ACTOR] through assets [COSTUMES] for seconds [DURATIONS]`
+
+Starts or replaces a background loop. COSTUMES and DURATIONS are comma-separated strings. Empty COSTUMES and DURATIONS stop the actor animation.
+
+| Property | Value |
+|---|---|
+| Type | Command |
+| Opcode | `startActorLoop` |
+| `ACTOR` | String, default: `Sprite1` |
+| `COSTUMES` | String, default: `costume1,costume2` |
+| `DURATIONS` | String, default: `0.5,0.5` |
+
+### `play actor [ACTOR] through assets [COSTUMES] for seconds [DURATIONS] once in background`
+
+Starts or replaces a one-shot background sequence and returns immediately. COSTUMES and DURATIONS are comma-separated strings.
+
+| Property | Value |
+|---|---|
+| Type | Command |
+| Opcode | `startActorSequence` |
+| `ACTOR` | String, default: `Sprite1` |
+| `COSTUMES` | String, default: `costume1,costume2` |
+| `DURATIONS` | String, default: `0.5,0.5` |
+
+### `stop animation of actor [ACTOR]`
+
+Stops the actor's current loop or sequence and leaves the currently displayed skin unchanged.
+
+| Property | Value |
+|---|---|
+| Type | Command |
+| Opcode | `stopActorAnimation` |
+| `ACTOR` | String, default: `Sprite1` |
 
 ### `set stage backdrop to asset [NAME]`
 

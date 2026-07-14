@@ -1,7 +1,7 @@
-import {AssetManagerExtension} from './extension.js';
+import {AnimatedAssetManagerExtension} from './animation.js';
 
 if (!Scratch.extensions.unsandboxed) {
   throw new Error('Asset Manager must run unsandboxed.');
 }
 
-Scratch.extensions.register(new AssetManagerExtension());
+Scratch.extensions.register(new AnimatedAssetManagerExtension());
