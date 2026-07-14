@@ -24,24 +24,36 @@ interface AnimationState extends AnimationDefinition {
  * registered image asset names and DURATIONS contains positive seconds.
  */
 export class AnimatedAssetManagerExtension extends AssetManagerExtension {
-  private readonly actorAnimations = new Map<string, AnimationState>();
+  private readonly actorAnimations = new Map<TurboWarpTarget, AnimationState>();
   private animationGeneration = 0;
 
   constructor() {
     super();
     const stopAll = () => this.stopAllActorAnimations();
+    const stopTarget = (target?: TurboWarpTarget) => {
+      if (target) this.stopTarget(target);
+    };
     Scratch.vm.runtime.on?.('PROJECT_STOP_ALL', stopAll);
+    Scratch.vm.runtime.on?.('PROJECT_START', stopAll);
+    Scratch.vm.runtime.on?.('STOP_FOR_TARGET', stopTarget);
     Scratch.vm.runtime.on?.('RUNTIME_DISPOSED', stopAll);
   }
 
-  async setSpriteSkin(args: BlockArgs): Promise<void> {
-    const actor = this.requireActorName(args.ACTOR ?? args.SPRITE);
-    this.stopActor(actor);
-    await super.setSpriteSkin({SPRITE: actor, NAME: args.NAME});
+  async setThisSpriteSkin(args: BlockArgs, util: ScratchBlockUtility): Promise<void> {
+    this.stopTarget(util.target);
+    await super.setThisSpriteSkin(args, util);
   }
 
-  startActorLoop(args: BlockArgs): void {
+  async setSpriteSkin(args: BlockArgs, util?: ScratchBlockUtility): Promise<void> {
+    const actor = this.requireActorName(args.ACTOR ?? args.SPRITE);
+    const target = this.resolveActorTarget(actor, util);
+    this.stopTarget(target);
+    this.applySkinToTarget(target, await this.resolveSkin(args.NAME));
+  }
+
+  startActorLoop(args: BlockArgs, util?: ScratchBlockUtility): void {
     const actor = this.requireActorName(args.ACTOR);
+    const target = this.resolveActorTarget(actor, util);
     const costumesText = normalizeName(args.COSTUMES);
 
     // An empty costume list is the DSL-compatible reset form: action=Actor:loop:
@@ -49,22 +61,24 @@ export class AnimatedAssetManagerExtension extends AssetManagerExtension {
       if (normalizeName(args.DURATIONS)) {
         throw new Error('DURATIONS must be empty when COSTUMES is empty.');
       }
-      this.stopActor(actor);
+      this.stopTarget(target);
       return;
     }
 
-    this.startActorAnimation(actor, this.parseAnimation(costumesText, args.DURATIONS), 'loop');
+    this.startActorAnimation(target, this.parseAnimation(costumesText, args.DURATIONS), 'loop');
   }
 
-  startActorSequence(args: BlockArgs): void {
+  startActorSequence(args: BlockArgs, util?: ScratchBlockUtility): void {
     const actor = this.requireActorName(args.ACTOR);
+    const target = this.resolveActorTarget(actor, util);
     const costumesText = normalizeName(args.COSTUMES);
     if (!costumesText) throw new Error('COSTUMES is empty.');
-    this.startActorAnimation(actor, this.parseAnimation(costumesText, args.DURATIONS), 'sequence');
+    this.startActorAnimation(target, this.parseAnimation(costumesText, args.DURATIONS), 'sequence');
   }
 
-  stopActorAnimation(args: BlockArgs): void {
-    this.stopActor(this.requireActorName(args.ACTOR));
+  stopActorAnimation(args: BlockArgs, util?: ScratchBlockUtility): void {
+    const actor = this.requireActorName(args.ACTOR);
+    this.stopTarget(this.resolveActorTarget(actor, util));
   }
 
   deleteAllMemoryAssets(): void {
@@ -76,6 +90,16 @@ export class AnimatedAssetManagerExtension extends AssetManagerExtension {
     const actor = normalizeName(value);
     if (!actor) throw new Error('Actor name is empty.');
     return actor;
+  }
+
+  private resolveActorTarget(actor: string, util?: ScratchBlockUtility): TurboWarpTarget {
+    const invokingTarget = util?.target;
+    if (invokingTarget && !invokingTarget.isStage && invokingTarget.sprite?.name === actor) {
+      return invokingTarget;
+    }
+    const target = this.findTargetByName(actor);
+    if (!target) throw new Error(`Actor not found: ${actor}`);
+    return target;
   }
 
   private parseAnimation(costumesValue: unknown, durationsValue: unknown): AnimationDefinition {
@@ -107,11 +131,12 @@ export class AnimatedAssetManagerExtension extends AssetManagerExtension {
   }
 
   private startActorAnimation(
-    actor: string,
+    target: TurboWarpTarget,
     definition: AnimationDefinition,
     mode: AnimationMode
   ): void {
-    this.stopActor(actor);
+    this.validateAnimationAssets(definition);
+    this.stopTarget(target);
     const state: AnimationState = {
       ...definition,
       mode,
@@ -120,38 +145,52 @@ export class AnimatedAssetManagerExtension extends AssetManagerExtension {
       timer: null,
       generation: ++this.animationGeneration
     };
-    this.actorAnimations.set(actor, state);
-    void this.showCurrentFrame(actor, state);
+    this.actorAnimations.set(target, state);
+    void this.showCurrentFrame(target, state);
   }
 
-  private async showCurrentFrame(actor: string, state: AnimationState): Promise<void> {
-    if (!this.isCurrent(actor, state)) return;
+  private validateAnimationAssets(definition: AnimationDefinition): void {
+    for (const assetName of definition.assetNames) {
+      if (!this.isLoaded({NAME: assetName})) {
+        throw new Error(`Costume asset is not registered: ${assetName}`);
+      }
+      const mimeType = this.getAssetMimeType({NAME: assetName});
+      if (!mimeType.startsWith('image/')) {
+        throw new Error(`Asset is not an image: ${assetName}`);
+      }
+    }
+  }
+
+  private async showCurrentFrame(target: TurboWarpTarget, state: AnimationState): Promise<void> {
+    if (!this.isCurrent(target, state)) return;
+    if (!this.runtime.targets.includes(target)) {
+      this.stopTarget(target);
+      return;
+    }
 
     const assetName = state.assetNames[state.frameIndex];
     const durationMs = state.durationsMs[state.frameIndex];
     if (assetName === undefined || durationMs === undefined) {
-      this.stopActor(actor);
+      this.stopTarget(target);
       return;
     }
 
     try {
-      // Call the base implementation directly so animation frame changes do not
-      // cancel their own animation through the public setSpriteSkin override.
-      await super.setSpriteSkin({SPRITE: actor, NAME: assetName});
+      this.applySkinToTarget(target, await this.resolveSkin(assetName));
     } catch (error) {
-      this.stopActor(actor);
-      console.error(`Failed to animate actor "${actor}" with asset "${assetName}".`, error);
+      this.stopTarget(target);
+      console.error(`Failed to animate actor "${target.sprite?.name ?? target.id}" with asset "${assetName}".`, error);
       return;
     }
 
-    if (!this.isCurrent(actor, state)) return;
+    if (!this.isCurrent(target, state)) return;
     state.deadline += durationMs;
     const delay = Math.max(0, state.deadline - performance.now());
-    state.timer = setTimeout(() => this.advance(actor, state), delay);
+    state.timer = setTimeout(() => this.advance(target, state), delay);
   }
 
-  private advance(actor: string, state: AnimationState): void {
-    if (!this.isCurrent(actor, state)) return;
+  private advance(target: TurboWarpTarget, state: AnimationState): void {
+    if (!this.isCurrent(target, state)) return;
     state.timer = null;
     state.frameIndex += 1;
 
@@ -159,26 +198,26 @@ export class AnimatedAssetManagerExtension extends AssetManagerExtension {
       if (state.mode === 'loop') {
         state.frameIndex = 0;
       } else {
-        this.actorAnimations.delete(actor);
+        this.actorAnimations.delete(target);
         return;
       }
     }
 
-    void this.showCurrentFrame(actor, state);
+    void this.showCurrentFrame(target, state);
   }
 
-  private isCurrent(actor: string, state: AnimationState): boolean {
-    return this.actorAnimations.get(actor)?.generation === state.generation;
+  private isCurrent(target: TurboWarpTarget, state: AnimationState): boolean {
+    return this.actorAnimations.get(target)?.generation === state.generation;
   }
 
-  private stopActor(actor: string): void {
-    const state = this.actorAnimations.get(actor);
+  private stopTarget(target: TurboWarpTarget): void {
+    const state = this.actorAnimations.get(target);
     if (!state) return;
-    this.actorAnimations.delete(actor);
+    this.actorAnimations.delete(target);
     if (state.timer !== null) clearTimeout(state.timer);
   }
 
   private stopAllActorAnimations(): void {
-    for (const actor of [...this.actorAnimations.keys()]) this.stopActor(actor);
+    for (const target of [...this.actorAnimations.keys()]) this.stopTarget(target);
   }
 }

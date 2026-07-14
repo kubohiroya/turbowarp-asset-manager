@@ -37,7 +37,7 @@ interface TurboWarpRuntime {
   renderer: TurboWarpRenderer;
   targets: TurboWarpTarget[];
   requestRedraw?(): void;
-  on?(eventName: string, listener: () => void): void;
+  on?(eventName: string, listener: (target?: TurboWarpTarget) => void): void;
 }
 interface ScratchBlockUtility { target: TurboWarpTarget; }
 interface ScratchTranslate {

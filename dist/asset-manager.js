@@ -17,7 +17,7 @@
     blocks
   };
   const EXTENSION_ID = "twAssetManager";
-  const EXTENSION_VERSION = "2026-07-13-registration-error-reporters";
+  const EXTENSION_VERSION = "2026-07-15-actor-animation-lifecycle";
   const DB_NAME = "tw-asset-manager";
   const DB_VERSION = 1;
   const STORE_NAME = "assets";
@@ -606,34 +606,47 @@
       __publicField(this, "actorAnimations", /* @__PURE__ */ new Map());
       __publicField(this, "animationGeneration", 0);
       const stopAll = () => this.stopAllActorAnimations();
+      const stopTarget = (target) => {
+        if (target) this.stopTarget(target);
+      };
       Scratch.vm.runtime.on?.("PROJECT_STOP_ALL", stopAll);
+      Scratch.vm.runtime.on?.("PROJECT_START", stopAll);
+      Scratch.vm.runtime.on?.("STOP_FOR_TARGET", stopTarget);
       Scratch.vm.runtime.on?.("RUNTIME_DISPOSED", stopAll);
     }
-    async setSpriteSkin(args) {
-      const actor = this.requireActorName(args.ACTOR ?? args.SPRITE);
-      this.stopActor(actor);
-      await super.setSpriteSkin({ SPRITE: actor, NAME: args.NAME });
+    async setThisSpriteSkin(args, util) {
+      this.stopTarget(util.target);
+      await super.setThisSpriteSkin(args, util);
     }
-    startActorLoop(args) {
+    async setSpriteSkin(args, util) {
+      const actor = this.requireActorName(args.ACTOR ?? args.SPRITE);
+      const target = this.resolveActorTarget(actor, util);
+      this.stopTarget(target);
+      this.applySkinToTarget(target, await this.resolveSkin(args.NAME));
+    }
+    startActorLoop(args, util) {
       const actor = this.requireActorName(args.ACTOR);
+      const target = this.resolveActorTarget(actor, util);
       const costumesText = normalizeName(args.COSTUMES);
       if (!costumesText) {
         if (normalizeName(args.DURATIONS)) {
           throw new Error("DURATIONS must be empty when COSTUMES is empty.");
         }
-        this.stopActor(actor);
+        this.stopTarget(target);
         return;
       }
-      this.startActorAnimation(actor, this.parseAnimation(costumesText, args.DURATIONS), "loop");
+      this.startActorAnimation(target, this.parseAnimation(costumesText, args.DURATIONS), "loop");
     }
-    startActorSequence(args) {
+    startActorSequence(args, util) {
       const actor = this.requireActorName(args.ACTOR);
+      const target = this.resolveActorTarget(actor, util);
       const costumesText = normalizeName(args.COSTUMES);
       if (!costumesText) throw new Error("COSTUMES is empty.");
-      this.startActorAnimation(actor, this.parseAnimation(costumesText, args.DURATIONS), "sequence");
+      this.startActorAnimation(target, this.parseAnimation(costumesText, args.DURATIONS), "sequence");
     }
-    stopActorAnimation(args) {
-      this.stopActor(this.requireActorName(args.ACTOR));
+    stopActorAnimation(args, util) {
+      const actor = this.requireActorName(args.ACTOR);
+      this.stopTarget(this.resolveActorTarget(actor, util));
     }
     deleteAllMemoryAssets() {
       this.stopAllActorAnimations();
@@ -643,6 +656,15 @@
       const actor = normalizeName(value);
       if (!actor) throw new Error("Actor name is empty.");
       return actor;
+    }
+    resolveActorTarget(actor, util) {
+      const invokingTarget = util?.target;
+      if (invokingTarget && !invokingTarget.isStage && invokingTarget.sprite?.name === actor) {
+        return invokingTarget;
+      }
+      const target = this.findTargetByName(actor);
+      if (!target) throw new Error(`Actor not found: ${actor}`);
+      return target;
     }
     parseAnimation(costumesValue, durationsValue) {
       const assetNames = String(costumesValue ?? "").split(",").map((value) => value.trim());
@@ -667,8 +689,9 @@
       });
       return { assetNames, durationsMs };
     }
-    startActorAnimation(actor, definition, mode) {
-      this.stopActor(actor);
+    startActorAnimation(target, definition, mode) {
+      this.validateAnimationAssets(definition);
+      this.stopTarget(target);
       const state = {
         ...definition,
         mode,
@@ -677,54 +700,69 @@
         timer: null,
         generation: ++this.animationGeneration
       };
-      this.actorAnimations.set(actor, state);
-      void this.showCurrentFrame(actor, state);
+      this.actorAnimations.set(target, state);
+      void this.showCurrentFrame(target, state);
     }
-    async showCurrentFrame(actor, state) {
-      if (!this.isCurrent(actor, state)) return;
+    validateAnimationAssets(definition) {
+      for (const assetName of definition.assetNames) {
+        if (!this.isLoaded({ NAME: assetName })) {
+          throw new Error(`Costume asset is not registered: ${assetName}`);
+        }
+        const mimeType = this.getAssetMimeType({ NAME: assetName });
+        if (!mimeType.startsWith("image/")) {
+          throw new Error(`Asset is not an image: ${assetName}`);
+        }
+      }
+    }
+    async showCurrentFrame(target, state) {
+      if (!this.isCurrent(target, state)) return;
+      if (!this.runtime.targets.includes(target)) {
+        this.stopTarget(target);
+        return;
+      }
       const assetName = state.assetNames[state.frameIndex];
       const durationMs = state.durationsMs[state.frameIndex];
       if (assetName === void 0 || durationMs === void 0) {
-        this.stopActor(actor);
+        this.stopTarget(target);
         return;
       }
       try {
-        await super.setSpriteSkin({ SPRITE: actor, NAME: assetName });
+        this.applySkinToTarget(target, await this.resolveSkin(assetName));
       } catch (error) {
-        this.stopActor(actor);
-        console.error(`Failed to animate actor "${actor}" with asset "${assetName}".`, error);
+        this.stopTarget(target);
+        console.error(`Failed to animate actor "${target.sprite?.name ?? target.id}" with asset "${assetName}".`, error);
         return;
       }
-      if (!this.isCurrent(actor, state)) return;
+      if (!this.isCurrent(target, state)) return;
       state.deadline += durationMs;
       const delay = Math.max(0, state.deadline - performance.now());
-      state.timer = setTimeout(() => this.advance(actor, state), delay);
+      state.timer = setTimeout(() => this.advance(target, state), delay);
     }
-    advance(actor, state) {
-      if (!this.isCurrent(actor, state)) return;
+    advance(target, state) {
+      if (!this.isCurrent(target, state)) return;
       state.timer = null;
       state.frameIndex += 1;
       if (state.frameIndex >= state.assetNames.length) {
         if (state.mode === "loop") {
           state.frameIndex = 0;
         } else {
-          this.actorAnimations.delete(actor);
+          this.actorAnimations.delete(target);
           return;
         }
       }
-      void this.showCurrentFrame(actor, state);
+      void this.showCurrentFrame(target, state);
     }
-    isCurrent(actor, state) {
-      return this.actorAnimations.get(actor)?.generation === state.generation;
+    isCurrent(target, state) {
+      return this.actorAnimations.get(target)?.generation === state.generation;
     }
-    stopActor(actor) {
-      const state = this.actorAnimations.get(actor);
+    stopTarget(target) {
+      const state = this.actorAnimations.get(target);
       if (!state) return;
-      this.actorAnimations.delete(actor);
+      this.actorAnimations.delete(target);
       if (state.timer !== null) clearTimeout(state.timer);
     }
     stopAllActorAnimations() {
-      for (const actor of [...this.actorAnimations.keys()]) this.stopActor(actor);
+      for (const target of [...this.actorAnimations.keys()]) this.stopTarget(target);
     }
   }
   if (!Scratch.extensions.unsandboxed) {

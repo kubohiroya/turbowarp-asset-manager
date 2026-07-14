@@ -84,6 +84,36 @@ DURATIONS = 0.5,0.5,1.0
 
 Starting a new loop or sequence replaces the actor's existing animation. A sequence runs once in the background and leaves its final skin displayed. Setting the actor skin or explicitly stopping the animation cancels the active loop or sequence.
 
+### DSL mapping
+
+The animation blocks map directly to the paper-theater DSL:
+
+```text
+action=Fish:loop:Fish1,Fish2:0.5,0.5
+```
+
+calls the loop block with `ACTOR=Fish`, `COSTUMES=Fish1,Fish2`, and `DURATIONS=0.5,0.5`.
+
+```text
+action=Fish:loop:
+```
+
+maps to the stop block, or to the loop block with empty `COSTUMES` and `DURATIONS`. The currently displayed skin remains unchanged.
+
+```text
+action=Urashima:sequence:Urashima-open1,Urashima-open2,Urashima-open3:1,2,3
+```
+
+starts a one-shot background sequence and returns immediately. After the final duration expires, the last skin remains displayed.
+
+```text
+action=Fish:setSkin:Fish3
+```
+
+stops the animation for `Fish` before applying `Fish3`.
+
+Animation state is tracked per resolved VM target. A block invoked by a clone with its own actor name controls that clone independently. Starting a new animation replaces only that target's previous animation. Clone deletion, green flag, project stop, runtime disposal, and deleting all in-memory assets cancel the relevant timers.
+
 ## Blocks
 
 <!-- BEGIN GENERATED BLOCKS -->
