@@ -745,7 +745,11 @@
       }
       if (!this.isCurrent(actor, state)) return;
       state.deadline += durationMs;
-      const delay = Math.max(0, state.deadline - performance.now());
+      const now = performance.now();
+      if (state.deadline <= now) {
+        state.deadline = now + durationMs;
+      }
+      const delay = state.deadline - now;
       state.timer = setTimeout(() => this.advance(actor, state), delay);
     }
     advance(actor, state) {

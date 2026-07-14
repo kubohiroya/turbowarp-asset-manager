@@ -133,6 +133,25 @@ describe('actor costume animation', () => {
     expect(updateDrawableSkinId).toHaveBeenLastCalledWith(7, 11);
   });
 
+  it('resynchronizes an expired deadline without zero-delay catch-up frames', async () => {
+    const extension = await createExtension();
+    extension.startActorLoop({ACTOR: 'Fish', COSTUMES: 'Fish1,Fish2', DURATIONS: '0.1,0.1'});
+
+    // Simulate a background-tab delay while the current frame is being resolved.
+    vi.advanceTimersByTime(1000);
+    await flushFrame();
+    expect(updateDrawableSkinId).toHaveBeenLastCalledWith(7, 11);
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(updateDrawableSkinId).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(99);
+    expect(updateDrawableSkinId).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(updateDrawableSkinId).toHaveBeenLastCalledWith(7, 12);
+  });
+
   it('plays a sequence once and leaves the final skin displayed', async () => {
     const extension = await createExtension();
     expect(extension.startActorSequence({
