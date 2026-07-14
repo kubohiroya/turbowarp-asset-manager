@@ -1,7 +1,7 @@
 import definitions from './block-definitions.json' with {type: 'json'};
 
 export const EXTENSION_ID = 'twAssetManager';
-export const EXTENSION_VERSION = '2026-07-13-registration-error-reporters';
+export const EXTENSION_VERSION = '2026-07-15-actor-animation-lifecycle';
 
 const DB_NAME = 'tw-asset-manager';
 const DB_VERSION = 1;
@@ -176,7 +176,7 @@ function parseLocalResourceName(payload: string, label: string): string {
 }
 
 export class AssetManagerExtension {
-  private readonly runtime = Scratch.vm.runtime;
+  protected readonly runtime = Scratch.vm.runtime;
   private readonly renderer = this.runtime.renderer;
   private readonly externalAssets = new Map<string, ExternalMemoryAsset>();
   private readonly costumeAssets = new Map<string, CostumeAssetReference>();
@@ -557,7 +557,7 @@ export class AssetManagerExtension {
     return stage;
   }
 
-  private findTargetByName(name: string): TurboWarpTarget | null {
+  protected findTargetByName(name: string): TurboWarpTarget | null {
     const targets = this.runtime.targets;
     return targets.find((target) => !target.isStage && target.isOriginal && target.sprite?.name === name)
       ?? targets.find((target) => !target.isStage && target.sprite?.name === name)
@@ -599,7 +599,7 @@ export class AssetManagerExtension {
       ?? null;
   }
 
-  private async resolveSkin(value: unknown): Promise<number> {
+  protected async resolveSkin(value: unknown): Promise<number> {
     const name = normalizeName(value);
     const kind = this.assetRegistry.get(name);
     if (!kind) throw new Error(`Asset is not loaded: ${name}`);
@@ -656,7 +656,7 @@ export class AssetManagerExtension {
     asset.skinId = null;
   }
 
-  private applySkinToTarget(target: TurboWarpTarget, skinId: number): void {
+  protected applySkinToTarget(target: TurboWarpTarget, skinId: number): void {
     if (target.drawableID === undefined || target.drawableID === null) {
       throw new Error(`Target drawable not found: ${target.sprite?.name ?? 'unknown'}`);
     }
