@@ -112,7 +112,7 @@ action=Fish:setSkin:Fish3
 
 stops the animation for `Fish` before applying `Fish3`.
 
-Animation state is tracked per resolved VM target. A block invoked by a clone with its own actor name controls that clone independently. Starting a new animation replaces only that target's previous animation. Clone deletion, green flag, project stop, runtime disposal, and deleting all in-memory assets cancel the relevant timers.
+Animation state is keyed by the unique ACTOR name. In tmpose-kamishibai, each Actor sprite clone receives its own ACTOR name, so an ACTOR name maps to exactly one VM target; duplicate ACTOR names are rejected as a project invariant violation. The resolved target is retained in the state only as the drawing destination and for deletion cleanup. Starting a new animation replaces that ACTOR's previous animation. ACTOR deletion, green flag, project stop, runtime disposal, and deleting all in-memory assets cancel the relevant timers.
 
 ## Blocks
 

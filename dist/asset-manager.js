@@ -621,7 +621,7 @@
     async setSpriteSkin(args, util) {
       const actor = this.requireActorName(args.ACTOR ?? args.SPRITE);
       const target = this.resolveActorTarget(actor, util);
-      this.stopTarget(target);
+      this.stopActor(actor);
       this.applySkinToTarget(target, await this.resolveSkin(args.NAME));
     }
     startActorLoop(args, util) {
@@ -632,21 +632,22 @@
         if (normalizeName(args.DURATIONS)) {
           throw new Error("DURATIONS must be empty when COSTUMES is empty.");
         }
-        this.stopTarget(target);
+        this.stopActor(actor);
         return;
       }
-      this.startActorAnimation(target, this.parseAnimation(costumesText, args.DURATIONS), "loop");
+      this.startActorAnimation(actor, target, this.parseAnimation(costumesText, args.DURATIONS), "loop");
     }
     startActorSequence(args, util) {
       const actor = this.requireActorName(args.ACTOR);
       const target = this.resolveActorTarget(actor, util);
       const costumesText = normalizeName(args.COSTUMES);
       if (!costumesText) throw new Error("COSTUMES is empty.");
-      this.startActorAnimation(target, this.parseAnimation(costumesText, args.DURATIONS), "sequence");
+      this.startActorAnimation(actor, target, this.parseAnimation(costumesText, args.DURATIONS), "sequence");
     }
     stopActorAnimation(args, util) {
       const actor = this.requireActorName(args.ACTOR);
-      this.stopTarget(this.resolveActorTarget(actor, util));
+      this.resolveActorTarget(actor, util);
+      this.stopActor(actor);
     }
     deleteAllMemoryAssets() {
       this.stopAllActorAnimations();
@@ -658,11 +659,17 @@
       return actor;
     }
     resolveActorTarget(actor, util) {
+      const matches = this.runtime.targets.filter(
+        (target2) => !target2.isStage && target2.sprite?.name === actor
+      );
+      if (matches.length > 1) {
+        throw new Error(`Actor name is not unique: ${actor}`);
+      }
       const invokingTarget = util?.target;
       if (invokingTarget && !invokingTarget.isStage && invokingTarget.sprite?.name === actor) {
         return invokingTarget;
       }
-      const target = this.findTargetByName(actor);
+      const target = matches[0] ?? this.findTargetByName(actor);
       if (!target) throw new Error(`Actor not found: ${actor}`);
       return target;
     }
@@ -689,19 +696,21 @@
       });
       return { assetNames, durationsMs };
     }
-    startActorAnimation(target, definition, mode) {
+    startActorAnimation(actor, target, definition, mode) {
       this.validateAnimationAssets(definition);
-      this.stopTarget(target);
+      this.stopActor(actor);
       const state = {
         ...definition,
+        actor,
+        target,
         mode,
         frameIndex: 0,
         deadline: performance.now(),
         timer: null,
         generation: ++this.animationGeneration
       };
-      this.actorAnimations.set(target, state);
-      void this.showCurrentFrame(target, state);
+      this.actorAnimations.set(actor, state);
+      void this.showCurrentFrame(actor, state);
     }
     validateAnimationAssets(definition) {
       for (const assetName of definition.assetNames) {
@@ -714,55 +723,61 @@
         }
       }
     }
-    async showCurrentFrame(target, state) {
-      if (!this.isCurrent(target, state)) return;
+    async showCurrentFrame(actor, state) {
+      if (!this.isCurrent(actor, state)) return;
+      const target = state.target;
       if (!this.runtime.targets.includes(target)) {
-        this.stopTarget(target);
+        this.stopActor(actor);
         return;
       }
       const assetName = state.assetNames[state.frameIndex];
       const durationMs = state.durationsMs[state.frameIndex];
       if (assetName === void 0 || durationMs === void 0) {
-        this.stopTarget(target);
+        this.stopActor(actor);
         return;
       }
       try {
         this.applySkinToTarget(target, await this.resolveSkin(assetName));
       } catch (error) {
-        this.stopTarget(target);
+        this.stopActor(actor);
         console.error(`Failed to animate actor "${target.sprite?.name ?? target.id}" with asset "${assetName}".`, error);
         return;
       }
-      if (!this.isCurrent(target, state)) return;
+      if (!this.isCurrent(actor, state)) return;
       state.deadline += durationMs;
       const delay = Math.max(0, state.deadline - performance.now());
-      state.timer = setTimeout(() => this.advance(target, state), delay);
+      state.timer = setTimeout(() => this.advance(actor, state), delay);
     }
-    advance(target, state) {
-      if (!this.isCurrent(target, state)) return;
+    advance(actor, state) {
+      if (!this.isCurrent(actor, state)) return;
       state.timer = null;
       state.frameIndex += 1;
       if (state.frameIndex >= state.assetNames.length) {
         if (state.mode === "loop") {
           state.frameIndex = 0;
         } else {
-          this.actorAnimations.delete(target);
+          this.actorAnimations.delete(actor);
           return;
         }
       }
-      void this.showCurrentFrame(target, state);
+      void this.showCurrentFrame(actor, state);
     }
-    isCurrent(target, state) {
-      return this.actorAnimations.get(target)?.generation === state.generation;
+    isCurrent(actor, state) {
+      return this.actorAnimations.get(actor)?.generation === state.generation;
     }
-    stopTarget(target) {
-      const state = this.actorAnimations.get(target);
+    stopActor(actor) {
+      const state = this.actorAnimations.get(actor);
       if (!state) return;
-      this.actorAnimations.delete(target);
+      this.actorAnimations.delete(actor);
       if (state.timer !== null) clearTimeout(state.timer);
     }
+    stopTarget(target) {
+      for (const [actor, state] of this.actorAnimations) {
+        if (state.target === target) this.stopActor(actor);
+      }
+    }
     stopAllActorAnimations() {
-      for (const target of [...this.actorAnimations.keys()]) this.stopTarget(target);
+      for (const actor of [...this.actorAnimations.keys()]) this.stopActor(actor);
     }
   }
   if (!Scratch.extensions.unsandboxed) {

@@ -1,6 +1,10 @@
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {AnimatedAssetManagerExtension} from '../src/animation.js';
 
+interface TestAnimationInternals {
+  actorAnimations: Map<string, {target: TurboWarpTarget}>;
+}
+
 describe('actor costume animation', () => {
   const updateDrawableSkinId = vi.fn();
   const runtimeOn = vi.fn();
@@ -32,7 +36,11 @@ describe('actor costume animation', () => {
     isStage: false,
     isOriginal: false,
     drawableID: 8,
-    sprite: sprite.sprite!
+    sprite: {
+      name: 'FishClone',
+      costumes: sprite.sprite!.costumes,
+      sounds: []
+    }
   };
   const bird: TurboWarpTarget = {
     id: 'bird-id',
@@ -178,7 +186,7 @@ describe('actor costume animation', () => {
   it('setThisSpriteSkin cancels animation for the invoking clone only', async () => {
     const extension = await createExtension();
     extension.startActorLoop(
-      {ACTOR: 'Fish', COSTUMES: 'Fish1,Fish2', DURATIONS: '0.1,0.1'},
+      {ACTOR: 'FishClone', COSTUMES: 'Fish1,Fish2', DURATIONS: '0.1,0.1'},
       {target: clone}
     );
     await flushFrame();
@@ -214,18 +222,35 @@ describe('actor costume animation', () => {
     expect(updateDrawableSkinId).toHaveBeenCalledWith(9, 22);
   });
 
-  it('tracks animations per target and cleans up a deleted clone', async () => {
+  it('keys animation state by unique actor name and cleans up its deleted target', async () => {
     const extension = await createExtension();
     extension.startActorLoop(
-      {ACTOR: 'Fish', COSTUMES: 'Fish1,Fish2', DURATIONS: '0.1,0.1'},
+      {ACTOR: 'FishClone', COSTUMES: 'Fish1,Fish2', DURATIONS: '0.1,0.1'},
       {target: clone}
     );
     await flushFrame();
     expect(updateDrawableSkinId).toHaveBeenLastCalledWith(8, 11);
+    const internals = extension as unknown as TestAnimationInternals;
+    expect(internals.actorAnimations.get('FishClone')?.target).toBe(clone);
 
     emitRuntime('STOP_FOR_TARGET', clone);
     await vi.advanceTimersByTimeAsync(1000);
     expect(updateDrawableSkinId).toHaveBeenCalledTimes(1);
+    expect(internals.actorAnimations.has('FishClone')).toBe(false);
+  });
+
+  it('rejects duplicate ACTOR names as a project invariant violation', async () => {
+    const extension = await createExtension();
+    const duplicate: TurboWarpTarget = {
+      ...clone,
+      id: 'duplicate-fish-id',
+      sprite: {...clone.sprite!, name: 'Fish'}
+    };
+    Scratch.vm.runtime.targets.push(duplicate);
+
+    expect(() => extension.startActorLoop({
+      ACTOR: 'Fish', COSTUMES: 'Fish1', DURATIONS: '0.1'
+    })).toThrow('Actor name is not unique: Fish');
   });
 
   it('cleans up animations on green flag and project stop', async () => {
