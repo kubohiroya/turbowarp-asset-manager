@@ -112,6 +112,12 @@ describe('project-local assets', () => {
   const updateDrawableSkinId = vi.fn();
   const destroySkin = vi.fn();
   const playSound = vi.fn(() => Promise.resolve());
+  const setSpriteSize = vi.fn();
+  const setTurtleSize = vi.fn();
+  const setTwinSize = vi.fn();
+  const setAmbiguousSize = vi.fn();
+  const setStageSize = vi.fn();
+  const setUrashimaSize = vi.fn();
 
   const soundBank = {playSound};
   const sprite: TurboWarpTarget = {
@@ -119,6 +125,8 @@ describe('project-local assets', () => {
     isStage: false,
     isOriginal: true,
     drawableID: 7,
+    size: 250,
+    setSize: setSpriteSize,
     sprite: {
       name: 'Hero',
       costumes: [{name: 'normal', assetId: 'costume-asset', skinId: 42, dataFormat: 'png'}],
@@ -131,6 +139,8 @@ describe('project-local assets', () => {
     isStage: false,
     isOriginal: true,
     drawableID: 8,
+    size: 175,
+    setSize: setTurtleSize,
     sprite: {
       name: 'Turtle',
       costumes: [{name: 'walk', assetId: 'turtle-costume', skinId: 43, dataFormat: 'svg'}],
@@ -143,6 +153,8 @@ describe('project-local assets', () => {
     isStage: false,
     isOriginal: true,
     drawableID: 9,
+    size: 100,
+    setSize: setTwinSize,
     sprite: {
       name: 'Twin',
       costumes: [
@@ -158,6 +170,8 @@ describe('project-local assets', () => {
     isStage: false,
     isOriginal: true,
     drawableID: 10,
+    size: 100,
+    setSize: setAmbiguousSize,
     sprite: {
       name: 'Ambiguous',
       costumes: [
@@ -173,6 +187,8 @@ describe('project-local assets', () => {
     isStage: true,
     isOriginal: true,
     drawableID: 0,
+    size: 100,
+    setSize: setStageSize,
     sprite: {
       name: 'Stage',
       costumes: [
@@ -191,6 +207,8 @@ describe('project-local assets', () => {
     isStage: false,
     isOriginal: true,
     drawableID: 11,
+    size: 100,
+    setSize: setUrashimaSize,
     sprite: {
       name: 'Urashima',
       costumes: [],
@@ -207,6 +225,12 @@ describe('project-local assets', () => {
     updateDrawableSkinId.mockClear();
     destroySkin.mockClear();
     playSound.mockClear();
+    setSpriteSize.mockClear();
+    setTurtleSize.mockClear();
+    setTwinSize.mockClear();
+    setAmbiguousSize.mockClear();
+    setStageSize.mockClear();
+    setUrashimaSize.mockClear();
 
     vi.stubGlobal('Scratch', {
       vm: {
@@ -296,6 +320,7 @@ describe('project-local assets', () => {
     await extension.registerAsset({RESOURCE_ID: 'costume:Hero:normal', NAME: 'hero'});
     await extension.setStageSkin({NAME: 'hero'});
     expect(updateDrawableSkinId).toHaveBeenLastCalledWith(0, 42);
+    expect(setStageSize).not.toHaveBeenCalled();
 
     extension.deleteMemoryAsset({NAME: 'hero'});
     expect(destroySkin).not.toHaveBeenCalled();
@@ -303,7 +328,36 @@ describe('project-local assets', () => {
     await extension.registerAsset({RESOURCE_ID: 'backdrop:forest', NAME: 'forest'});
     await extension.setThisSpriteSkin({NAME: 'forest'}, {target: sprite});
     expect(updateDrawableSkinId).toHaveBeenLastCalledWith(7, 99);
+    expect(setSpriteSize).not.toHaveBeenCalled();
     expect(extension.getAssetMimeType({NAME: 'forest'})).toBe('image/svg+xml');
+  });
+
+  it('applies the source sprite size to named sprites and invoking targets', async () => {
+    const extension = new AssetManagerExtension();
+    await extension.registerAsset({RESOURCE_ID: 'costume:Hero:normal', NAME: 'hero'});
+    await extension.registerAsset({RESOURCE_ID: 'costume:Turtle:walk', NAME: 'turtle'});
+
+    await extension.setThisSpriteSkin({NAME: 'hero'}, {target: turtle});
+    expect(updateDrawableSkinId).toHaveBeenLastCalledWith(8, 42);
+    expect(setTurtleSize).toHaveBeenLastCalledWith(250);
+
+    await extension.setSpriteSkin({SPRITE: 'Hero', NAME: 'turtle'});
+    expect(updateDrawableSkinId).toHaveBeenLastCalledWith(7, 43);
+    expect(setSpriteSize).toHaveBeenLastCalledWith(175);
+  });
+
+  it('leaves the target size unchanged for external images', async () => {
+    const extension = new AssetManagerExtension();
+    const internals = extension as unknown as TestExtensionInternals;
+    internals.externalAssets.set('external-image', {
+      kind: 'external', name: 'external-image', url: 'https://example.com/image.png',
+      mimeType: 'image/png', data: new ArrayBuffer(0), cachedAt: 1, skinId: 501
+    });
+    internals.assetRegistry.set('external-image', 'external');
+
+    await extension.setThisSpriteSkin({NAME: 'external-image'}, {target: sprite});
+    expect(updateDrawableSkinId).toHaveBeenLastCalledWith(7, 501);
+    expect(setSpriteSize).not.toHaveBeenCalled();
   });
 
   it('uses the registered asset name when the costume name is omitted', async () => {

@@ -7,6 +7,10 @@ interface TestAnimationInternals {
 
 describe('actor costume animation', () => {
   const updateDrawableSkinId = vi.fn();
+  const setFishSize = vi.fn();
+  const setStageSize = vi.fn();
+  const setCloneSize = vi.fn();
+  const setBirdSize = vi.fn();
   const runtimeOn = vi.fn();
   const runtimeListeners = new Map<string, Array<(target?: TurboWarpTarget) => void>>();
   const sprite: TurboWarpTarget = {
@@ -14,6 +18,8 @@ describe('actor costume animation', () => {
     isStage: false,
     isOriginal: true,
     drawableID: 7,
+    size: 160,
+    setSize: setFishSize,
     sprite: {
       name: 'Fish',
       costumes: [
@@ -29,6 +35,8 @@ describe('actor costume animation', () => {
     isStage: true,
     isOriginal: true,
     drawableID: 0,
+    size: 100,
+    setSize: setStageSize,
     sprite: {name: 'Stage', costumes: [], sounds: []}
   };
   const clone: TurboWarpTarget = {
@@ -36,6 +44,8 @@ describe('actor costume animation', () => {
     isStage: false,
     isOriginal: false,
     drawableID: 8,
+    size: 100,
+    setSize: setCloneSize,
     sprite: {
       name: 'FishClone',
       costumes: sprite.sprite!.costumes,
@@ -47,6 +57,8 @@ describe('actor costume animation', () => {
     isStage: false,
     isOriginal: true,
     drawableID: 9,
+    size: 80,
+    setSize: setBirdSize,
     sprite: {
       name: 'Bird',
       costumes: [
@@ -60,6 +72,10 @@ describe('actor costume animation', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     updateDrawableSkinId.mockClear();
+    setFishSize.mockClear();
+    setStageSize.mockClear();
+    setCloneSize.mockClear();
+    setBirdSize.mockClear();
     runtimeOn.mockClear();
     runtimeListeners.clear();
     runtimeOn.mockImplementation((eventName: string, listener: (target?: TurboWarpTarget) => void) => {
@@ -168,6 +184,19 @@ describe('actor costume animation', () => {
     expect(updateDrawableSkinId).toHaveBeenCalledTimes(2);
   });
 
+  it('applies each animation asset source size to the actor', async () => {
+    const extension = await createExtension();
+    extension.startActorSequence({
+      ACTOR: 'Fish', COSTUMES: 'Fish1,Bird1', DURATIONS: '0.1,0.1'
+    });
+    await flushFrame();
+    expect(setFishSize).toHaveBeenLastCalledWith(160);
+
+    await vi.advanceTimersByTimeAsync(100);
+    expect(updateDrawableSkinId).toHaveBeenLastCalledWith(7, 21);
+    expect(setFishSize).toHaveBeenLastCalledWith(80);
+  });
+
   it('stops a loop when loop receives empty COSTUMES and DURATIONS', async () => {
     const extension = await createExtension();
     extension.startActorLoop({ACTOR: 'Fish', COSTUMES: 'Fish1,Fish2', DURATIONS: '0.1,0.1'});
@@ -196,6 +225,7 @@ describe('actor costume animation', () => {
 
     await extension.setSpriteSkin({SPRITE: 'Fish', NAME: 'Fish3'});
     expect(updateDrawableSkinId).toHaveBeenLastCalledWith(7, 13);
+    expect(setFishSize).toHaveBeenLastCalledWith(160);
 
     await vi.advanceTimersByTimeAsync(1000);
     expect(updateDrawableSkinId).toHaveBeenLastCalledWith(7, 13);
@@ -214,6 +244,7 @@ describe('actor costume animation', () => {
     await vi.advanceTimersByTimeAsync(1000);
     expect(updateDrawableSkinId).toHaveBeenCalledTimes(2);
     expect(updateDrawableSkinId).toHaveBeenLastCalledWith(8, 13);
+    expect(setCloneSize).toHaveBeenLastCalledWith(160);
   });
 
   it('replaces an existing animation for the same actor', async () => {

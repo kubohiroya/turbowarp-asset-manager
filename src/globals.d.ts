@@ -30,7 +30,9 @@ interface TurboWarpTarget {
   isStage: boolean;
   isOriginal?: boolean;
   drawableID?: number | null;
+  size: number;
   sprite?: TurboWarpSprite;
+  setSize(size: number): void;
   emitVisualChange?(): void;
 }
 interface TurboWarpRuntime {

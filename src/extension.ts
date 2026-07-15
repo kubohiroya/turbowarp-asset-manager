@@ -59,6 +59,11 @@ interface SoundAssetReference {
   assetId: string | null;
 }
 
+interface ResolvedSkin {
+  skinId: number;
+  sourceSize: number | null;
+}
+
 export type ParsedResourceIdentifier =
   | {kind: 'cache'}
   | {kind: 'external'; url: string}
@@ -599,12 +604,20 @@ export class AssetManagerExtension {
       ?? null;
   }
 
-  protected async resolveSkin(value: unknown): Promise<number> {
+  protected async resolveSkin(value: unknown): Promise<ResolvedSkin> {
     const name = normalizeName(value);
     const kind = this.assetRegistry.get(name);
     if (!kind) throw new Error(`Asset is not loaded: ${name}`);
-    if (kind === 'external') return this.ensureExternalSkin(name);
-    if (kind === 'costume') return this.resolveCostumeReference(name).costume.skinId as number;
+    if (kind === 'external') {
+      return {skinId: await this.ensureExternalSkin(name), sourceSize: null};
+    }
+    if (kind === 'costume') {
+      const {target, costume} = this.resolveCostumeReference(name);
+      return {
+        skinId: costume.skinId as number,
+        sourceSize: target.isStage || !Number.isFinite(target.size) ? null : target.size
+      };
+    }
     throw new Error(`Asset is not an image: ${name}`);
   }
 
@@ -656,11 +669,12 @@ export class AssetManagerExtension {
     asset.skinId = null;
   }
 
-  protected applySkinToTarget(target: TurboWarpTarget, skinId: number): void {
+  protected applySkinToTarget(target: TurboWarpTarget, skin: ResolvedSkin): void {
     if (target.drawableID === undefined || target.drawableID === null) {
       throw new Error(`Target drawable not found: ${target.sprite?.name ?? 'unknown'}`);
     }
-    this.renderer.updateDrawableSkinId(target.drawableID, skinId);
+    this.renderer.updateDrawableSkinId(target.drawableID, skin.skinId);
+    if (!target.isStage && skin.sourceSize !== null) target.setSize(skin.sourceSize);
     target.emitVisualChange?.();
     this.runtime.requestRedraw?.();
   }
