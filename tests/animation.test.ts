@@ -71,11 +71,19 @@ describe('actor costume animation', () => {
 
   beforeEach(() => {
     vi.useFakeTimers();
+    sprite.size = 160;
+    stage.size = 100;
+    clone.size = 100;
+    bird.size = 80;
     updateDrawableSkinId.mockClear();
     setFishSize.mockClear();
     setStageSize.mockClear();
     setCloneSize.mockClear();
     setBirdSize.mockClear();
+    setFishSize.mockImplementation((size: number) => { sprite.size = size; });
+    setStageSize.mockImplementation((size: number) => { stage.size = size; });
+    setCloneSize.mockImplementation((size: number) => { clone.size = size; });
+    setBirdSize.mockImplementation((size: number) => { bird.size = size; });
     runtimeOn.mockClear();
     runtimeListeners.clear();
     runtimeOn.mockImplementation((eventName: string, listener: (target?: TurboWarpTarget) => void) => {
@@ -190,7 +198,7 @@ describe('actor costume animation', () => {
       ACTOR: 'Fish', COSTUMES: 'Fish1,Bird1', DURATIONS: '0.1,0.1'
     });
     await flushFrame();
-    expect(setFishSize).toHaveBeenLastCalledWith(160);
+    expect(setFishSize).not.toHaveBeenCalled();
 
     await vi.advanceTimersByTimeAsync(100);
     expect(updateDrawableSkinId).toHaveBeenLastCalledWith(7, 21);
@@ -225,7 +233,7 @@ describe('actor costume animation', () => {
 
     await extension.setSpriteSkin({SPRITE: 'Fish', NAME: 'Fish3'});
     expect(updateDrawableSkinId).toHaveBeenLastCalledWith(7, 13);
-    expect(setFishSize).toHaveBeenLastCalledWith(160);
+    expect(setFishSize).not.toHaveBeenCalled();
 
     await vi.advanceTimersByTimeAsync(1000);
     expect(updateDrawableSkinId).toHaveBeenLastCalledWith(7, 13);
@@ -245,6 +253,7 @@ describe('actor costume animation', () => {
     expect(updateDrawableSkinId).toHaveBeenCalledTimes(2);
     expect(updateDrawableSkinId).toHaveBeenLastCalledWith(8, 13);
     expect(setCloneSize).toHaveBeenLastCalledWith(160);
+    expect(setCloneSize).toHaveBeenCalledTimes(1);
   });
 
   it('replaces an existing animation for the same actor', async () => {

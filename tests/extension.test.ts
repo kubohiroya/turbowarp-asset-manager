@@ -222,6 +222,12 @@ describe('project-local assets', () => {
   });
 
   beforeEach(() => {
+    sprite.size = 250;
+    turtle.size = 175;
+    twin.size = 100;
+    ambiguous.size = 100;
+    stage.size = 100;
+    urashima.size = 100;
     updateDrawableSkinId.mockClear();
     destroySkin.mockClear();
     playSound.mockClear();
@@ -231,6 +237,12 @@ describe('project-local assets', () => {
     setAmbiguousSize.mockClear();
     setStageSize.mockClear();
     setUrashimaSize.mockClear();
+    setSpriteSize.mockImplementation((size: number) => { sprite.size = size; });
+    setTurtleSize.mockImplementation((size: number) => { turtle.size = size; });
+    setTwinSize.mockImplementation((size: number) => { twin.size = size; });
+    setAmbiguousSize.mockImplementation((size: number) => { ambiguous.size = size; });
+    setStageSize.mockImplementation((size: number) => { stage.size = size; });
+    setUrashimaSize.mockImplementation((size: number) => { urashima.size = size; });
 
     vi.stubGlobal('Scratch', {
       vm: {
@@ -337,9 +349,9 @@ describe('project-local assets', () => {
     await extension.registerAsset({RESOURCE_ID: 'costume:Hero:normal', NAME: 'hero'});
     await extension.registerAsset({RESOURCE_ID: 'costume:Turtle:walk', NAME: 'turtle'});
 
-    await extension.setThisSpriteSkin({NAME: 'hero'}, {target: turtle});
-    expect(updateDrawableSkinId).toHaveBeenLastCalledWith(8, 42);
-    expect(setTurtleSize).toHaveBeenLastCalledWith(250);
+    await extension.setThisSpriteSkin({NAME: 'hero'}, {target: twin});
+    expect(updateDrawableSkinId).toHaveBeenLastCalledWith(9, 42);
+    expect(setTwinSize).toHaveBeenLastCalledWith(250);
 
     await extension.setSpriteSkin({SPRITE: 'Hero', NAME: 'turtle'});
     expect(updateDrawableSkinId).toHaveBeenLastCalledWith(7, 43);

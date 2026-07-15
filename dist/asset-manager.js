@@ -540,7 +540,9 @@
         throw new Error(`Target drawable not found: ${target.sprite?.name ?? "unknown"}`);
       }
       this.renderer.updateDrawableSkinId(target.drawableID, skin.skinId);
-      if (!target.isStage && skin.sourceSize !== null) target.setSize(skin.sourceSize);
+      if (!target.isStage && skin.sourceSize !== null && target.size !== skin.sourceSize) {
+        target.setSize(skin.sourceSize);
+      }
       target.emitVisualChange?.();
       this.runtime.requestRedraw?.();
     }
