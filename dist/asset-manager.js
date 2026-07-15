@@ -17,7 +17,7 @@
     blocks
   };
   const EXTENSION_ID = "twAssetManager";
-  const EXTENSION_VERSION = "2026-07-15-actor-animation-lifecycle";
+  const EXTENSION_VERSION = "2026-07-16-source-scale";
   const DB_NAME = "tw-asset-manager";
   const DB_VERSION = 1;
   const STORE_NAME = "assets";

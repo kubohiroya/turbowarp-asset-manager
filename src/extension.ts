@@ -1,7 +1,7 @@
 import definitions from './block-definitions.json' with {type: 'json'};
 
 export const EXTENSION_ID = 'twAssetManager';
-export const EXTENSION_VERSION = '2026-07-15-actor-animation-lifecycle';
+export const EXTENSION_VERSION = '2026-07-16-source-scale';
 
 const DB_NAME = 'tw-asset-manager';
 const DB_VERSION = 1;
