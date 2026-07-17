@@ -1,7 +1,7 @@
 import definitions from './block-definitions.json' with {type: 'json'};
 
 export const EXTENSION_ID = 'twAssetManager';
-export const EXTENSION_VERSION = '2026-07-16-source-scale';
+export const EXTENSION_VERSION = '2026-07-18-typed-animation-actions';
 
 const DB_NAME = 'tw-asset-manager';
 const DB_VERSION = 1;
@@ -681,7 +681,7 @@ export class AssetManagerExtension {
     this.runtime.requestRedraw?.();
   }
 
-  private async playResolvedSound(value: unknown, waitUntilDone: boolean): Promise<void> {
+  protected async playResolvedSound(value: unknown, waitUntilDone: boolean): Promise<void> {
     const name = normalizeName(value);
     const kind = this.assetRegistry.get(name);
     if (!kind) throw new Error(`Asset is not loaded: ${name}`);

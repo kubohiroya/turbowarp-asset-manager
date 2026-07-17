@@ -2,20 +2,31 @@ import {AssetManagerExtension, normalizeName} from './extension.js';
 
 type BlockArgs = Record<string, unknown>;
 type AnimationMode = 'loop' | 'sequence';
+type AnimationActionKind = 'image' | 'audio';
+
+interface AnimationAction {
+  assetName: string;
+  kind: AnimationActionKind;
+}
 
 interface AnimationDefinition {
-  assetNames: string[];
-  durationsMs: number[];
+  actions: AnimationAction[];
+  intervalsMs: number[];
 }
 
 interface AnimationState extends AnimationDefinition {
   actor: string;
   target: TurboWarpTarget;
-  mode: AnimationMode;
-  frameIndex: number;
+  actionIndex: number;
   deadline: number;
   timer: ReturnType<typeof setTimeout> | null;
   generation: number;
+}
+
+interface AnimationBatch {
+  actions: AnimationAction[];
+  intervalMs: number | null;
+  nextActionIndex: number | null;
 }
 
 interface AnimationAssetsInput {
@@ -28,8 +39,10 @@ interface AnimationAssetsInput {
  *
  * ACTOR is resolved using the existing named-sprite behaviour of setSpriteSkin.
  * ASSETS and DURATIONS are comma-separated strings. ASSETS contains registered
- * image asset names and DURATIONS contains positive seconds. COSTUMES remains
- * accepted as a compatibility alias for projects saved with the earlier block.
+ * image or audio asset names. Each duration is the interval before the next
+ * action, and a zero groups those adjacent actions. Loop has one interval per
+ * action; sequence omits the final interval. COSTUMES remains accepted as a
+ * compatibility alias for projects saved with the earlier block.
  */
 export class AnimatedAssetManagerExtension extends AssetManagerExtension {
   private readonly actorAnimations = new Map<string, AnimationState>();
@@ -76,8 +89,7 @@ export class AnimatedAssetManagerExtension extends AssetManagerExtension {
     this.startActorAnimation(
       actor,
       target,
-      this.parseAnimation(assets.text, args.DURATIONS, assets.argumentName),
-      'loop'
+      this.parseAnimation(assets.text, args.DURATIONS, assets.argumentName, 'loop')
     );
   }
 
@@ -89,8 +101,7 @@ export class AnimatedAssetManagerExtension extends AssetManagerExtension {
     this.startActorAnimation(
       actor,
       target,
-      this.parseAnimation(assets.text, args.DURATIONS, assets.argumentName),
-      'sequence'
+      this.parseAnimation(assets.text, args.DURATIONS, assets.argumentName, 'sequence')
     );
   }
 
@@ -137,10 +148,14 @@ export class AnimatedAssetManagerExtension extends AssetManagerExtension {
   private parseAnimation(
     assetsValue: unknown,
     durationsValue: unknown,
-    argumentName: 'ASSETS' | 'COSTUMES'
+    argumentName: 'ASSETS' | 'COSTUMES',
+    mode: AnimationMode
   ): AnimationDefinition {
     const assetNames = String(assetsValue ?? '').split(',').map((value) => value.trim());
-    const durationTexts = String(durationsValue ?? '').split(',').map((value) => value.trim());
+    const durationsText = normalizeName(durationsValue);
+    const durationTexts = durationsText
+      ? durationsText.split(',').map((value) => value.trim())
+      : [];
 
     if (assetNames.some((name) => !name)) {
       throw new Error(`${argumentName} contains an empty item.`);
@@ -148,59 +163,61 @@ export class AnimatedAssetManagerExtension extends AssetManagerExtension {
     if (durationTexts.some((duration) => !duration)) {
       throw new Error('DURATIONS contains an empty item.');
     }
-    if (assetNames.length !== durationTexts.length) {
+    const expectedDurationCount = mode === 'loop' ? assetNames.length : assetNames.length - 1;
+    if (durationTexts.length !== expectedDurationCount) {
       throw new Error(
-        `${argumentName} and DURATIONS must contain the same number of items ` +
-        `(${assetNames.length} assets, ${durationTexts.length} durations).`
+        `${mode} requires ${expectedDurationCount} DURATIONS items for ${assetNames.length} ` +
+        `${argumentName} items, but received ${durationTexts.length}.`
       );
     }
 
-    const durationsMs = durationTexts.map((duration, index) => {
+    const intervalsMs = durationTexts.map((duration, index) => {
       const seconds = Number(duration);
-      if (!Number.isFinite(seconds) || seconds <= 0) {
-        throw new Error(`DURATIONS item ${index + 1} must be a positive number: ${duration}`);
+      if (!Number.isFinite(seconds) || seconds < 0) {
+        throw new Error(`DURATIONS item ${index + 1} must be a non-negative number: ${duration}`);
       }
       return seconds * 1000;
     });
+    if (mode === 'loop' && !intervalsMs.some((durationMs) => durationMs > 0)) {
+      throw new Error('DURATIONS for loop must contain at least one positive number.');
+    }
 
-    return {assetNames, durationsMs};
+    return {
+      actions: assetNames.map((assetName) => this.createAnimationAction(assetName)),
+      intervalsMs
+    };
   }
 
   private startActorAnimation(
     actor: string,
     target: TurboWarpTarget,
-    definition: AnimationDefinition,
-    mode: AnimationMode
+    definition: AnimationDefinition
   ): void {
-    this.validateAnimationAssets(definition);
     this.stopActor(actor);
     const state: AnimationState = {
       ...definition,
       actor,
       target,
-      mode,
-      frameIndex: 0,
+      actionIndex: 0,
       deadline: performance.now(),
       timer: null,
       generation: ++this.animationGeneration
     };
     this.actorAnimations.set(actor, state);
-    void this.showCurrentFrame(actor, state);
+    void this.showCurrentStep(actor, state);
   }
 
-  private validateAnimationAssets(definition: AnimationDefinition): void {
-    for (const assetName of definition.assetNames) {
-      if (!this.isLoaded({NAME: assetName})) {
-        throw new Error(`Costume asset is not registered: ${assetName}`);
-      }
-      const mimeType = this.getAssetMimeType({NAME: assetName});
-      if (!mimeType.startsWith('image/')) {
-        throw new Error(`Asset is not an image: ${assetName}`);
-      }
+  private createAnimationAction(assetName: string): AnimationAction {
+    if (!this.isLoaded({NAME: assetName})) {
+      throw new Error(`Asset is not registered: ${assetName}`);
     }
+    const mimeType = this.getAssetMimeType({NAME: assetName});
+    if (mimeType.startsWith('image/')) return {assetName, kind: 'image'};
+    if (mimeType.startsWith('audio/')) return {assetName, kind: 'audio'};
+    throw new Error(`Asset is neither image nor audio: ${assetName} (${mimeType || 'unknown MIME type'})`);
   }
 
-  private async showCurrentFrame(actor: string, state: AnimationState): Promise<void> {
+  private async showCurrentStep(actor: string, state: AnimationState): Promise<void> {
     if (!this.isCurrent(actor, state)) return;
     const target = state.target;
     if (!this.runtime.targets.includes(target)) {
@@ -208,46 +225,92 @@ export class AnimatedAssetManagerExtension extends AssetManagerExtension {
       return;
     }
 
-    const assetName = state.assetNames[state.frameIndex];
-    const durationMs = state.durationsMs[state.frameIndex];
-    if (assetName === undefined || durationMs === undefined) {
+    const batch = this.getCurrentBatch(state);
+    if (!batch) {
       this.stopActor(actor);
       return;
     }
 
     try {
-      this.applySkinToTarget(target, await this.resolveSkin(assetName));
+      const preparedActions = await Promise.all(batch.actions.map(async (action) => {
+        if (action.kind === 'image') {
+          return {
+            kind: 'image' as const,
+            assetName: action.assetName,
+            skin: await this.resolveSkin(action.assetName)
+          };
+        }
+        return {kind: 'audio' as const, assetName: action.assetName};
+      }));
+      if (!this.isCurrent(actor, state)) return;
+      if (!this.runtime.targets.includes(target)) {
+        this.stopActor(actor);
+        return;
+      }
+
+      const soundStarts: Promise<void>[] = [];
+      for (const action of preparedActions) {
+        if (action.kind === 'image') {
+          this.applySkinToTarget(target, action.skin);
+        } else {
+          soundStarts.push(this.playResolvedSound(action.assetName, false));
+        }
+      }
+      await Promise.all(soundStarts);
     } catch (error) {
       this.stopActor(actor);
-      console.error(`Failed to animate actor "${target.sprite?.name ?? target.id}" with asset "${assetName}".`, error);
+      const assetNames = batch.actions.map((action) => action.assetName).join(', ');
+      console.error(
+        `Failed to run actor "${target.sprite?.name ?? target.id}" actions "${assetNames}".`,
+        error
+      );
       return;
     }
 
     if (!this.isCurrent(actor, state)) return;
-    state.deadline += durationMs;
+    const intervalMs = batch.intervalMs;
+    const nextActionIndex = batch.nextActionIndex;
+    if (intervalMs === null || nextActionIndex === null) {
+      this.actorAnimations.delete(actor);
+      return;
+    }
+    state.deadline += intervalMs;
     const now = performance.now();
     if (state.deadline <= now) {
-      state.deadline = now + durationMs;
+      state.deadline = now + intervalMs;
     }
     const delay = state.deadline - now;
-    state.timer = setTimeout(() => this.advance(actor, state), delay);
+    state.timer = setTimeout(() => this.advance(actor, state, nextActionIndex), delay);
   }
 
-  private advance(actor: string, state: AnimationState): void {
+  private getCurrentBatch(state: AnimationState): AnimationBatch | null {
+    if (!state.actions[state.actionIndex]) return null;
+    const actions: AnimationAction[] = [];
+    let actionIndex = state.actionIndex;
+
+    for (let count = 0; count < state.actions.length; count += 1) {
+      const action = state.actions[actionIndex];
+      if (!action) return null;
+      actions.push(action);
+
+      const intervalMs = state.intervalsMs[actionIndex];
+      if (intervalMs === undefined) {
+        return {actions, intervalMs: null, nextActionIndex: null};
+      }
+      const nextActionIndex = (actionIndex + 1) % state.actions.length;
+      if (intervalMs > 0) {
+        return {actions, intervalMs, nextActionIndex};
+      }
+      actionIndex = nextActionIndex;
+    }
+    return null;
+  }
+
+  private advance(actor: string, state: AnimationState, nextActionIndex: number): void {
     if (!this.isCurrent(actor, state)) return;
     state.timer = null;
-    state.frameIndex += 1;
-
-    if (state.frameIndex >= state.assetNames.length) {
-      if (state.mode === 'loop') {
-        state.frameIndex = 0;
-      } else {
-        this.actorAnimations.delete(actor);
-        return;
-      }
-    }
-
-    void this.showCurrentFrame(actor, state);
+    state.actionIndex = nextActionIndex;
+    void this.showCurrentStep(actor, state);
   }
 
   private isCurrent(actor: string, state: AnimationState): boolean {

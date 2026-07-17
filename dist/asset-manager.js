@@ -11,13 +11,13 @@
   var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
   var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
   const extensionName = "Asset Manager";
-  const blocks = [{ "opcode": "registerAsset", "blockType": "COMMAND", "text": "register resource [RESOURCE_ID] as asset [NAME]", "description": "Registers an external URL, cached asset, sprite costume, stage backdrop, or project sound under one asset name.", "arguments": { "RESOURCE_ID": { "type": "STRING", "defaultValue": "https://example.com/asset.png" }, "NAME": { "type": "STRING", "defaultValue": "asset1" } } }, { "opcode": "assetErrorType", "blockType": "REPORTER", "text": "asset registration error type", "description": "Returns the stable type token for the most recent asset registration error, or an empty string when the latest registration succeeded.", "arguments": {} }, { "opcode": "assetErrorLabel", "blockType": "REPORTER", "text": "asset registration error label", "description": "Returns the missing or invalid name associated with the most recent asset registration error, or an empty string when the latest registration succeeded.", "arguments": {} }, { "opcode": "loadAsset", "blockType": "COMMAND", "text": "load asset from URL [URL] or cache as [NAME]", "description": "Legacy compatibility block. Loads an external image or audio asset from the supplied URL, or from IndexedDB when the URL is empty.", "arguments": { "URL": { "type": "STRING", "defaultValue": "https://example.com/asset.png" }, "NAME": { "type": "STRING", "defaultValue": "asset1" } }, "hideFromPalette": true }, { "opcode": "deleteMemoryAsset", "blockType": "COMMAND", "text": "delete asset [NAME] from memory", "description": "Unregisters one asset. Owned external renderer skins are released; project costumes and sounds are left unchanged.", "arguments": { "NAME": { "type": "STRING", "defaultValue": "asset1" } } }, { "opcode": "deleteAllMemoryAssets", "blockType": "COMMAND", "text": "delete all assets from memory", "description": "Unregisters all assets, releases owned external renderer skins, stops actor animations, and stops tracked external audio playback.", "arguments": {} }, { "opcode": "deleteCachedAsset", "blockType": "COMMAND", "text": "delete asset [NAME] from cache", "description": "Deletes one named external asset from the IndexedDB cache.", "arguments": { "NAME": { "type": "STRING", "defaultValue": "asset1" } } }, { "opcode": "deleteAllCachedAssets", "blockType": "COMMAND", "text": "delete all assets from cache", "description": "Clears all external assets from the IndexedDB cache.", "arguments": {} }, { "opcode": "isLoaded", "blockType": "BOOLEAN", "text": "asset [NAME] is loaded", "description": "Returns whether the named external or project-local asset is currently registered.", "arguments": { "NAME": { "type": "STRING", "defaultValue": "asset1" } } }, { "opcode": "setThisSpriteSkin", "blockType": "COMMAND", "text": "set this sprite skin to asset [NAME]", "description": "Applies a registered external image, sprite costume, or stage backdrop to the current sprite or clone.", "arguments": { "NAME": { "type": "STRING", "defaultValue": "asset1" } } }, { "opcode": "setSpriteSkin", "blockType": "COMMAND", "text": "set [SPRITE] skin to asset [NAME] (compatibility)", "description": "Stops any actor animation and applies a registered external image, sprite costume, or stage backdrop to a named sprite. This block is retained for compatibility.", "arguments": { "SPRITE": { "type": "STRING", "defaultValue": "Sprite1" }, "NAME": { "type": "STRING", "defaultValue": "asset1" } } }, { "opcode": "startActorLoop", "blockType": "COMMAND", "text": "loop actor [ACTOR] through assets [ASSETS] for seconds [DURATIONS]", "description": "Starts or replaces a background loop. ASSETS is a comma-separated string of registered image asset names, and DURATIONS is a comma-separated string of display durations. Empty ASSETS and DURATIONS stop the actor animation.", "arguments": { "ACTOR": { "type": "STRING", "defaultValue": "Sprite1" }, "ASSETS": { "type": "STRING", "defaultValue": "asset1,asset2" }, "DURATIONS": { "type": "STRING", "defaultValue": "0.5,0.5" } } }, { "opcode": "startActorSequence", "blockType": "COMMAND", "text": "play actor [ACTOR] through assets [ASSETS] for seconds [DURATIONS] once in background", "description": "Starts or replaces a one-shot background sequence and returns immediately. ASSETS is a comma-separated string of registered image asset names, and DURATIONS is a comma-separated string of display durations.", "arguments": { "ACTOR": { "type": "STRING", "defaultValue": "Sprite1" }, "ASSETS": { "type": "STRING", "defaultValue": "asset1,asset2" }, "DURATIONS": { "type": "STRING", "defaultValue": "0.5,0.5" } } }, { "opcode": "stopActorAnimation", "blockType": "COMMAND", "text": "stop animation of actor [ACTOR]", "description": "Stops the actor's current loop or sequence and leaves the currently displayed skin unchanged.", "arguments": { "ACTOR": { "type": "STRING", "defaultValue": "Sprite1" } } }, { "opcode": "setStageSkin", "blockType": "COMMAND", "text": "set stage backdrop to asset [NAME]", "description": "Applies a registered external image, sprite costume, or stage backdrop to the stage drawable.", "arguments": { "NAME": { "type": "STRING", "defaultValue": "backdrop1" } } }, { "opcode": "playSound", "blockType": "COMMAND", "text": "play asset [NAME] as sound", "description": "Starts playback of a registered external audio asset or project sound without waiting for completion.", "arguments": { "NAME": { "type": "STRING", "defaultValue": "sound1" } } }, { "opcode": "playSoundUntilDone", "blockType": "COMMAND", "text": "play asset [NAME] as sound until done", "description": "Plays a registered external audio asset or project sound and waits until playback ends or fails.", "arguments": { "NAME": { "type": "STRING", "defaultValue": "sound1" } } }, { "opcode": "getAssetMimeType", "blockType": "REPORTER", "text": "MIME type of asset [NAME]", "description": "Returns the normalized MIME type of a registered external or project-local asset.", "arguments": { "NAME": { "type": "STRING", "defaultValue": "asset1" } } }, { "opcode": "getVersion", "blockType": "REPORTER", "text": "Asset Manager version", "description": "Returns the Asset Manager implementation version.", "arguments": {} }];
+  const blocks = [{ "opcode": "registerAsset", "blockType": "COMMAND", "text": "register resource [RESOURCE_ID] as asset [NAME]", "description": "Registers an external URL, cached asset, sprite costume, stage backdrop, or project sound under one asset name.", "arguments": { "RESOURCE_ID": { "type": "STRING", "defaultValue": "https://example.com/asset.png" }, "NAME": { "type": "STRING", "defaultValue": "asset1" } } }, { "opcode": "assetErrorType", "blockType": "REPORTER", "text": "asset registration error type", "description": "Returns the stable type token for the most recent asset registration error, or an empty string when the latest registration succeeded.", "arguments": {} }, { "opcode": "assetErrorLabel", "blockType": "REPORTER", "text": "asset registration error label", "description": "Returns the missing or invalid name associated with the most recent asset registration error, or an empty string when the latest registration succeeded.", "arguments": {} }, { "opcode": "loadAsset", "blockType": "COMMAND", "text": "load asset from URL [URL] or cache as [NAME]", "description": "Legacy compatibility block. Loads an external image or audio asset from the supplied URL, or from IndexedDB when the URL is empty.", "arguments": { "URL": { "type": "STRING", "defaultValue": "https://example.com/asset.png" }, "NAME": { "type": "STRING", "defaultValue": "asset1" } }, "hideFromPalette": true }, { "opcode": "deleteMemoryAsset", "blockType": "COMMAND", "text": "delete asset [NAME] from memory", "description": "Unregisters one asset. Owned external renderer skins are released; project costumes and sounds are left unchanged.", "arguments": { "NAME": { "type": "STRING", "defaultValue": "asset1" } } }, { "opcode": "deleteAllMemoryAssets", "blockType": "COMMAND", "text": "delete all assets from memory", "description": "Unregisters all assets, releases owned external renderer skins, stops actor animations, and stops tracked external audio playback.", "arguments": {} }, { "opcode": "deleteCachedAsset", "blockType": "COMMAND", "text": "delete asset [NAME] from cache", "description": "Deletes one named external asset from the IndexedDB cache.", "arguments": { "NAME": { "type": "STRING", "defaultValue": "asset1" } } }, { "opcode": "deleteAllCachedAssets", "blockType": "COMMAND", "text": "delete all assets from cache", "description": "Clears all external assets from the IndexedDB cache.", "arguments": {} }, { "opcode": "isLoaded", "blockType": "BOOLEAN", "text": "asset [NAME] is loaded", "description": "Returns whether the named external or project-local asset is currently registered.", "arguments": { "NAME": { "type": "STRING", "defaultValue": "asset1" } } }, { "opcode": "setThisSpriteSkin", "blockType": "COMMAND", "text": "set this sprite skin to asset [NAME]", "description": "Applies a registered external image, sprite costume, or stage backdrop to the current sprite or clone.", "arguments": { "NAME": { "type": "STRING", "defaultValue": "asset1" } } }, { "opcode": "setSpriteSkin", "blockType": "COMMAND", "text": "set [SPRITE] skin to asset [NAME] (compatibility)", "description": "Stops any actor animation and applies a registered external image, sprite costume, or stage backdrop to a named sprite. This block is retained for compatibility.", "arguments": { "SPRITE": { "type": "STRING", "defaultValue": "Sprite1" }, "NAME": { "type": "STRING", "defaultValue": "asset1" } } }, { "opcode": "startActorLoop", "blockType": "COMMAND", "text": "loop actor [ACTOR] through assets [ASSETS] for seconds [DURATIONS]", "description": "Starts or replaces a background loop. ASSETS contains registered image or audio asset names. DURATIONS must have the same number of items; each item is the interval before the next asset, including the last-to-first interval. A zero makes the next asset start together with the preceding asset. Empty ASSETS and DURATIONS stop the actor animation.", "arguments": { "ACTOR": { "type": "STRING", "defaultValue": "Sprite1" }, "ASSETS": { "type": "STRING", "defaultValue": "asset1,asset2" }, "DURATIONS": { "type": "STRING", "defaultValue": "0.5,0.5" } } }, { "opcode": "startActorSequence", "blockType": "COMMAND", "text": "play actor [ACTOR] through assets [ASSETS] for seconds [DURATIONS] once in background", "description": "Starts or replaces a one-shot background sequence and returns immediately. ASSETS contains registered image or audio asset names. DURATIONS must have exactly one fewer item; each item is the interval before the next asset. A zero makes the next asset start together with the preceding asset.", "arguments": { "ACTOR": { "type": "STRING", "defaultValue": "Sprite1" }, "ASSETS": { "type": "STRING", "defaultValue": "asset1,asset2" }, "DURATIONS": { "type": "STRING", "defaultValue": "0.5" } } }, { "opcode": "stopActorAnimation", "blockType": "COMMAND", "text": "stop animation of actor [ACTOR]", "description": "Stops the actor's current loop or sequence and leaves the currently displayed skin unchanged.", "arguments": { "ACTOR": { "type": "STRING", "defaultValue": "Sprite1" } } }, { "opcode": "setStageSkin", "blockType": "COMMAND", "text": "set stage backdrop to asset [NAME]", "description": "Applies a registered external image, sprite costume, or stage backdrop to the stage drawable.", "arguments": { "NAME": { "type": "STRING", "defaultValue": "backdrop1" } } }, { "opcode": "playSound", "blockType": "COMMAND", "text": "play asset [NAME] as sound", "description": "Starts playback of a registered external audio asset or project sound without waiting for completion.", "arguments": { "NAME": { "type": "STRING", "defaultValue": "sound1" } } }, { "opcode": "playSoundUntilDone", "blockType": "COMMAND", "text": "play asset [NAME] as sound until done", "description": "Plays a registered external audio asset or project sound and waits until playback ends or fails.", "arguments": { "NAME": { "type": "STRING", "defaultValue": "sound1" } } }, { "opcode": "getAssetMimeType", "blockType": "REPORTER", "text": "MIME type of asset [NAME]", "description": "Returns the normalized MIME type of a registered external or project-local asset.", "arguments": { "NAME": { "type": "STRING", "defaultValue": "asset1" } } }, { "opcode": "getVersion", "blockType": "REPORTER", "text": "Asset Manager version", "description": "Returns the Asset Manager implementation version.", "arguments": {} }];
   const definitions = {
     extensionName,
     blocks
   };
   const EXTENSION_ID = "twAssetManager";
-  const EXTENSION_VERSION = "2026-07-16-source-scale";
+  const EXTENSION_VERSION = "2026-07-18-typed-animation-actions";
   const DB_NAME = "tw-asset-manager";
   const DB_VERSION = 1;
   const STORE_NAME = "assets";
@@ -649,8 +649,7 @@
       this.startActorAnimation(
         actor,
         target,
-        this.parseAnimation(assets.text, args.DURATIONS, assets.argumentName),
-        "loop"
+        this.parseAnimation(assets.text, args.DURATIONS, assets.argumentName, "loop")
       );
     }
     startActorSequence(args, util) {
@@ -661,8 +660,7 @@
       this.startActorAnimation(
         actor,
         target,
-        this.parseAnimation(assets.text, args.DURATIONS, assets.argumentName),
-        "sequence"
+        this.parseAnimation(assets.text, args.DURATIONS, assets.argumentName, "sequence")
       );
     }
     stopActorAnimation(args, util) {
@@ -700,98 +698,146 @@
       if (!target) throw new Error(`Actor not found: ${actor}`);
       return target;
     }
-    parseAnimation(assetsValue, durationsValue, argumentName) {
+    parseAnimation(assetsValue, durationsValue, argumentName, mode) {
       const assetNames = String(assetsValue ?? "").split(",").map((value) => value.trim());
-      const durationTexts = String(durationsValue ?? "").split(",").map((value) => value.trim());
+      const durationsText = normalizeName(durationsValue);
+      const durationTexts = durationsText ? durationsText.split(",").map((value) => value.trim()) : [];
       if (assetNames.some((name) => !name)) {
         throw new Error(`${argumentName} contains an empty item.`);
       }
       if (durationTexts.some((duration) => !duration)) {
         throw new Error("DURATIONS contains an empty item.");
       }
-      if (assetNames.length !== durationTexts.length) {
+      const expectedDurationCount = mode === "loop" ? assetNames.length : assetNames.length - 1;
+      if (durationTexts.length !== expectedDurationCount) {
         throw new Error(
-          `${argumentName} and DURATIONS must contain the same number of items (${assetNames.length} assets, ${durationTexts.length} durations).`
+          `${mode} requires ${expectedDurationCount} DURATIONS items for ${assetNames.length} ${argumentName} items, but received ${durationTexts.length}.`
         );
       }
-      const durationsMs = durationTexts.map((duration, index) => {
+      const intervalsMs = durationTexts.map((duration, index) => {
         const seconds = Number(duration);
-        if (!Number.isFinite(seconds) || seconds <= 0) {
-          throw new Error(`DURATIONS item ${index + 1} must be a positive number: ${duration}`);
+        if (!Number.isFinite(seconds) || seconds < 0) {
+          throw new Error(`DURATIONS item ${index + 1} must be a non-negative number: ${duration}`);
         }
         return seconds * 1e3;
       });
-      return { assetNames, durationsMs };
+      if (mode === "loop" && !intervalsMs.some((durationMs) => durationMs > 0)) {
+        throw new Error("DURATIONS for loop must contain at least one positive number.");
+      }
+      return {
+        actions: assetNames.map((assetName) => this.createAnimationAction(assetName)),
+        intervalsMs
+      };
     }
-    startActorAnimation(actor, target, definition, mode) {
-      this.validateAnimationAssets(definition);
+    startActorAnimation(actor, target, definition) {
       this.stopActor(actor);
       const state = {
         ...definition,
         actor,
         target,
-        mode,
-        frameIndex: 0,
+        actionIndex: 0,
         deadline: performance.now(),
         timer: null,
         generation: ++this.animationGeneration
       };
       this.actorAnimations.set(actor, state);
-      void this.showCurrentFrame(actor, state);
+      void this.showCurrentStep(actor, state);
     }
-    validateAnimationAssets(definition) {
-      for (const assetName of definition.assetNames) {
-        if (!this.isLoaded({ NAME: assetName })) {
-          throw new Error(`Costume asset is not registered: ${assetName}`);
-        }
-        const mimeType = this.getAssetMimeType({ NAME: assetName });
-        if (!mimeType.startsWith("image/")) {
-          throw new Error(`Asset is not an image: ${assetName}`);
-        }
+    createAnimationAction(assetName) {
+      if (!this.isLoaded({ NAME: assetName })) {
+        throw new Error(`Asset is not registered: ${assetName}`);
       }
+      const mimeType = this.getAssetMimeType({ NAME: assetName });
+      if (mimeType.startsWith("image/")) return { assetName, kind: "image" };
+      if (mimeType.startsWith("audio/")) return { assetName, kind: "audio" };
+      throw new Error(`Asset is neither image nor audio: ${assetName} (${mimeType || "unknown MIME type"})`);
     }
-    async showCurrentFrame(actor, state) {
+    async showCurrentStep(actor, state) {
       if (!this.isCurrent(actor, state)) return;
       const target = state.target;
       if (!this.runtime.targets.includes(target)) {
         this.stopActor(actor);
         return;
       }
-      const assetName = state.assetNames[state.frameIndex];
-      const durationMs = state.durationsMs[state.frameIndex];
-      if (assetName === void 0 || durationMs === void 0) {
+      const batch = this.getCurrentBatch(state);
+      if (!batch) {
         this.stopActor(actor);
         return;
       }
       try {
-        this.applySkinToTarget(target, await this.resolveSkin(assetName));
+        const preparedActions = await Promise.all(batch.actions.map(async (action) => {
+          if (action.kind === "image") {
+            return {
+              kind: "image",
+              assetName: action.assetName,
+              skin: await this.resolveSkin(action.assetName)
+            };
+          }
+          return { kind: "audio", assetName: action.assetName };
+        }));
+        if (!this.isCurrent(actor, state)) return;
+        if (!this.runtime.targets.includes(target)) {
+          this.stopActor(actor);
+          return;
+        }
+        const soundStarts = [];
+        for (const action of preparedActions) {
+          if (action.kind === "image") {
+            this.applySkinToTarget(target, action.skin);
+          } else {
+            soundStarts.push(this.playResolvedSound(action.assetName, false));
+          }
+        }
+        await Promise.all(soundStarts);
       } catch (error) {
         this.stopActor(actor);
-        console.error(`Failed to animate actor "${target.sprite?.name ?? target.id}" with asset "${assetName}".`, error);
+        const assetNames = batch.actions.map((action) => action.assetName).join(", ");
+        console.error(
+          `Failed to run actor "${target.sprite?.name ?? target.id}" actions "${assetNames}".`,
+          error
+        );
         return;
       }
       if (!this.isCurrent(actor, state)) return;
-      state.deadline += durationMs;
+      const intervalMs = batch.intervalMs;
+      const nextActionIndex = batch.nextActionIndex;
+      if (intervalMs === null || nextActionIndex === null) {
+        this.actorAnimations.delete(actor);
+        return;
+      }
+      state.deadline += intervalMs;
       const now = performance.now();
       if (state.deadline <= now) {
-        state.deadline = now + durationMs;
+        state.deadline = now + intervalMs;
       }
       const delay = state.deadline - now;
-      state.timer = setTimeout(() => this.advance(actor, state), delay);
+      state.timer = setTimeout(() => this.advance(actor, state, nextActionIndex), delay);
     }
-    advance(actor, state) {
+    getCurrentBatch(state) {
+      if (!state.actions[state.actionIndex]) return null;
+      const actions = [];
+      let actionIndex = state.actionIndex;
+      for (let count = 0; count < state.actions.length; count += 1) {
+        const action = state.actions[actionIndex];
+        if (!action) return null;
+        actions.push(action);
+        const intervalMs = state.intervalsMs[actionIndex];
+        if (intervalMs === void 0) {
+          return { actions, intervalMs: null, nextActionIndex: null };
+        }
+        const nextActionIndex = (actionIndex + 1) % state.actions.length;
+        if (intervalMs > 0) {
+          return { actions, intervalMs, nextActionIndex };
+        }
+        actionIndex = nextActionIndex;
+      }
+      return null;
+    }
+    advance(actor, state, nextActionIndex) {
       if (!this.isCurrent(actor, state)) return;
       state.timer = null;
-      state.frameIndex += 1;
-      if (state.frameIndex >= state.assetNames.length) {
-        if (state.mode === "loop") {
-          state.frameIndex = 0;
-        } else {
-          this.actorAnimations.delete(actor);
-          return;
-        }
-      }
-      void this.showCurrentFrame(actor, state);
+      state.actionIndex = nextActionIndex;
+      void this.showCurrentStep(actor, state);
     }
     isCurrent(actor, state) {
       return this.actorAnimations.get(actor)?.generation === state.generation;

@@ -7,6 +7,7 @@ interface TestAnimationInternals {
 
 describe('actor costume animation', () => {
   const updateDrawableSkinId = vi.fn();
+  const playSound = vi.fn(() => Promise.resolve());
   const setFishSize = vi.fn();
   const setStageSize = vi.fn();
   const setCloneSize = vi.fn();
@@ -27,7 +28,11 @@ describe('actor costume animation', () => {
         {name: 'Fish2', assetId: 'fish-2', skinId: 12, dataFormat: 'png'},
         {name: 'Fish3', assetId: 'fish-3', skinId: 13, dataFormat: 'png'}
       ],
-      sounds: []
+      sounds: [
+        {name: 'Bell', assetId: 'bell', soundId: 'bell-sound', dataFormat: 'wav'},
+        {name: 'Chime', assetId: 'chime', soundId: 'chime-sound', dataFormat: 'mp3'}
+      ],
+      soundBank: {playSound}
     }
   };
   const stage: TurboWarpTarget = {
@@ -76,6 +81,7 @@ describe('actor costume animation', () => {
     clone.size = 100;
     bird.size = 80;
     updateDrawableSkinId.mockClear();
+    playSound.mockClear();
     setFishSize.mockClear();
     setStageSize.mockClear();
     setCloneSize.mockClear();
@@ -124,6 +130,8 @@ describe('actor costume animation', () => {
     await extension.registerAsset({RESOURCE_ID: 'costume:Fish:Fish3', NAME: 'Fish3'});
     await extension.registerAsset({RESOURCE_ID: 'costume:Bird:Bird1', NAME: 'Bird1'});
     await extension.registerAsset({RESOURCE_ID: 'costume:Bird:Bird2', NAME: 'Bird2'});
+    await extension.registerAsset({RESOURCE_ID: 'sound:Fish:Bell', NAME: 'Bell'});
+    await extension.registerAsset({RESOURCE_ID: 'sound:Fish:Chime', NAME: 'Chime'});
     return extension;
   }
 
@@ -179,7 +187,7 @@ describe('actor costume animation', () => {
   it('plays a sequence once and leaves the final skin displayed', async () => {
     const extension = await createExtension();
     expect(extension.startActorSequence({
-      ACTOR: 'Fish', COSTUMES: 'Fish1,Fish2', DURATIONS: '0.25,0.75'
+      ACTOR: 'Fish', COSTUMES: 'Fish1,Fish2', DURATIONS: '0.25'
     })).toBeUndefined();
     await flushFrame();
     expect(updateDrawableSkinId).toHaveBeenLastCalledWith(7, 11);
@@ -192,10 +200,112 @@ describe('actor costume animation', () => {
     expect(updateDrawableSkinId).toHaveBeenCalledTimes(2);
   });
 
+  it('runs zero-duration image and audio assets with the preceding loop step', async () => {
+    const extension = await createExtension();
+    extension.startActorLoop({
+      ACTOR: 'Fish',
+      ASSETS: 'Fish1,Bell,Chime,Fish2',
+      DURATIONS: '0,0,0.5,0.25'
+    });
+    await flushFrame();
+
+    expect(updateDrawableSkinId).toHaveBeenLastCalledWith(7, 11);
+    expect(playSound).toHaveBeenCalledTimes(2);
+    expect(playSound).toHaveBeenCalledWith(sprite, 'bell-sound');
+    expect(playSound).toHaveBeenCalledWith(sprite, 'chime-sound');
+
+    await vi.advanceTimersByTimeAsync(499);
+    expect(updateDrawableSkinId).toHaveBeenCalledTimes(1);
+    expect(playSound).toHaveBeenCalledTimes(2);
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(updateDrawableSkinId).toHaveBeenLastCalledWith(7, 12);
+
+    await vi.advanceTimersByTimeAsync(250);
+    expect(updateDrawableSkinId).toHaveBeenLastCalledWith(7, 11);
+    expect(playSound).toHaveBeenCalledTimes(4);
+  });
+
+  it('uses the final loop duration as the interval back to the first asset', async () => {
+    const extension = await createExtension();
+    extension.startActorLoop({
+      ACTOR: 'Fish',
+      ASSETS: 'Fish1,Fish2,Bell',
+      DURATIONS: '0.1,0.1,0'
+    });
+    await flushFrame();
+    expect(updateDrawableSkinId).toHaveBeenLastCalledWith(7, 11);
+
+    await vi.advanceTimersByTimeAsync(100);
+    expect(updateDrawableSkinId).toHaveBeenLastCalledWith(7, 12);
+
+    await vi.advanceTimersByTimeAsync(100);
+    expect(playSound).toHaveBeenLastCalledWith(sprite, 'bell-sound');
+    expect(updateDrawableSkinId).toHaveBeenLastCalledWith(7, 11);
+  });
+
+  it('runs a sound-only sequence without waiting for playback to finish', async () => {
+    const pendingPlayback = new Promise<void>(() => {});
+    playSound.mockReturnValueOnce(pendingPlayback);
+    const extension = await createExtension();
+
+    extension.startActorSequence({
+      ACTOR: 'Fish',
+      ASSETS: 'Bell,Chime',
+      DURATIONS: '0.1'
+    });
+    await flushFrame();
+    expect(playSound).toHaveBeenLastCalledWith(sprite, 'bell-sound');
+
+    await vi.advanceTimersByTimeAsync(100);
+    expect(playSound).toHaveBeenLastCalledWith(sprite, 'chime-sound');
+
+    await vi.advanceTimersByTimeAsync(200);
+    expect(playSound).toHaveBeenCalledTimes(2);
+    expect(updateDrawableSkinId).not.toHaveBeenCalled();
+  });
+
+  it('uses zero-duration grouping in a one-shot sequence', async () => {
+    const extension = await createExtension();
+    extension.startActorSequence({
+      ACTOR: 'Fish',
+      ASSETS: 'Fish1,Bell,Fish2',
+      DURATIONS: '0,0.1'
+    });
+    await flushFrame();
+
+    expect(updateDrawableSkinId).toHaveBeenLastCalledWith(7, 11);
+    expect(playSound).toHaveBeenLastCalledWith(sprite, 'bell-sound');
+
+    await vi.advanceTimersByTimeAsync(100);
+    expect(updateDrawableSkinId).toHaveBeenLastCalledWith(7, 12);
+
+    await vi.advanceTimersByTimeAsync(200);
+    expect(updateDrawableSkinId).toHaveBeenCalledTimes(2);
+    expect(playSound).toHaveBeenCalledTimes(1);
+  });
+
+  it('allows every sequence interval to be zero', async () => {
+    const extension = await createExtension();
+    extension.startActorSequence({
+      ACTOR: 'Fish',
+      ASSETS: 'Fish1,Bell,Chime',
+      DURATIONS: '0,0'
+    });
+    await flushFrame();
+
+    expect(updateDrawableSkinId).toHaveBeenLastCalledWith(7, 11);
+    expect(playSound).toHaveBeenCalledTimes(2);
+
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(updateDrawableSkinId).toHaveBeenCalledTimes(1);
+    expect(playSound).toHaveBeenCalledTimes(2);
+  });
+
   it('applies each animation asset source size to the actor', async () => {
     const extension = await createExtension();
     extension.startActorSequence({
-      ACTOR: 'Fish', COSTUMES: 'Fish1,Bird1', DURATIONS: '0.1,0.1'
+      ACTOR: 'Fish', COSTUMES: 'Fish1,Bird1', DURATIONS: '0.1'
     });
     await flushFrame();
     expect(setFishSize).not.toHaveBeenCalled();
@@ -260,7 +370,7 @@ describe('actor costume animation', () => {
     const extension = await createExtension();
     extension.startActorLoop({ACTOR: 'Fish', COSTUMES: 'Fish1,Fish2', DURATIONS: '0.1,0.1'});
     await flushFrame();
-    extension.startActorSequence({ACTOR: 'Fish', COSTUMES: 'Fish3', DURATIONS: '0.2'});
+    extension.startActorSequence({ACTOR: 'Fish', COSTUMES: 'Fish3', DURATIONS: ''});
     await flushFrame();
 
     await vi.advanceTimersByTimeAsync(1000);
@@ -334,23 +444,35 @@ describe('actor costume animation', () => {
     })).toThrow('Actor not found: Missing');
     expect(() => extension.startActorLoop({
       ACTOR: 'Fish', COSTUMES: 'Missing', DURATIONS: '0.5'
-    })).toThrow('Costume asset is not registered: Missing');
+    })).toThrow('Asset is not registered: Missing');
   });
 
   it('rejects malformed costume and duration lists', async () => {
     const extension = await createExtension();
     expect(() => extension.startActorLoop({
       ACTOR: 'Fish', COSTUMES: 'Fish1,Fish2', DURATIONS: '0.5'
-    })).toThrow('same number of items');
+    })).toThrow('loop requires 2 DURATIONS items');
+    expect(() => extension.startActorLoop({
+      ACTOR: 'Fish', COSTUMES: 'Fish1,Fish2', DURATIONS: '0.5,0.5,0.5'
+    })).toThrow('loop requires 2 DURATIONS items');
     expect(() => extension.startActorLoop({
       ACTOR: 'Fish', COSTUMES: 'Fish1,,Fish2', DURATIONS: '0.5,0.5,0.5'
     })).toThrow('COSTUMES contains an empty item');
     expect(() => extension.startActorSequence({
       ACTOR: 'Fish', COSTUMES: 'Fish1', DURATIONS: '0'
-    })).toThrow('positive number');
+    })).toThrow('requires 0 DURATIONS items');
     expect(() => extension.startActorSequence({
-      ACTOR: 'Fish', COSTUMES: 'Fish1', DURATIONS: 'later'
-    })).toThrow('positive number');
+      ACTOR: 'Fish', COSTUMES: 'Fish1,Fish2,Fish3', DURATIONS: '0.5'
+    })).toThrow('requires 2 DURATIONS items');
+    expect(() => extension.startActorSequence({
+      ACTOR: 'Fish', COSTUMES: 'Fish1,Fish2', DURATIONS: '-1'
+    })).toThrow('non-negative number');
+    expect(() => extension.startActorSequence({
+      ACTOR: 'Fish', COSTUMES: 'Fish1,Fish2', DURATIONS: 'later'
+    })).toThrow('non-negative number');
+    expect(() => extension.startActorLoop({
+      ACTOR: 'Fish', COSTUMES: 'Fish1,Fish2', DURATIONS: '0,0'
+    })).toThrow('at least one positive number');
     expect(() => extension.startActorSequence({
       ACTOR: 'Fish', COSTUMES: '', DURATIONS: ''
     })).toThrow('COSTUMES is empty');
