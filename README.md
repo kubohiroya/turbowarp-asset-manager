@@ -16,7 +16,7 @@ The built JavaScript file is committed to this repository so that users do not n
 - register sprite costumes and stage backdrops without copying their renderer skins;
 - register sprite and stage sounds without copying their audio data;
 - apply image assets to the current sprite, a named sprite, or the stage;
-- animate named actors with background loops or one-shot costume sequences;
+- animate named actors with background loops or one-shot asset sequences;
 - play audio assets with or without waiting for completion;
 - normalize missing or generic MIME types from file extensions;
 - release only renderer skins owned by Asset Manager when registrations are removed.
@@ -76,13 +76,15 @@ The old `load asset from URL [URL] or cache as [NAME]` opcode remains available 
 The actor animation blocks receive two ordinary string arguments:
 
 ```text
-COSTUMES = Fish1,Fish2,Fish3
+ASSETS = Fish1,Fish2,Fish3
 DURATIONS = 0.5,0.5,1.0
 ```
 
-`COSTUMES` is a comma-separated string of registered image asset names. `DURATIONS` is a comma-separated string of positive display durations in seconds. The two strings must contain the same number of items.
+`ASSETS` is a comma-separated string of registered image asset names. These are Asset Manager names assigned by `register resource ... as asset [NAME]`; they are not raw TurboWarp costume names unless the same text was deliberately used for both. `DURATIONS` is a comma-separated string of positive display durations in seconds. The two strings must contain the same number of items.
 
 Starting a new loop or sequence replaces the actor's existing animation. A sequence runs once in the background and leaves its final skin displayed. Setting the actor skin or explicitly stopping the animation cancels the active loop or sequence.
+
+Projects saved with the earlier animation block argument named `COSTUMES` remain supported as a compatibility measure. New blocks and documentation use `ASSETS`.
 
 ### DSL mapping
 
@@ -92,13 +94,13 @@ The animation blocks map directly to the paper-theater DSL:
 action=Fish:loop:Fish1,Fish2:0.5,0.5
 ```
 
-calls the loop block with `ACTOR=Fish`, `COSTUMES=Fish1,Fish2`, and `DURATIONS=0.5,0.5`.
+calls the loop block with `ACTOR=Fish`, `ASSETS=Fish1,Fish2`, and `DURATIONS=0.5,0.5`.
 
 ```text
 action=Fish:loop:
 ```
 
-maps to the stop block, or to the loop block with empty `COSTUMES` and `DURATIONS`. The currently displayed skin remains unchanged.
+maps to the stop block, or to the loop block with empty `ASSETS` and `DURATIONS`. The currently displayed skin remains unchanged.
 
 ```text
 action=Urashima:sequence:Urashima-open1,Urashima-open2,Urashima-open3:1,2,3
@@ -228,28 +230,28 @@ Stops any actor animation and applies a registered external image, sprite costum
 | `SPRITE` | String, default: `Sprite1` |
 | `NAME` | String, default: `asset1` |
 
-### `loop actor [ACTOR] through assets [COSTUMES] for seconds [DURATIONS]`
+### `loop actor [ACTOR] through assets [ASSETS] for seconds [DURATIONS]`
 
-Starts or replaces a background loop. COSTUMES and DURATIONS are comma-separated strings. Empty COSTUMES and DURATIONS stop the actor animation.
+Starts or replaces a background loop. ASSETS is a comma-separated string of registered image asset names, and DURATIONS is a comma-separated string of display durations. Empty ASSETS and DURATIONS stop the actor animation.
 
 | Property | Value |
 |---|---|
 | Type | Command |
 | Opcode | `startActorLoop` |
 | `ACTOR` | String, default: `Sprite1` |
-| `COSTUMES` | String, default: `costume1,costume2` |
+| `ASSETS` | String, default: `asset1,asset2` |
 | `DURATIONS` | String, default: `0.5,0.5` |
 
-### `play actor [ACTOR] through assets [COSTUMES] for seconds [DURATIONS] once in background`
+### `play actor [ACTOR] through assets [ASSETS] for seconds [DURATIONS] once in background`
 
-Starts or replaces a one-shot background sequence and returns immediately. COSTUMES and DURATIONS are comma-separated strings.
+Starts or replaces a one-shot background sequence and returns immediately. ASSETS is a comma-separated string of registered image asset names, and DURATIONS is a comma-separated string of display durations.
 
 | Property | Value |
 |---|---|
 | Type | Command |
 | Opcode | `startActorSequence` |
 | `ACTOR` | String, default: `Sprite1` |
-| `COSTUMES` | String, default: `costume1,costume2` |
+| `ASSETS` | String, default: `asset1,asset2` |
 | `DURATIONS` | String, default: `0.5,0.5` |
 
 ### `stop animation of actor [ACTOR]`
