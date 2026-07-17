@@ -18,6 +18,11 @@ interface AnimationState extends AnimationDefinition {
   generation: number;
 }
 
+interface AnimationAssetsInput {
+  text: string;
+  argumentName: 'ASSETS' | 'COSTUMES';
+}
+
 /**
  * Asset Manager with actor-level background asset animation.
  *
@@ -57,26 +62,36 @@ export class AnimatedAssetManagerExtension extends AssetManagerExtension {
   startActorLoop(args: BlockArgs, util?: ScratchBlockUtility): void {
     const actor = this.requireActorName(args.ACTOR);
     const target = this.resolveActorTarget(actor, util);
-    const assetsText = this.getAnimationAssetsText(args);
+    const assets = this.getAnimationAssetsInput(args);
 
     // An empty asset list is the DSL-compatible reset form: action=Actor:loop:
-    if (!assetsText) {
+    if (!assets.text) {
       if (normalizeName(args.DURATIONS)) {
-        throw new Error('DURATIONS must be empty when ASSETS is empty.');
+        throw new Error(`DURATIONS must be empty when ${assets.argumentName} is empty.`);
       }
       this.stopActor(actor);
       return;
     }
 
-    this.startActorAnimation(actor, target, this.parseAnimation(assetsText, args.DURATIONS), 'loop');
+    this.startActorAnimation(
+      actor,
+      target,
+      this.parseAnimation(assets.text, args.DURATIONS, assets.argumentName),
+      'loop'
+    );
   }
 
   startActorSequence(args: BlockArgs, util?: ScratchBlockUtility): void {
     const actor = this.requireActorName(args.ACTOR);
     const target = this.resolveActorTarget(actor, util);
-    const assetsText = this.getAnimationAssetsText(args);
-    if (!assetsText) throw new Error('COSTUMES is empty (the current argument name is ASSETS).');
-    this.startActorAnimation(actor, target, this.parseAnimation(assetsText, args.DURATIONS), 'sequence');
+    const assets = this.getAnimationAssetsInput(args);
+    if (!assets.text) throw new Error(`${assets.argumentName} is empty.`);
+    this.startActorAnimation(
+      actor,
+      target,
+      this.parseAnimation(assets.text, args.DURATIONS, assets.argumentName),
+      'sequence'
+    );
   }
 
   stopActorAnimation(args: BlockArgs, util?: ScratchBlockUtility): void {
@@ -90,8 +105,11 @@ export class AnimatedAssetManagerExtension extends AssetManagerExtension {
     super.deleteAllMemoryAssets();
   }
 
-  private getAnimationAssetsText(args: BlockArgs): string {
-    return normalizeName(args.ASSETS ?? args.COSTUMES);
+  private getAnimationAssetsInput(args: BlockArgs): AnimationAssetsInput {
+    if (args.ASSETS !== undefined) {
+      return {text: normalizeName(args.ASSETS), argumentName: 'ASSETS'};
+    }
+    return {text: normalizeName(args.COSTUMES), argumentName: 'COSTUMES'};
   }
 
   private requireActorName(value: unknown): string {
@@ -116,19 +134,23 @@ export class AnimatedAssetManagerExtension extends AssetManagerExtension {
     return target;
   }
 
-  private parseAnimation(assetsValue: unknown, durationsValue: unknown): AnimationDefinition {
+  private parseAnimation(
+    assetsValue: unknown,
+    durationsValue: unknown,
+    argumentName: 'ASSETS' | 'COSTUMES'
+  ): AnimationDefinition {
     const assetNames = String(assetsValue ?? '').split(',').map((value) => value.trim());
     const durationTexts = String(durationsValue ?? '').split(',').map((value) => value.trim());
 
     if (assetNames.some((name) => !name)) {
-      throw new Error('COSTUMES contains an empty item (the current argument name is ASSETS).');
+      throw new Error(`${argumentName} contains an empty item.`);
     }
     if (durationTexts.some((duration) => !duration)) {
       throw new Error('DURATIONS contains an empty item.');
     }
     if (assetNames.length !== durationTexts.length) {
       throw new Error(
-        `ASSETS and DURATIONS must contain the same number of items ` +
+        `${argumentName} and DURATIONS must contain the same number of items ` +
         `(${assetNames.length} assets, ${durationTexts.length} durations).`
       );
     }
