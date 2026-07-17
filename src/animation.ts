@@ -18,12 +18,18 @@ interface AnimationState extends AnimationDefinition {
   generation: number;
 }
 
+interface AnimationAssetsInput {
+  text: string;
+  argumentName: 'ASSETS' | 'COSTUMES';
+}
+
 /**
- * Asset Manager with actor-level background costume animation.
+ * Asset Manager with actor-level background asset animation.
  *
  * ACTOR is resolved using the existing named-sprite behaviour of setSpriteSkin.
- * COSTUMES and DURATIONS are comma-separated strings. COSTUMES contains
- * registered image asset names and DURATIONS contains positive seconds.
+ * ASSETS and DURATIONS are comma-separated strings. ASSETS contains registered
+ * image asset names and DURATIONS contains positive seconds. COSTUMES remains
+ * accepted as a compatibility alias for projects saved with the earlier block.
  */
 export class AnimatedAssetManagerExtension extends AssetManagerExtension {
   private readonly actorAnimations = new Map<string, AnimationState>();
@@ -56,26 +62,36 @@ export class AnimatedAssetManagerExtension extends AssetManagerExtension {
   startActorLoop(args: BlockArgs, util?: ScratchBlockUtility): void {
     const actor = this.requireActorName(args.ACTOR);
     const target = this.resolveActorTarget(actor, util);
-    const costumesText = normalizeName(args.COSTUMES);
+    const assets = this.getAnimationAssetsInput(args);
 
-    // An empty costume list is the DSL-compatible reset form: action=Actor:loop:
-    if (!costumesText) {
+    // An empty asset list is the DSL-compatible reset form: action=Actor:loop:
+    if (!assets.text) {
       if (normalizeName(args.DURATIONS)) {
-        throw new Error('DURATIONS must be empty when COSTUMES is empty.');
+        throw new Error(`DURATIONS must be empty when ${assets.argumentName} is empty.`);
       }
       this.stopActor(actor);
       return;
     }
 
-    this.startActorAnimation(actor, target, this.parseAnimation(costumesText, args.DURATIONS), 'loop');
+    this.startActorAnimation(
+      actor,
+      target,
+      this.parseAnimation(assets.text, args.DURATIONS, assets.argumentName),
+      'loop'
+    );
   }
 
   startActorSequence(args: BlockArgs, util?: ScratchBlockUtility): void {
     const actor = this.requireActorName(args.ACTOR);
     const target = this.resolveActorTarget(actor, util);
-    const costumesText = normalizeName(args.COSTUMES);
-    if (!costumesText) throw new Error('COSTUMES is empty.');
-    this.startActorAnimation(actor, target, this.parseAnimation(costumesText, args.DURATIONS), 'sequence');
+    const assets = this.getAnimationAssetsInput(args);
+    if (!assets.text) throw new Error(`${assets.argumentName} is empty.`);
+    this.startActorAnimation(
+      actor,
+      target,
+      this.parseAnimation(assets.text, args.DURATIONS, assets.argumentName),
+      'sequence'
+    );
   }
 
   stopActorAnimation(args: BlockArgs, util?: ScratchBlockUtility): void {
@@ -87,6 +103,13 @@ export class AnimatedAssetManagerExtension extends AssetManagerExtension {
   deleteAllMemoryAssets(): void {
     this.stopAllActorAnimations();
     super.deleteAllMemoryAssets();
+  }
+
+  private getAnimationAssetsInput(args: BlockArgs): AnimationAssetsInput {
+    if (args.ASSETS !== undefined) {
+      return {text: normalizeName(args.ASSETS), argumentName: 'ASSETS'};
+    }
+    return {text: normalizeName(args.COSTUMES), argumentName: 'COSTUMES'};
   }
 
   private requireActorName(value: unknown): string {
@@ -111,20 +134,24 @@ export class AnimatedAssetManagerExtension extends AssetManagerExtension {
     return target;
   }
 
-  private parseAnimation(costumesValue: unknown, durationsValue: unknown): AnimationDefinition {
-    const assetNames = String(costumesValue ?? '').split(',').map((value) => value.trim());
+  private parseAnimation(
+    assetsValue: unknown,
+    durationsValue: unknown,
+    argumentName: 'ASSETS' | 'COSTUMES'
+  ): AnimationDefinition {
+    const assetNames = String(assetsValue ?? '').split(',').map((value) => value.trim());
     const durationTexts = String(durationsValue ?? '').split(',').map((value) => value.trim());
 
     if (assetNames.some((name) => !name)) {
-      throw new Error('COSTUMES contains an empty item.');
+      throw new Error(`${argumentName} contains an empty item.`);
     }
     if (durationTexts.some((duration) => !duration)) {
       throw new Error('DURATIONS contains an empty item.');
     }
     if (assetNames.length !== durationTexts.length) {
       throw new Error(
-        `COSTUMES and DURATIONS must contain the same number of items ` +
-        `(${assetNames.length} costumes, ${durationTexts.length} durations).`
+        `${argumentName} and DURATIONS must contain the same number of items ` +
+        `(${assetNames.length} assets, ${durationTexts.length} durations).`
       );
     }
 
