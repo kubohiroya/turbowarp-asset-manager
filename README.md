@@ -76,15 +76,19 @@ The old `load asset from URL [URL] or cache as [NAME]` opcode remains available 
 The actor animation blocks receive two ordinary string arguments:
 
 ```text
-ASSETS = Fish1,Fish2,Fish3
-DURATIONS = 0.5,0.5,1.0
+ASSETS = Clock1,Bell,Clock2
+DURATIONS = 0,0.5,1.0
 ```
 
-`ASSETS` is a comma-separated string of registered image asset names. `DURATIONS` is a comma-separated string of positive display durations in seconds. The two strings must contain the same number of items.
+`ASSETS` is a comma-separated string of registered image or audio asset names. Each asset keeps its registered type: image assets change the actor skin, while audio assets start playing without waiting for playback to finish. `DURATIONS` is a comma-separated string of non-negative intervals in seconds.
 
-Starting a new loop or sequence replaces the actor's existing animation. A sequence runs once in the background and leaves its final skin displayed. Setting the actor skin or explicitly stopping the animation cancels the active loop or sequence.
+Each duration is the interval after the asset in the same position and before the next asset. A duration of `0` therefore makes the next asset start together with the preceding asset. Multiple consecutive zeroes form one simultaneous group. If that group contains multiple image assets, only the last image in the group is applied; every audio asset in the group is started.
 
-Projects saved with the earlier animation blocks may still provide the legacy `COSTUMES` argument internally. It is accepted as a compatibility alias, but new blocks and documentation use `ASSETS` because the values are registered image asset names rather than raw TurboWarp costume names.
+For `loop`, `ASSETS` and `DURATIONS` must have the same number of items; the final duration is the interval from the final asset back to the first asset. At least one loop duration must be positive. For `sequence`, `DURATIONS` must have exactly one fewer item than `ASSETS`, because no interval follows the final asset. Too many or too few items is an error.
+
+Starting a new loop or sequence replaces the actor's existing animation. A sequence runs once in the background and leaves its final skin displayed. Setting the actor skin or explicitly stopping the animation cancels the active loop or sequence. Audio playback that has already started is not stopped by cancelling the animation.
+
+Projects saved with the earlier animation blocks may still provide the legacy `COSTUMES` argument internally. It is accepted as a compatibility alias, but new blocks and documentation use `ASSETS` because the values are registered typed assets rather than raw TurboWarp costume names.
 
 ### DSL mapping
 
@@ -97,13 +101,19 @@ action=Fish:loop:Fish1,Fish2:0.5,0.5
 calls the loop block with `ACTOR=Fish`, `ASSETS=Fish1,Fish2`, and `DURATIONS=0.5,0.5`.
 
 ```text
+action=Clock:loop:NoonSkin,Bell,NextSkin:0,1,2
+```
+
+starts `NoonSkin` and `Bell` together, waits one second, then changes to `NextSkin`, and waits two seconds before looping. The same mixed image/audio and zero-duration grouping rules apply to `sequence`, but a sequence omits the final duration.
+
+```text
 action=Fish:loop:
 ```
 
 maps to the stop block, or to the loop block with empty `ASSETS` and `DURATIONS`. The currently displayed skin remains unchanged.
 
 ```text
-action=Urashima:sequence:Urashima-open1,Urashima-open2,Urashima-open3:1,2,3
+action=Urashima:sequence:Urashima-open1,Urashima-open2,Urashima-open3:1,2
 ```
 
 starts a one-shot background sequence and returns immediately. After the final duration expires, the last skin remains displayed.
@@ -232,7 +242,7 @@ Stops any actor animation and applies a registered external image, sprite costum
 
 ### `loop actor [ACTOR] through assets [ASSETS] for seconds [DURATIONS]`
 
-Starts or replaces a background loop. ASSETS is a comma-separated string of registered image asset names, and DURATIONS is a comma-separated string of display durations. Empty ASSETS and DURATIONS stop the actor animation.
+Starts or replaces a background loop. ASSETS contains registered image or audio asset names. DURATIONS must have the same number of items; each item is the interval before the next asset, including the last-to-first interval. A zero makes the next asset start together with the preceding asset. If a simultaneous group has multiple image assets, only its last image is applied. Empty ASSETS and DURATIONS stop the actor animation.
 
 | Property | Value |
 |---|---|
@@ -244,7 +254,7 @@ Starts or replaces a background loop. ASSETS is a comma-separated string of regi
 
 ### `play actor [ACTOR] through assets [ASSETS] for seconds [DURATIONS] once in background`
 
-Starts or replaces a one-shot background sequence and returns immediately. ASSETS is a comma-separated string of registered image asset names, and DURATIONS is a comma-separated string of display durations.
+Starts or replaces a one-shot background sequence and returns immediately. ASSETS contains registered image or audio asset names. DURATIONS must have exactly one fewer item; each item is the interval before the next asset. A zero makes the next asset start together with the preceding asset. If a simultaneous group has multiple image assets, only its last image is applied.
 
 | Property | Value |
 |---|---|
@@ -252,7 +262,7 @@ Starts or replaces a one-shot background sequence and returns immediately. ASSET
 | Opcode | `startActorSequence` |
 | `ACTOR` | String, default: `Sprite1` |
 | `ASSETS` | String, default: `asset1,asset2` |
-| `DURATIONS` | String, default: `0.5,0.5` |
+| `DURATIONS` | String, default: `0.5` |
 
 ### `stop animation of actor [ACTOR]`
 

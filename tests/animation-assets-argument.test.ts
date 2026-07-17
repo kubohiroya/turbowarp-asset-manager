@@ -21,7 +21,11 @@ describe('actor animation block arguments', () => {
       expect(block.text).not.toContain('[COSTUMES]');
       expect(block.arguments).toHaveProperty('ASSETS');
       expect(block.arguments).not.toHaveProperty('COSTUMES');
-      expect(block.description).toContain('registered image asset names');
+      expect(block.description).toContain('registered image or audio asset names');
+      expect(block.description).toContain('zero makes the next asset start together');
+      expect(block.description).toContain('only its last image is applied');
     }
+    expect(animationBlocks[0]?.description).toContain('same number of items');
+    expect(animationBlocks[1]?.description).toContain('exactly one fewer item');
   });
 });
