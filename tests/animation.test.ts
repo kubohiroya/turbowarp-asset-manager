@@ -302,6 +302,21 @@ describe('actor costume animation', () => {
     expect(playSound).toHaveBeenCalledTimes(2);
   });
 
+  it('applies only the last image in a simultaneous group', async () => {
+    const extension = await createExtension();
+    extension.startActorSequence({
+      ACTOR: 'Fish',
+      ASSETS: 'Fish1,Bird1,Bell',
+      DURATIONS: '0,0'
+    });
+    await flushFrame();
+
+    expect(updateDrawableSkinId).toHaveBeenCalledTimes(1);
+    expect(updateDrawableSkinId).toHaveBeenLastCalledWith(7, 21);
+    expect(setFishSize).toHaveBeenLastCalledWith(80);
+    expect(playSound).toHaveBeenLastCalledWith(sprite, 'bell-sound');
+  });
+
   it('applies each animation asset source size to the actor', async () => {
     const extension = await createExtension();
     extension.startActorSequence({

@@ -232,16 +232,16 @@ export class AnimatedAssetManagerExtension extends AssetManagerExtension {
     }
 
     try {
-      const preparedActions = await Promise.all(batch.actions.map(async (action) => {
-        if (action.kind === 'image') {
-          return {
-            kind: 'image' as const,
-            assetName: action.assetName,
-            skin: await this.resolveSkin(action.assetName)
-          };
+      let selectedImageIndex = -1;
+      for (let index = 0; index < batch.actions.length; index += 1) {
+        if (batch.actions[index]?.kind === 'image') {
+          selectedImageIndex = index;
         }
-        return {kind: 'audio' as const, assetName: action.assetName};
-      }));
+      }
+      const selectedImage = batch.actions[selectedImageIndex];
+      const selectedSkin = await (
+        selectedImage ? this.resolveSkin(selectedImage.assetName) : Promise.resolve(null)
+      );
       if (!this.isCurrent(actor, state)) return;
       if (!this.runtime.targets.includes(target)) {
         this.stopActor(actor);
@@ -249,11 +249,13 @@ export class AnimatedAssetManagerExtension extends AssetManagerExtension {
       }
 
       const soundStarts: Promise<void>[] = [];
-      for (const action of preparedActions) {
-        if (action.kind === 'image') {
-          this.applySkinToTarget(target, action.skin);
-        } else {
+      for (let index = 0; index < batch.actions.length; index += 1) {
+        const action = batch.actions[index];
+        if (!action) continue;
+        if (action.kind === 'audio') {
           soundStarts.push(this.playResolvedSound(action.assetName, false));
+        } else if (index === selectedImageIndex && selectedSkin) {
+          this.applySkinToTarget(target, selectedSkin);
         }
       }
       await Promise.all(soundStarts);

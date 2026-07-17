@@ -82,7 +82,7 @@ DURATIONS = 0,0.5,1.0
 
 `ASSETS` is a comma-separated string of registered image or audio asset names. Each asset keeps its registered type: image assets change the actor skin, while audio assets start playing without waiting for playback to finish. `DURATIONS` is a comma-separated string of non-negative intervals in seconds.
 
-Each duration is the interval after the asset in the same position and before the next asset. A duration of `0` therefore makes the next asset start together with the preceding asset. Multiple consecutive zeroes form one simultaneous group.
+Each duration is the interval after the asset in the same position and before the next asset. A duration of `0` therefore makes the next asset start together with the preceding asset. Multiple consecutive zeroes form one simultaneous group. If that group contains multiple image assets, only the last image in the group is applied; every audio asset in the group is started.
 
 For `loop`, `ASSETS` and `DURATIONS` must have the same number of items; the final duration is the interval from the final asset back to the first asset. At least one loop duration must be positive. For `sequence`, `DURATIONS` must have exactly one fewer item than `ASSETS`, because no interval follows the final asset. Too many or too few items is an error.
 
@@ -242,7 +242,7 @@ Stops any actor animation and applies a registered external image, sprite costum
 
 ### `loop actor [ACTOR] through assets [ASSETS] for seconds [DURATIONS]`
 
-Starts or replaces a background loop. ASSETS contains registered image or audio asset names. DURATIONS must have the same number of items; each item is the interval before the next asset, including the last-to-first interval. A zero makes the next asset start together with the preceding asset. Empty ASSETS and DURATIONS stop the actor animation.
+Starts or replaces a background loop. ASSETS contains registered image or audio asset names. DURATIONS must have the same number of items; each item is the interval before the next asset, including the last-to-first interval. A zero makes the next asset start together with the preceding asset. If a simultaneous group has multiple image assets, only its last image is applied. Empty ASSETS and DURATIONS stop the actor animation.
 
 | Property | Value |
 |---|---|
@@ -254,7 +254,7 @@ Starts or replaces a background loop. ASSETS contains registered image or audio 
 
 ### `play actor [ACTOR] through assets [ASSETS] for seconds [DURATIONS] once in background`
 
-Starts or replaces a one-shot background sequence and returns immediately. ASSETS contains registered image or audio asset names. DURATIONS must have exactly one fewer item; each item is the interval before the next asset. A zero makes the next asset start together with the preceding asset.
+Starts or replaces a one-shot background sequence and returns immediately. ASSETS contains registered image or audio asset names. DURATIONS must have exactly one fewer item; each item is the interval before the next asset. A zero makes the next asset start together with the preceding asset. If a simultaneous group has multiple image assets, only its last image is applied.
 
 | Property | Value |
 |---|---|
