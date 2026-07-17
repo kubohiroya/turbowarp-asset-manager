@@ -75,7 +75,7 @@ export class AnimatedAssetManagerExtension extends AssetManagerExtension {
     const actor = this.requireActorName(args.ACTOR);
     const target = this.resolveActorTarget(actor, util);
     const assetsText = this.getAnimationAssetsText(args);
-    if (!assetsText) throw new Error('ASSETS is empty.');
+    if (!assetsText) throw new Error('COSTUMES is empty (the current argument name is ASSETS).');
     this.startActorAnimation(actor, target, this.parseAnimation(assetsText, args.DURATIONS), 'sequence');
   }
 
@@ -121,7 +121,7 @@ export class AnimatedAssetManagerExtension extends AssetManagerExtension {
     const durationTexts = String(durationsValue ?? '').split(',').map((value) => value.trim());
 
     if (assetNames.some((name) => !name)) {
-      throw new Error('ASSETS contains an empty item.');
+      throw new Error('COSTUMES contains an empty item (the current argument name is ASSETS).');
     }
     if (durationTexts.some((duration) => !duration)) {
       throw new Error('DURATIONS contains an empty item.');
@@ -169,7 +169,7 @@ export class AnimatedAssetManagerExtension extends AssetManagerExtension {
   private validateAnimationAssets(definition: AnimationDefinition): void {
     for (const assetName of definition.assetNames) {
       if (!this.isLoaded({NAME: assetName})) {
-        throw new Error(`Image asset is not registered: ${assetName}`);
+        throw new Error(`Costume asset is not registered: ${assetName}`);
       }
       const mimeType = this.getAssetMimeType({NAME: assetName});
       if (!mimeType.startsWith('image/')) {
