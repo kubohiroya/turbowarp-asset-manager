@@ -1,5 +1,5 @@
 import {describe, expect, it} from 'vitest';
-import blockDefinitions from '../src/block-definitions.json';
+import blockDefinitions from '../src/block-definitions.json' with {type: 'json'};
 
 interface AnimationBlockDefinition {
   opcode: string;
