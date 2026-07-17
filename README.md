@@ -80,11 +80,11 @@ ASSETS = Fish1,Fish2,Fish3
 DURATIONS = 0.5,0.5,1.0
 ```
 
-`ASSETS` is a comma-separated string of registered image asset names. These are Asset Manager names assigned by `register resource ... as asset [NAME]`; they are not raw TurboWarp costume names unless the same text was deliberately used for both. `DURATIONS` is a comma-separated string of positive display durations in seconds. The two strings must contain the same number of items.
+`ASSETS` is a comma-separated string of registered image asset names. `DURATIONS` is a comma-separated string of positive display durations in seconds. The two strings must contain the same number of items.
 
 Starting a new loop or sequence replaces the actor's existing animation. A sequence runs once in the background and leaves its final skin displayed. Setting the actor skin or explicitly stopping the animation cancels the active loop or sequence.
 
-Projects saved with the earlier animation block argument named `COSTUMES` remain supported as a compatibility measure. New blocks and documentation use `ASSETS`.
+Projects saved with the earlier animation blocks may still provide the legacy `COSTUMES` argument internally. It is accepted as a compatibility alias, but new blocks and documentation use `ASSETS` because the values are registered image asset names rather than raw TurboWarp costume names.
 
 ### DSL mapping
 
