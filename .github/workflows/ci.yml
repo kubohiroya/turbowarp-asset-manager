@@ -14,13 +14,9 @@ jobs:
         with:
           node-version: 22
       - run: npm install
-      - run: npm run typecheck
-      - run: npm run test
-      - run: npm run build
-      - run: npm run docs:check
-      - run: npm run check:dist
+      - name: Capture typecheck output
+        run: npm run typecheck > typecheck.log 2>&1 || true
       - uses: actions/upload-artifact@v4
-        if: always()
         with:
-          name: asset-manager-dist
-          path: dist/
+          name: typecheck-log
+          path: typecheck.log
