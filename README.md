@@ -1,6 +1,6 @@
 # TurboWarp Asset Manager
 
-An IndexedDB-backed image and audio asset manager for TurboWarp projects. It can also register costumes, stage backdrops, and sounds already stored in the current `.sb3` project.
+An IndexedDB-backed image, audio, and runtime-text asset manager for TurboWarp projects. It can also register costumes, stage backdrops, sounds, and Temporary Variables runtime-variable references used by the current `.sb3` project.
 
 ## Installation
 
@@ -15,13 +15,15 @@ The built JavaScript file is committed to this repository so that users do not n
 - refresh the cache whenever an HTTP or HTTPS URL is explicitly supplied;
 - register sprite costumes and stage backdrops without copying their renderer skins;
 - register sprite and stage sounds without copying their audio data;
+- register Temporary Variables runtime variables as live text assets;
 - apply image assets to the current sprite, a named sprite, or the stage;
+- display text assets on sprites through the Animated Text extension;
 - animate named actors with background loops or one-shot asset sequences;
 - play audio assets with or without waiting for completion;
 - normalize missing or generic MIME types from file extensions;
 - release only renderer skins owned by Asset Manager when registrations are removed.
 
-The current-sprite block works with clones. A stage drawable ID of `0` is treated as valid. Project-local assets remain owned by the Scratch VM and are not written to IndexedDB.
+The current-sprite block works with clones. A stage drawable ID of `0` is treated as valid. Project-local assets remain owned by the Scratch VM and are not written to IndexedDB. Text assets store only a runtime-variable name; they never copy or cache its value.
 
 ## Resource identifiers
 
@@ -38,6 +40,8 @@ sound:Sprite1:sound1
 sound:Sprite1
 sound:@stage:stage-sound1
 sound
+text:Narration
+text
 ```
 
 An empty `RESOURCE_ID` reloads the external asset named by `NAME` from IndexedDB. Project-local identifiers support these shorthands:
@@ -47,8 +51,46 @@ An empty `RESOURCE_ID` reloads the external asset named by `NAME` from IndexedDB
 - `backdrop` uses `NAME` as the stage backdrop name.
 - `sound:Sprite1` uses `NAME` as the sprite sound name.
 - `sound` uses `NAME` as the stage sound name.
+- `text` uses `NAME` as the logical text name and reads its value from the internal `text:<NAME>` runtime-variable namespace.
 
-Fully specified `costume:` and `sound:` identifiers use exactly one colon between the source target name and the costume or sound name. Colons cannot be used inside local sprite, costume, backdrop, or sound names. Commas are ordinary name characters. Double quotes and backslashes have no quoting or escaping role and are not interpreted specially.
+Fully specified `costume:` and `sound:` identifiers use exactly one colon between the source target name and the costume or sound name. A `text:` identifier contains one logical text name after the colon and maps it to the same internal `text:` namespace. Colons cannot be used inside local sprite, costume, backdrop, sound, or logical text names. Commas are ordinary name characters. Double quotes and backslashes have no quoting or escaping role and are not interpreted specially.
+
+## Runtime text assets
+
+Runtime text rendering requires both TurboWarp extensions below to be loaded unsandboxed:
+
+- [Temporary Variables](https://extensions.turbowarp.org/Lily/TempVariables2.js), extension ID `lmsTempVars2`;
+- [Animated Text](https://extensions.turbowarp.org/lab/text.js), extension ID `text`.
+
+Registering a text asset does not require the runtime variable to exist yet. The `set text asset [NAME] to [VALUE]` block stores the value in the internal `text:<NAME>` namespace. Each time the asset is shown, Asset Manager reads the latest value and style through `lmsTempVars2`, reapplies the complete style, and invokes Animated Text for the destination sprite or clone. A missing runtime variable therefore displays an empty string. Missing extension dependencies are reported when a text value or style is set, or when the text asset is shown, rather than when it is registered.
+
+The `set text asset [NAME] style [PROPERTY] to [VALUE]` block changes one style property at a time. An empty value resets that property to its default.
+
+| Property | Accepted values | Default |
+|---|---|---|
+| `animation` | `none`, `type`, `typing`, `rainbow`, `zoom`, `shake` | `none` |
+| `font` | Any non-empty font name accepted by Animated Text | `Handwriting` |
+| `color` | `#rgb` or `#rrggbb` | `#575e75` |
+| `width` | Positive number | Current stage width |
+| `align` | `left`, `center`, `right` | `center` |
+
+`typing` is a DSL-friendly alias for Animated Text's `type` value. The full style is reapplied before every display so that a previous text asset or sprite cannot leak its style into the next one. Animated display starts in the background; the `show` action can immediately continue to its existing position and size steps without waiting for the animation to finish.
+
+The existing paper-theater `show` action can use text assets, so it retains the same position and size arguments without adding another DSL action:
+
+```text
+asset=Narration,text
+actor=Prompt,Narration
+text=Narration:むかし　むかし、あるところに...
+textStyle=Narration:animation:typing
+textStyle=Narration:font:Sans Serif
+textStyle=Narration:color:#575e75
+textStyle=Narration:width:200
+textStyle=Narration:align:left
+action=Prompt:show:Narration:0,0,100
+```
+
+The actor name in `actor=` and the target name in `action=` must match (`Prompt` in this example). The second `actor=` item, each `text=` / `textStyle=` item, and the `show` asset item all name the registered text asset (`Narration`). The tmpose-kamishibai integration should map `text=` and `textStyle=` to Asset Manager's two setter blocks; Asset Manager itself does not parse the DSL.
 
 ## Registration errors
 
@@ -132,7 +174,7 @@ Animation state is keyed by the unique ACTOR name. In tmpose-kamishibai, each Ac
 
 ### `register resource [RESOURCE_ID] as asset [NAME]`
 
-Registers an external URL, cached asset, sprite costume, stage backdrop, or project sound under one asset name.
+Registers an external URL, cached asset, sprite costume, stage backdrop, project sound, or runtime text variable under one asset name.
 
 | Property | Value |
 |---|---|
@@ -173,7 +215,7 @@ Legacy compatibility block. Loads an external image or audio asset from the supp
 
 ### `delete asset [NAME] from memory`
 
-Unregisters one asset. Owned external renderer skins are released; project costumes and sounds are left unchanged.
+Unregisters one asset. Owned external renderer skins are released; project costumes, sounds, and runtime variables are left unchanged.
 
 | Property | Value |
 |---|---|
@@ -211,7 +253,7 @@ Clears all external assets from the IndexedDB cache.
 
 ### `asset [NAME] is loaded`
 
-Returns whether the named external or project-local asset is currently registered.
+Returns whether the named external, project-local, or runtime text asset is currently registered.
 
 | Property | Value |
 |---|---|
@@ -219,9 +261,32 @@ Returns whether the named external or project-local asset is currently registere
 | Opcode | `isLoaded` |
 | `NAME` | String, default: `asset1` |
 
-### `set this sprite skin to asset [NAME]`
+### `set text asset [NAME] to [VALUE]`
 
-Applies a registered external image, sprite costume, or stage backdrop to the current sprite or clone.
+Sets the runtime text value for a text asset using Asset Manager's internal namespace.
+
+| Property | Value |
+|---|---|
+| Type | Command |
+| Opcode | `setTextValue` |
+| `NAME` | String, default: `Narration` |
+| `VALUE` | String, default: `Once upon a time...` |
+
+### `set text asset [NAME] style [PROPERTY] to [VALUE]`
+
+Sets one runtime style property for a text asset. Supported properties are animation, font, color, width, and align. An empty value restores the default.
+
+| Property | Value |
+|---|---|
+| Type | Command |
+| Opcode | `setTextStyle` |
+| `NAME` | String, default: `Narration` |
+| `PROPERTY` | String, default: `font` |
+| `VALUE` | String, default: `Sans Serif` |
+
+### `show asset [NAME] on this sprite`
+
+Applies a registered image asset or displays a registered runtime text asset on the current sprite or clone.
 
 | Property | Value |
 |---|---|
@@ -229,9 +294,9 @@ Applies a registered external image, sprite costume, or stage backdrop to the cu
 | Opcode | `setThisSpriteSkin` |
 | `NAME` | String, default: `asset1` |
 
-### `set [SPRITE] skin to asset [NAME] (compatibility)`
+### `show asset [NAME] on [SPRITE] (compatibility)`
 
-Stops any actor animation and applies a registered external image, sprite costume, or stage backdrop to a named sprite. This block is retained for compatibility.
+Stops any actor animation and applies a registered image asset or displays a registered runtime text asset on a named sprite. This block is retained for compatibility.
 
 | Property | Value |
 |---|---|
@@ -274,6 +339,15 @@ Stops the actor's current loop or sequence and leaves the currently displayed sk
 | Opcode | `stopActorAnimation` |
 | `ACTOR` | String, default: `Sprite1` |
 
+### `finish all actor sequences`
+
+Finishes every one-shot actor sequence on its final image without stopping loops.
+
+| Property | Value |
+|---|---|
+| Type | Command |
+| Opcode | `finishAllActorSequences` |
+
 ### `set stage backdrop to asset [NAME]`
 
 Applies a registered external image, sprite costume, or stage backdrop to the stage drawable.
@@ -304,9 +378,28 @@ Plays a registered external audio asset or project sound and waits until playbac
 | Opcode | `playSoundUntilDone` |
 | `NAME` | String, default: `sound1` |
 
+### `stop asset sound [NAME]`
+
+Stops every active playback of one registered external or project sound asset without stopping other sounds.
+
+| Property | Value |
+|---|---|
+| Type | Command |
+| Opcode | `stopSound` |
+| `NAME` | String, default: `sound1` |
+
+### `stop all asset sounds`
+
+Stops all external and project sounds currently tracked by Asset Manager.
+
+| Property | Value |
+|---|---|
+| Type | Command |
+| Opcode | `stopAllSounds` |
+
 ### `MIME type of asset [NAME]`
 
-Returns the normalized MIME type of a registered external or project-local asset.
+Returns the normalized MIME type of a registered external, project-local, or runtime text asset.
 
 | Property | Value |
 |---|---|

@@ -18,6 +18,8 @@ interface TurboWarpSound {
 }
 interface TurboWarpSoundBank {
   playSound(target: TurboWarpTarget, soundId: string): Promise<unknown> | unknown;
+  stop(target: TurboWarpTarget, soundId: string): void;
+  stopAllSounds(target: TurboWarpTarget): void;
 }
 interface TurboWarpSprite {
   name: string;
@@ -38,10 +40,24 @@ interface TurboWarpTarget {
 interface TurboWarpRuntime {
   renderer: TurboWarpRenderer;
   targets: TurboWarpTarget[];
+  stageWidth?: number;
+  ext_lmsTempVars2?: TurboWarpTemporaryVariablesExtension;
+  getOpcodeFunction?(opcode: string): TurboWarpOpcodeFunction | undefined;
   requestRedraw?(): void;
   on?(eventName: string, listener: (target?: TurboWarpTarget) => void): void;
 }
-interface ScratchBlockUtility { target: TurboWarpTarget; }
+interface TurboWarpTemporaryVariablesExtension {
+  getRuntimeVariable(args: {VAR: unknown}): unknown;
+  setRuntimeVariable?(args: {VAR: unknown; STRING: unknown}): void;
+}
+type TurboWarpOpcodeFunction = (
+  args: Record<string, unknown>,
+  util: ScratchBlockUtility
+) => unknown;
+interface ScratchBlockUtility {
+  target: TurboWarpTarget;
+  runtime?: TurboWarpRuntime;
+}
 interface ScratchTranslate {
   (text: string): string;
   (message: {default: string; description?: string}, placeholders?: Record<string, string | number>): string;

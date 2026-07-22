@@ -18,7 +18,7 @@ interface TestExternalAsset {
 
 interface TestExtensionInternals {
   externalAssets: Map<string, TestExternalAsset>;
-  assetRegistry: Map<string, 'external' | 'costume' | 'sound'>;
+  assetRegistry: Map<string, 'external' | 'costume' | 'sound' | 'text'>;
   fetchAndCache(url: string, name: string): Promise<TestExternalAsset>;
 }
 
@@ -68,6 +68,9 @@ describe('parseResourceIdentifier', () => {
     expect(parseResourceIdentifier('sound:@stage:opening')).toEqual({
       kind: 'sound', spriteName: '@stage', soundName: 'opening'
     });
+    expect(parseResourceIdentifier('text:Narration')).toEqual({
+      kind: 'text', runtimeVariableName: 'text:Narration'
+    });
   });
 
   it('allows commas as ordinary characters without quoting or escaping', () => {
@@ -95,6 +98,9 @@ describe('parseResourceIdentifier', () => {
     expect(parseResourceIdentifier('sound', 'Guitar Chords2')).toEqual({
       kind: 'sound', spriteName: '@stage', soundName: 'Guitar Chords2'
     });
+    expect(parseResourceIdentifier('text', 'Narration')).toEqual({
+      kind: 'text', runtimeVariableName: 'text:Narration'
+    });
   });
 
   it('rejects the old comma separator and ambiguous colon usage', () => {
@@ -105,6 +111,9 @@ describe('parseResourceIdentifier', () => {
     expect(() => parseResourceIdentifier('sound:Hero')).toThrow('exactly one colon');
     expect(() => parseResourceIdentifier('backdrop:')).toThrow('Backdrop name is empty');
     expect(() => parseResourceIdentifier('backdrop:forest:night')).toThrow('must not contain a colon');
+    expect(() => parseResourceIdentifier('text:')).toThrow('Text variable name is empty');
+    expect(() => parseResourceIdentifier('text:chapter:title')).toThrow('must not contain a colon');
+    expect(() => parseResourceIdentifier('text', 'chapter:title')).toThrow('must not contain a colon');
   });
 });
 
@@ -112,6 +121,26 @@ describe('project-local assets', () => {
   const updateDrawableSkinId = vi.fn();
   const destroySkin = vi.fn();
   const playSound = vi.fn(() => Promise.resolve());
+  const stopSound = vi.fn();
+  const stopAllSounds = vi.fn();
+  const setAnimatedText = vi.fn();
+  const animateText = vi.fn();
+  const setTextFont = vi.fn();
+  const setTextColor = vi.fn();
+  const setTextWidth = vi.fn();
+  const animatedTextOpcodes = new Map<string, ReturnType<typeof vi.fn>>([
+    ['text_setText', setAnimatedText],
+    ['text_animateText', animateText],
+    ['text_setFont', setTextFont],
+    ['text_setColor', setTextColor],
+    ['text_setWidth', setTextWidth]
+  ]);
+  const getOpcodeFunction = vi.fn((opcode: string) => animatedTextOpcodes.get(opcode));
+  const runtimeVariables = new Map<string, unknown>();
+  const getRuntimeVariable = vi.fn(({VAR}: {VAR: unknown}) => runtimeVariables.get(String(VAR)) ?? '');
+  const setRuntimeVariable = vi.fn(({VAR, STRING}: {VAR: unknown; STRING: unknown}) => {
+    runtimeVariables.set(String(VAR), STRING);
+  });
   const setSpriteSize = vi.fn();
   const setTurtleSize = vi.fn();
   const setTwinSize = vi.fn();
@@ -119,7 +148,7 @@ describe('project-local assets', () => {
   const setStageSize = vi.fn();
   const setUrashimaSize = vi.fn();
 
-  const soundBank = {playSound};
+  const soundBank = {playSound, stop: stopSound, stopAllSounds};
   const sprite: TurboWarpTarget = {
     id: 'sprite-id',
     isStage: false,
@@ -231,6 +260,18 @@ describe('project-local assets', () => {
     updateDrawableSkinId.mockClear();
     destroySkin.mockClear();
     playSound.mockClear();
+    stopSound.mockClear();
+    stopAllSounds.mockClear();
+    setAnimatedText.mockClear();
+    animateText.mockClear();
+    setTextFont.mockClear();
+    setTextColor.mockClear();
+    setTextWidth.mockClear();
+    getOpcodeFunction.mockClear();
+    getOpcodeFunction.mockImplementation((opcode: string) => animatedTextOpcodes.get(opcode));
+    getRuntimeVariable.mockClear();
+    setRuntimeVariable.mockClear();
+    runtimeVariables.clear();
     setSpriteSize.mockClear();
     setTurtleSize.mockClear();
     setTwinSize.mockClear();
@@ -254,6 +295,9 @@ describe('project-local assets', () => {
             updateDrawableSkinId
           },
           targets: [stage, sprite, turtle, twin, ambiguous, urashima],
+          stageWidth: 640,
+          ext_lmsTempVars2: {getRuntimeVariable, setRuntimeVariable},
+          getOpcodeFunction,
           requestRedraw: vi.fn()
         }
       },
@@ -271,6 +315,10 @@ describe('project-local assets', () => {
     expect(blocks.find((block) => block.opcode === 'registerAsset')).toBeDefined();
     expect(blocks.find((block) => block.opcode === 'assetErrorType')).toBeDefined();
     expect(blocks.find((block) => block.opcode === 'assetErrorLabel')).toBeDefined();
+    expect(blocks.find((block) => block.opcode === 'setTextValue')).toBeDefined();
+    expect(blocks.find((block) => block.opcode === 'setTextStyle')).toBeDefined();
+    expect(blocks.find((block) => block.opcode === 'stopSound')).toBeDefined();
+    expect(blocks.find((block) => block.opcode === 'stopAllSounds')).toBeDefined();
   });
 
   it('reports structured asset registration errors and clears them after success', async () => {
@@ -297,6 +345,11 @@ describe('project-local assets', () => {
       .rejects.toThrow('Sound not found');
     expect(extension.assetErrorType()).toBe('sound');
     expect(extension.assetErrorLabel()).toBe('missing');
+
+    await expect(extension.registerAsset({RESOURCE_ID: 'text', NAME: 'chapter:title'}))
+      .rejects.toThrow('Text asset name must not contain a colon');
+    expect(extension.assetErrorType()).toBe('asset-name');
+    expect(extension.assetErrorLabel()).toBe('chapter:title');
 
     await expect(extension.registerAsset({RESOURCE_ID: 'ftp://example.com/a.png', NAME: 'invalid'}))
       .rejects.toThrow('Unsupported resource scheme');
@@ -430,6 +483,189 @@ describe('project-local assets', () => {
     expect(playSound).toHaveBeenLastCalledWith(stage, 'guitar-sound-id');
   });
 
+  it('stops only the selected project sound', async () => {
+    const extension = new AssetManagerExtension();
+    await extension.registerAsset({RESOURCE_ID: 'sound:Hero:hello', NAME: 'voice'});
+    await extension.registerAsset({RESOURCE_ID: 'sound:@stage:opening', NAME: 'music'});
+
+    extension.stopSound({NAME: 'voice'});
+
+    expect(stopSound).toHaveBeenCalledTimes(1);
+    expect(stopSound).toHaveBeenCalledWith(sprite, 'sound-id');
+    expect(stopAllSounds).not.toHaveBeenCalled();
+  });
+
+  it('shows the latest runtime variable value through Animated Text for bare text assets', async () => {
+    const extension = new AssetManagerExtension();
+
+    await extension.registerAsset({RESOURCE_ID: 'text', NAME: 'Narration'});
+    expect(extension.isLoaded({NAME: 'Narration'})).toBe(true);
+    expect(extension.getAssetMimeType({NAME: 'Narration'})).toBe('text/plain');
+
+    runtimeVariables.set('text:Narration', 'むかし　むかし、あるところに...');
+    await extension.setThisSpriteSkin({NAME: 'Narration'}, {target: sprite});
+    expect(getRuntimeVariable).toHaveBeenLastCalledWith({VAR: 'text:Narration'});
+    expect(getOpcodeFunction).toHaveBeenLastCalledWith('text_setText');
+    expect(setTextFont).toHaveBeenLastCalledWith(
+      {FONT: 'Handwriting'},
+      expect.objectContaining({target: sprite, runtime: Scratch.vm.runtime})
+    );
+    expect(setTextColor).toHaveBeenLastCalledWith(
+      {COLOR: '#575e75'},
+      expect.objectContaining({target: sprite, runtime: Scratch.vm.runtime})
+    );
+    expect(setTextWidth).toHaveBeenLastCalledWith(
+      {WIDTH: 640, ALIGN: 'center'},
+      expect.objectContaining({target: sprite, runtime: Scratch.vm.runtime})
+    );
+    expect(setAnimatedText).toHaveBeenLastCalledWith(
+      {TEXT: 'むかし　むかし、あるところに...'},
+      expect.objectContaining({target: sprite, runtime: Scratch.vm.runtime})
+    );
+    expect(updateDrawableSkinId).not.toHaveBeenCalled();
+    expect(setSpriteSize).not.toHaveBeenCalled();
+
+    runtimeVariables.set('text:Narration', '値は表示時に更新される');
+    await extension.setSpriteSkin({SPRITE: 'Turtle', NAME: 'Narration'});
+    expect(setAnimatedText).toHaveBeenLastCalledWith(
+      {TEXT: '値は表示時に更新される'},
+      expect.objectContaining({target: turtle, runtime: Scratch.vm.runtime})
+    );
+
+    extension.deleteMemoryAsset({NAME: 'Narration'});
+    expect(extension.isLoaded({NAME: 'Narration'})).toBe(false);
+  });
+
+  it('stores namespaced text and style values and applies a typing animation', async () => {
+    const extension = new AssetManagerExtension();
+    await extension.registerAsset({RESOURCE_ID: 'text', NAME: 'Narration'});
+
+    extension.setTextValue({NAME: 'Narration', VALUE: 'さぁ、行こう！'});
+    extension.setTextStyle({NAME: 'Narration', PROPERTY: 'animation', VALUE: 'typing'});
+    extension.setTextStyle({NAME: 'Narration', PROPERTY: 'font', VALUE: 'Sans Serif'});
+    extension.setTextStyle({NAME: 'Narration', PROPERTY: 'color', VALUE: '#F80'});
+    extension.setTextStyle({NAME: 'Narration', PROPERTY: 'width', VALUE: '200'});
+    extension.setTextStyle({NAME: 'Narration', PROPERTY: 'align', VALUE: 'left'});
+
+    expect(runtimeVariables).toEqual(new Map([
+      ['text:Narration', 'さぁ、行こう！'],
+      ['textStyle:Narration:animation', 'type'],
+      ['textStyle:Narration:font', 'Sans Serif'],
+      ['textStyle:Narration:color', '#ff8800'],
+      ['textStyle:Narration:width', '200'],
+      ['textStyle:Narration:align', 'left']
+    ]));
+
+    await extension.setThisSpriteSkin({NAME: 'Narration'}, {target: sprite});
+    expect(setTextFont).toHaveBeenLastCalledWith(
+      {FONT: 'Sans Serif'},
+      expect.objectContaining({target: sprite})
+    );
+    expect(setTextColor).toHaveBeenLastCalledWith(
+      {COLOR: '#ff8800'},
+      expect.objectContaining({target: sprite})
+    );
+    expect(setTextWidth).toHaveBeenLastCalledWith(
+      {WIDTH: 200, ALIGN: 'left'},
+      expect.objectContaining({target: sprite})
+    );
+    expect(animateText).toHaveBeenLastCalledWith(
+      {ANIMATE: 'type', TEXT: 'さぁ、行こう！'},
+      expect.objectContaining({target: sprite, runtime: Scratch.vm.runtime})
+    );
+    expect(setAnimatedText).not.toHaveBeenCalled();
+
+    runtimeVariables.set('text:Narration', '表示時に更新');
+    runtimeVariables.set('textStyle:Narration:color', '#123456');
+    await extension.setThisSpriteSkin({NAME: 'Narration'}, {target: turtle});
+    expect(setTextColor).toHaveBeenLastCalledWith(
+      {COLOR: '#123456'},
+      expect.objectContaining({target: turtle})
+    );
+    expect(animateText).toHaveBeenLastCalledWith(
+      {ANIMATE: 'type', TEXT: '表示時に更新'},
+      expect.objectContaining({target: turtle})
+    );
+  });
+
+  it('starts text animation without delaying following show-position blocks', async () => {
+    const extension = new AssetManagerExtension();
+    await extension.registerAsset({RESOURCE_ID: 'text', NAME: 'Narration'});
+    extension.setTextValue({NAME: 'Narration', VALUE: 'typing'});
+    extension.setTextStyle({NAME: 'Narration', PROPERTY: 'animation', VALUE: 'typing'});
+    animateText.mockReturnValueOnce(new Promise<void>(() => {}));
+
+    await expect(extension.setThisSpriteSkin({NAME: 'Narration'}, {target: sprite}))
+      .resolves.toBeUndefined();
+    expect(animateText).toHaveBeenCalledTimes(1);
+  });
+
+  it('reapplies defaults so styles do not leak between text assets', async () => {
+    const extension = new AssetManagerExtension();
+    await extension.registerAsset({RESOURCE_ID: 'text', NAME: 'Styled'});
+    await extension.registerAsset({RESOURCE_ID: 'text', NAME: 'Plain'});
+    extension.setTextValue({NAME: 'Styled', VALUE: 'styled'});
+    extension.setTextValue({NAME: 'Plain', VALUE: 'plain'});
+    extension.setTextStyle({NAME: 'Styled', PROPERTY: 'font', VALUE: 'Pixel'});
+    extension.setTextStyle({NAME: 'Styled', PROPERTY: 'color', VALUE: '#abcdef'});
+    extension.setTextStyle({NAME: 'Styled', PROPERTY: 'width', VALUE: '200'});
+    extension.setTextStyle({NAME: 'Styled', PROPERTY: 'align', VALUE: 'right'});
+
+    await extension.setThisSpriteSkin({NAME: 'Styled'}, {target: sprite});
+    await extension.setThisSpriteSkin({NAME: 'Plain'}, {target: sprite});
+
+    expect(setTextFont).toHaveBeenLastCalledWith({FONT: 'Handwriting'}, expect.any(Object));
+    expect(setTextColor).toHaveBeenLastCalledWith({COLOR: '#575e75'}, expect.any(Object));
+    expect(setTextWidth).toHaveBeenLastCalledWith(
+      {WIDTH: 640, ALIGN: 'center'},
+      expect.any(Object)
+    );
+    expect(setAnimatedText).toHaveBeenLastCalledWith({TEXT: 'plain'}, expect.any(Object));
+  });
+
+  it('rejects unknown or invalid text style values', async () => {
+    const extension = new AssetManagerExtension();
+    await extension.registerAsset({RESOURCE_ID: 'text', NAME: 'Narration'});
+
+    expect(() => extension.setTextStyle({NAME: 'Narration', PROPERTY: 'spacing', VALUE: '1'}))
+      .toThrow('Unknown text style property');
+    expect(() => extension.setTextStyle({NAME: 'Narration', PROPERTY: 'animation', VALUE: 'blink'}))
+      .toThrow('Invalid text animation');
+    expect(() => extension.setTextStyle({NAME: 'Narration', PROPERTY: 'color', VALUE: 'red'}))
+      .toThrow('Invalid text color');
+    expect(() => extension.setTextStyle({NAME: 'Narration', PROPERTY: 'width', VALUE: '0'}))
+      .toThrow('positive number');
+    expect(() => extension.setTextStyle({NAME: 'Narration', PROPERTY: 'align', VALUE: 'justify'}))
+      .toThrow('Invalid text alignment');
+    expect(() => extension.setTextValue({NAME: 'chapter:title', VALUE: 'invalid'}))
+      .toThrow('must not contain a colon');
+
+    runtimeVariables.set('textStyle:Narration:width', 'broken');
+    await expect(extension.setThisSpriteSkin({NAME: 'Narration'}, {target: sprite}))
+      .rejects.toThrow('positive number');
+    expect(setTextFont).not.toHaveBeenCalled();
+  });
+
+  it('reports missing text dependencies only when a text asset is shown', async () => {
+    const extension = new AssetManagerExtension();
+    await extension.registerAsset({RESOURCE_ID: 'text:Narration', NAME: 'script'});
+    getOpcodeFunction.mockImplementation(() => undefined);
+
+    await expect(extension.setThisSpriteSkin({NAME: 'script'}, {target: sprite}))
+      .rejects.toThrow('Animated Text extension is not loaded or does not provide text_setFont');
+  });
+
+  it('reports a missing Temporary Variables dependency when setting or showing text', async () => {
+    const extension = new AssetManagerExtension();
+    await extension.registerAsset({RESOURCE_ID: 'text', NAME: 'Narration'});
+    delete Scratch.vm.runtime.ext_lmsTempVars2;
+
+    expect(() => extension.setTextValue({NAME: 'Narration', VALUE: 'text'}))
+      .toThrow('Temporary Variables extension is not loaded');
+    await expect(extension.setThisSpriteSkin({NAME: 'Narration'}, {target: sprite}))
+      .rejects.toThrow('Temporary Variables extension is not loaded');
+  });
+
   it('keeps the newest external registration when requests finish out of order', async () => {
     const extension = new AssetManagerExtension();
     const internals = extension as unknown as TestExtensionInternals;
@@ -526,9 +762,84 @@ describe('project-local assets', () => {
     expect(revokeObjectURL).toHaveBeenCalledWith('blob:test-audio');
   });
 
+  it('stops every playback of one external asset without stopping another', async () => {
+    const extension = new AssetManagerExtension();
+    const internals = extension as unknown as TestExtensionInternals;
+    const audioInstances: TestAudio[] = [];
+    let objectUrlIndex = 0;
+    vi.stubGlobal('URL', {
+      createObjectURL: vi.fn(() => `blob:test-audio-${++objectUrlIndex}`),
+      revokeObjectURL: vi.fn()
+    });
+    class TestAudio extends EventTarget {
+      currentTime = 12;
+      pause = vi.fn();
+      play = vi.fn(() => Promise.resolve());
+      constructor(_url: string) {
+        super();
+        audioInstances.push(this);
+      }
+    }
+    vi.stubGlobal('Audio', TestAudio);
+    for (const name of ['effect', 'music']) {
+      internals.externalAssets.set(name, {
+        kind: 'external', name, url: `https://example.com/${name}.mp3`,
+        mimeType: 'audio/mpeg', data: new ArrayBuffer(0), cachedAt: 1, skinId: null
+      });
+      internals.assetRegistry.set(name, 'external');
+    }
+
+    await extension.playSound({NAME: 'effect'});
+    await extension.playSound({NAME: 'effect'});
+    await extension.playSound({NAME: 'music'});
+    const [effect1, effect2, music] = audioInstances;
+
+    extension.stopSound({NAME: 'effect'});
+
+    expect(effect1?.pause).toHaveBeenCalledOnce();
+    expect(effect2?.pause).toHaveBeenCalledOnce();
+    expect(effect1?.currentTime).toBe(0);
+    expect(effect2?.currentTime).toBe(0);
+    expect(music?.pause).not.toHaveBeenCalled();
+    expect(music?.currentTime).toBe(12);
+
+    extension.stopAllSounds();
+    expect(music?.pause).toHaveBeenCalledOnce();
+    expect(stopAllSounds).toHaveBeenCalledWith(stage);
+    expect(stopAllSounds).toHaveBeenCalledWith(sprite);
+  });
+
+  it('releases sound-until-done when its external playback is stopped', async () => {
+    const extension = new AssetManagerExtension();
+    const internals = extension as unknown as TestExtensionInternals;
+    vi.stubGlobal('URL', {
+      createObjectURL: vi.fn(() => 'blob:wait-audio'),
+      revokeObjectURL: vi.fn()
+    });
+    vi.stubGlobal('Audio', class extends EventTarget {
+      currentTime = 0;
+      pause = vi.fn();
+      play = vi.fn(() => Promise.resolve());
+      constructor(_url: string) { super(); }
+    });
+    internals.externalAssets.set('voice', {
+      kind: 'external', name: 'voice', url: 'https://example.com/voice.mp3',
+      mimeType: 'audio/mpeg', data: new ArrayBuffer(0), cachedAt: 1, skinId: null
+    });
+    internals.assetRegistry.set('voice', 'external');
+
+    const playback = extension.playSoundUntilDone({NAME: 'voice'});
+    await Promise.resolve();
+    extension.stopSound({NAME: 'voice'});
+
+    await expect(playback).resolves.toBeUndefined();
+  });
+
   it('reports explicit type mismatches', async () => {
     const extension = new AssetManagerExtension();
     await extension.registerAsset({RESOURCE_ID: 'backdrop:forest', NAME: 'forest'});
     await expect(extension.playSound({NAME: 'forest'})).rejects.toThrow('Asset is not audio');
+    expect(() => extension.stopSound({NAME: 'forest'})).toThrow('Asset is not audio');
+    expect(() => extension.stopSound({NAME: 'missing'})).toThrow('Asset is not loaded');
   });
 });

@@ -12,6 +12,7 @@ interface AnimationAction {
 interface AnimationDefinition {
   actions: AnimationAction[];
   intervalsMs: number[];
+  mode: AnimationMode;
 }
 
 interface AnimationState extends AnimationDefinition {
@@ -69,7 +70,7 @@ export class AnimatedAssetManagerExtension extends AssetManagerExtension {
     const actor = this.requireActorName(args.ACTOR ?? args.SPRITE);
     const target = this.resolveActorTarget(actor, util);
     this.stopActor(actor);
-    this.applySkinToTarget(target, await this.resolveSkin(args.NAME));
+    await this.applyAssetToTarget(target, args.NAME, util);
   }
 
   startActorLoop(args: BlockArgs, util?: ScratchBlockUtility): void {
@@ -109,6 +110,20 @@ export class AnimatedAssetManagerExtension extends AssetManagerExtension {
     const actor = this.requireActorName(args.ACTOR);
     this.resolveActorTarget(actor, util);
     this.stopActor(actor);
+  }
+
+  async finishAllActorSequences(): Promise<void> {
+    const pending: Array<Promise<void>> = [];
+    for (const [actor, state] of [...this.actorAnimations]) {
+      if (state.mode !== 'sequence') continue;
+      const finalImage = [...state.actions].reverse().find((action) => action.kind === 'image');
+      this.stopActor(actor);
+      if (!finalImage || !this.runtime.targets.includes(state.target)) continue;
+      pending.push(this.resolveSkin(finalImage.assetName).then((skin) => {
+        if (this.runtime.targets.includes(state.target)) this.applySkinToTarget(state.target, skin);
+      }));
+    }
+    await Promise.all(pending);
   }
 
   deleteAllMemoryAssets(): void {
@@ -184,7 +199,8 @@ export class AnimatedAssetManagerExtension extends AssetManagerExtension {
 
     return {
       actions: assetNames.map((assetName) => this.createAnimationAction(assetName)),
-      intervalsMs
+      intervalsMs,
+      mode
     };
   }
 

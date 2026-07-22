@@ -6,7 +6,7 @@ export default defineConfig({
     turboWarpExtension({
       id: 'twAssetManager',
       name: 'Asset Manager',
-      description: 'Register, cache, display, and play external or project-local image and audio assets in TurboWarp.',
+      description: 'Register, cache, display, and play image, audio, and runtime text assets in TurboWarp.',
       author: 'Hiroya Kubo',
       license: 'MPL-2.0',
       fileName: 'asset-manager.js'
