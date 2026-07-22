@@ -1,6 +1,6 @@
 // Name: Asset Manager
 // ID: twAssetManager
-// Description: Register, cache, display, and play external or project-local image and audio assets in TurboWarp.
+// Description: Register, cache, display, and play image, audio, and runtime text assets in TurboWarp.
 // By: Hiroya Kubo
 // License: MPL-2.0
 
@@ -11,13 +11,100 @@
   var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
   var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
   const extensionName = "Asset Manager";
-  const blocks = [{ "opcode": "registerAsset", "blockType": "COMMAND", "text": "register resource [RESOURCE_ID] as asset [NAME]", "description": "Registers an external URL, cached asset, sprite costume, stage backdrop, or project sound under one asset name.", "arguments": { "RESOURCE_ID": { "type": "STRING", "defaultValue": "https://example.com/asset.png" }, "NAME": { "type": "STRING", "defaultValue": "asset1" } } }, { "opcode": "assetErrorType", "blockType": "REPORTER", "text": "asset registration error type", "description": "Returns the stable type token for the most recent asset registration error, or an empty string when the latest registration succeeded.", "arguments": {} }, { "opcode": "assetErrorLabel", "blockType": "REPORTER", "text": "asset registration error label", "description": "Returns the missing or invalid name associated with the most recent asset registration error, or an empty string when the latest registration succeeded.", "arguments": {} }, { "opcode": "loadAsset", "blockType": "COMMAND", "text": "load asset from URL [URL] or cache as [NAME]", "description": "Legacy compatibility block. Loads an external image or audio asset from the supplied URL, or from IndexedDB when the URL is empty.", "arguments": { "URL": { "type": "STRING", "defaultValue": "https://example.com/asset.png" }, "NAME": { "type": "STRING", "defaultValue": "asset1" } }, "hideFromPalette": true }, { "opcode": "deleteMemoryAsset", "blockType": "COMMAND", "text": "delete asset [NAME] from memory", "description": "Unregisters one asset. Owned external renderer skins are released; project costumes and sounds are left unchanged.", "arguments": { "NAME": { "type": "STRING", "defaultValue": "asset1" } } }, { "opcode": "deleteAllMemoryAssets", "blockType": "COMMAND", "text": "delete all assets from memory", "description": "Unregisters all assets, releases owned external renderer skins, stops actor animations, and stops tracked external audio playback.", "arguments": {} }, { "opcode": "deleteCachedAsset", "blockType": "COMMAND", "text": "delete asset [NAME] from cache", "description": "Deletes one named external asset from the IndexedDB cache.", "arguments": { "NAME": { "type": "STRING", "defaultValue": "asset1" } } }, { "opcode": "deleteAllCachedAssets", "blockType": "COMMAND", "text": "delete all assets from cache", "description": "Clears all external assets from the IndexedDB cache.", "arguments": {} }, { "opcode": "isLoaded", "blockType": "BOOLEAN", "text": "asset [NAME] is loaded", "description": "Returns whether the named external or project-local asset is currently registered.", "arguments": { "NAME": { "type": "STRING", "defaultValue": "asset1" } } }, { "opcode": "setThisSpriteSkin", "blockType": "COMMAND", "text": "set this sprite skin to asset [NAME]", "description": "Applies a registered external image, sprite costume, or stage backdrop to the current sprite or clone.", "arguments": { "NAME": { "type": "STRING", "defaultValue": "asset1" } } }, { "opcode": "setSpriteSkin", "blockType": "COMMAND", "text": "set [SPRITE] skin to asset [NAME] (compatibility)", "description": "Stops any actor animation and applies a registered external image, sprite costume, or stage backdrop to a named sprite. This block is retained for compatibility.", "arguments": { "SPRITE": { "type": "STRING", "defaultValue": "Sprite1" }, "NAME": { "type": "STRING", "defaultValue": "asset1" } } }, { "opcode": "startActorLoop", "blockType": "COMMAND", "text": "loop actor [ACTOR] through assets [ASSETS] for seconds [DURATIONS]", "description": "Starts or replaces a background loop. ASSETS contains registered image or audio asset names. DURATIONS must have the same number of items; each item is the interval before the next asset, including the last-to-first interval. A zero makes the next asset start together with the preceding asset. If a simultaneous group has multiple image assets, only its last image is applied. Empty ASSETS and DURATIONS stop the actor animation.", "arguments": { "ACTOR": { "type": "STRING", "defaultValue": "Sprite1" }, "ASSETS": { "type": "STRING", "defaultValue": "asset1,asset2" }, "DURATIONS": { "type": "STRING", "defaultValue": "0.5,0.5" } } }, { "opcode": "startActorSequence", "blockType": "COMMAND", "text": "play actor [ACTOR] through assets [ASSETS] for seconds [DURATIONS] once in background", "description": "Starts or replaces a one-shot background sequence and returns immediately. ASSETS contains registered image or audio asset names. DURATIONS must have exactly one fewer item; each item is the interval before the next asset. A zero makes the next asset start together with the preceding asset. If a simultaneous group has multiple image assets, only its last image is applied.", "arguments": { "ACTOR": { "type": "STRING", "defaultValue": "Sprite1" }, "ASSETS": { "type": "STRING", "defaultValue": "asset1,asset2" }, "DURATIONS": { "type": "STRING", "defaultValue": "0.5" } } }, { "opcode": "stopActorAnimation", "blockType": "COMMAND", "text": "stop animation of actor [ACTOR]", "description": "Stops the actor's current loop or sequence and leaves the currently displayed skin unchanged.", "arguments": { "ACTOR": { "type": "STRING", "defaultValue": "Sprite1" } } }, { "opcode": "setStageSkin", "blockType": "COMMAND", "text": "set stage backdrop to asset [NAME]", "description": "Applies a registered external image, sprite costume, or stage backdrop to the stage drawable.", "arguments": { "NAME": { "type": "STRING", "defaultValue": "backdrop1" } } }, { "opcode": "playSound", "blockType": "COMMAND", "text": "play asset [NAME] as sound", "description": "Starts playback of a registered external audio asset or project sound without waiting for completion.", "arguments": { "NAME": { "type": "STRING", "defaultValue": "sound1" } } }, { "opcode": "playSoundUntilDone", "blockType": "COMMAND", "text": "play asset [NAME] as sound until done", "description": "Plays a registered external audio asset or project sound and waits until playback ends or fails.", "arguments": { "NAME": { "type": "STRING", "defaultValue": "sound1" } } }, { "opcode": "getAssetMimeType", "blockType": "REPORTER", "text": "MIME type of asset [NAME]", "description": "Returns the normalized MIME type of a registered external or project-local asset.", "arguments": { "NAME": { "type": "STRING", "defaultValue": "asset1" } } }, { "opcode": "getVersion", "blockType": "REPORTER", "text": "Asset Manager version", "description": "Returns the Asset Manager implementation version.", "arguments": {} }];
+  const blocks = [{ "opcode": "registerAsset", "blockType": "COMMAND", "text": "register resource [RESOURCE_ID] as asset [NAME]", "description": "Registers an external URL, cached asset, sprite costume, stage backdrop, project sound, or runtime text variable under one asset name.", "arguments": { "RESOURCE_ID": { "type": "STRING", "defaultValue": "https://example.com/asset.png" }, "NAME": { "type": "STRING", "defaultValue": "asset1" } } }, { "opcode": "assetErrorType", "blockType": "REPORTER", "text": "asset registration error type", "description": "Returns the stable type token for the most recent asset registration error, or an empty string when the latest registration succeeded.", "arguments": {} }, { "opcode": "assetErrorLabel", "blockType": "REPORTER", "text": "asset registration error label", "description": "Returns the missing or invalid name associated with the most recent asset registration error, or an empty string when the latest registration succeeded.", "arguments": {} }, { "opcode": "loadAsset", "blockType": "COMMAND", "text": "load asset from URL [URL] or cache as [NAME]", "description": "Legacy compatibility block. Loads an external image or audio asset from the supplied URL, or from IndexedDB when the URL is empty.", "arguments": { "URL": { "type": "STRING", "defaultValue": "https://example.com/asset.png" }, "NAME": { "type": "STRING", "defaultValue": "asset1" } }, "hideFromPalette": true }, { "opcode": "deleteMemoryAsset", "blockType": "COMMAND", "text": "delete asset [NAME] from memory", "description": "Unregisters one asset. Owned external renderer skins are released; project costumes, sounds, and runtime variables are left unchanged.", "arguments": { "NAME": { "type": "STRING", "defaultValue": "asset1" } } }, { "opcode": "deleteAllMemoryAssets", "blockType": "COMMAND", "text": "delete all assets from memory", "description": "Unregisters all assets, releases owned external renderer skins, stops actor animations, and stops tracked external audio playback.", "arguments": {} }, { "opcode": "deleteCachedAsset", "blockType": "COMMAND", "text": "delete asset [NAME] from cache", "description": "Deletes one named external asset from the IndexedDB cache.", "arguments": { "NAME": { "type": "STRING", "defaultValue": "asset1" } } }, { "opcode": "deleteAllCachedAssets", "blockType": "COMMAND", "text": "delete all assets from cache", "description": "Clears all external assets from the IndexedDB cache.", "arguments": {} }, { "opcode": "isLoaded", "blockType": "BOOLEAN", "text": "asset [NAME] is loaded", "description": "Returns whether the named external, project-local, or runtime text asset is currently registered.", "arguments": { "NAME": { "type": "STRING", "defaultValue": "asset1" } } }, { "opcode": "setTextValue", "blockType": "COMMAND", "text": "set text asset [NAME] to [VALUE]", "description": "Sets the runtime text value for a text asset using Asset Manager's internal namespace.", "arguments": { "NAME": { "type": "STRING", "defaultValue": "Narration" }, "VALUE": { "type": "STRING", "defaultValue": "Once upon a time..." } } }, { "opcode": "setTextStyle", "blockType": "COMMAND", "text": "set text asset [NAME] style [PROPERTY] to [VALUE]", "description": "Sets one runtime style property for a text asset. Supported properties are animation, font, color, width, and align. An empty value restores the default.", "arguments": { "NAME": { "type": "STRING", "defaultValue": "Narration" }, "PROPERTY": { "type": "STRING", "defaultValue": "font" }, "VALUE": { "type": "STRING", "defaultValue": "Sans Serif" } } }, { "opcode": "setThisSpriteSkin", "blockType": "COMMAND", "text": "show asset [NAME] on this sprite", "description": "Applies a registered image asset or displays a registered runtime text asset on the current sprite or clone.", "arguments": { "NAME": { "type": "STRING", "defaultValue": "asset1" } } }, { "opcode": "setSpriteSkin", "blockType": "COMMAND", "text": "show asset [NAME] on [SPRITE] (compatibility)", "description": "Stops any actor animation and applies a registered image asset or displays a registered runtime text asset on a named sprite. This block is retained for compatibility.", "arguments": { "SPRITE": { "type": "STRING", "defaultValue": "Sprite1" }, "NAME": { "type": "STRING", "defaultValue": "asset1" } } }, { "opcode": "startActorLoop", "blockType": "COMMAND", "text": "loop actor [ACTOR] through assets [ASSETS] for seconds [DURATIONS]", "description": "Starts or replaces a background loop. ASSETS contains registered image or audio asset names. DURATIONS must have the same number of items; each item is the interval before the next asset, including the last-to-first interval. A zero makes the next asset start together with the preceding asset. If a simultaneous group has multiple image assets, only its last image is applied. Empty ASSETS and DURATIONS stop the actor animation.", "arguments": { "ACTOR": { "type": "STRING", "defaultValue": "Sprite1" }, "ASSETS": { "type": "STRING", "defaultValue": "asset1,asset2" }, "DURATIONS": { "type": "STRING", "defaultValue": "0.5,0.5" } } }, { "opcode": "startActorSequence", "blockType": "COMMAND", "text": "play actor [ACTOR] through assets [ASSETS] for seconds [DURATIONS] once in background", "description": "Starts or replaces a one-shot background sequence and returns immediately. ASSETS contains registered image or audio asset names. DURATIONS must have exactly one fewer item; each item is the interval before the next asset. A zero makes the next asset start together with the preceding asset. If a simultaneous group has multiple image assets, only its last image is applied.", "arguments": { "ACTOR": { "type": "STRING", "defaultValue": "Sprite1" }, "ASSETS": { "type": "STRING", "defaultValue": "asset1,asset2" }, "DURATIONS": { "type": "STRING", "defaultValue": "0.5" } } }, { "opcode": "stopActorAnimation", "blockType": "COMMAND", "text": "stop animation of actor [ACTOR]", "description": "Stops the actor's current loop or sequence and leaves the currently displayed skin unchanged.", "arguments": { "ACTOR": { "type": "STRING", "defaultValue": "Sprite1" } } }, { "opcode": "finishAllActorSequences", "blockType": "COMMAND", "text": "finish all actor sequences", "description": "Finishes every one-shot actor sequence on its final image without stopping loops.", "arguments": {} }, { "opcode": "setStageSkin", "blockType": "COMMAND", "text": "set stage backdrop to asset [NAME]", "description": "Applies a registered external image, sprite costume, or stage backdrop to the stage drawable.", "arguments": { "NAME": { "type": "STRING", "defaultValue": "backdrop1" } } }, { "opcode": "playSound", "blockType": "COMMAND", "text": "play asset [NAME] as sound", "description": "Starts playback of a registered external audio asset or project sound without waiting for completion.", "arguments": { "NAME": { "type": "STRING", "defaultValue": "sound1" } } }, { "opcode": "playSoundUntilDone", "blockType": "COMMAND", "text": "play asset [NAME] as sound until done", "description": "Plays a registered external audio asset or project sound and waits until playback ends or fails.", "arguments": { "NAME": { "type": "STRING", "defaultValue": "sound1" } } }, { "opcode": "stopSound", "blockType": "COMMAND", "text": "stop asset sound [NAME]", "description": "Stops every active playback of one registered external or project sound asset without stopping other sounds.", "arguments": { "NAME": { "type": "STRING", "defaultValue": "sound1" } } }, { "opcode": "stopAllSounds", "blockType": "COMMAND", "text": "stop all asset sounds", "description": "Stops all external and project sounds currently tracked by Asset Manager.", "arguments": {} }, { "opcode": "getAssetMimeType", "blockType": "REPORTER", "text": "MIME type of asset [NAME]", "description": "Returns the normalized MIME type of a registered external, project-local, or runtime text asset.", "arguments": { "NAME": { "type": "STRING", "defaultValue": "asset1" } } }, { "opcode": "getVersion", "blockType": "REPORTER", "text": "Asset Manager version", "description": "Returns the Asset Manager implementation version.", "arguments": {} }];
   const definitions = {
     extensionName,
     blocks
   };
+  const TEXT_RUNTIME_NAMESPACE = "text";
+  const TEXT_STYLE_RUNTIME_NAMESPACE = "textStyle";
+  const TEXT_STYLE_PROPERTIES = [
+    "animation",
+    "font",
+    "color",
+    "width",
+    "align"
+  ];
+  const DEFAULT_STAGE_WIDTH = 480;
+  const DEFAULT_FONT = "Handwriting";
+  const DEFAULT_COLOR = "#575e75";
+  const DEFAULT_ALIGNMENT = "center";
+  function textRuntimeVariableName(name) {
+    return `${TEXT_RUNTIME_NAMESPACE}:${name}`;
+  }
+  function textStyleRuntimeVariableName(name, property) {
+    return `${TEXT_STYLE_RUNTIME_NAMESPACE}:${name}:${property}`;
+  }
+  function normalizeTextStyleProperty(value) {
+    const property = String(value ?? "").trim().toLowerCase();
+    if (TEXT_STYLE_PROPERTIES.includes(property)) {
+      return property;
+    }
+    throw new Error(`Unknown text style property: ${property || "(empty)"}`);
+  }
+  function normalizeTextStyleValue(property, value) {
+    const raw = String(value ?? "").trim();
+    if (!raw) return "";
+    switch (property) {
+      case "animation": {
+        const animation = raw.toLowerCase() === "typing" ? "type" : raw.toLowerCase();
+        if (animation === "none" || animation === "type" || animation === "rainbow" || animation === "zoom" || animation === "shake") {
+          return animation;
+        }
+        throw new Error(`Invalid text animation: ${raw}`);
+      }
+      case "font":
+        return raw;
+      case "color": {
+        if (/^#[0-9a-f]{6}$/i.test(raw)) return raw.toLowerCase();
+        const shortColor = /^#([0-9a-f])([0-9a-f])([0-9a-f])$/i.exec(raw);
+        if (shortColor) {
+          return `#${shortColor[1]}${shortColor[1]}${shortColor[2]}${shortColor[2]}${shortColor[3]}${shortColor[3]}`.toLowerCase();
+        }
+        throw new Error(`Invalid text color: ${raw}`);
+      }
+      case "width": {
+        const width = Number(raw);
+        if (!Number.isFinite(width) || width <= 0) {
+          throw new Error(`Text width must be a positive number: ${raw}`);
+        }
+        return String(width);
+      }
+      case "align": {
+        const align = raw.toLowerCase();
+        if (align === "left" || align === "center" || align === "right") return align;
+        throw new Error(`Invalid text alignment: ${raw}`);
+      }
+    }
+  }
+  function resolveTextStyle(name, stageWidth, getRuntimeVariable) {
+    const width = Number(stageWidth);
+    const defaults = {
+      animation: "none",
+      font: DEFAULT_FONT,
+      color: DEFAULT_COLOR,
+      width: Number.isFinite(width) && width > 0 ? width : DEFAULT_STAGE_WIDTH,
+      align: DEFAULT_ALIGNMENT
+    };
+    const read = (property) => normalizeTextStyleValue(
+      property,
+      getRuntimeVariable(textStyleRuntimeVariableName(name, property))
+    );
+    const animation = read("animation");
+    const font = read("font");
+    const color = read("color");
+    const configuredWidth = read("width");
+    const align = read("align");
+    return {
+      animation: animation ? animation : defaults.animation,
+      font: font || defaults.font,
+      color: color || defaults.color,
+      width: configuredWidth ? Number(configuredWidth) : defaults.width,
+      align: align ? align : defaults.align
+    };
+  }
   const EXTENSION_ID = "twAssetManager";
-  const EXTENSION_VERSION = "2026-07-18-typed-animation-actions";
+  const EXTENSION_VERSION = "2026-07-23";
   const DB_NAME = "tw-asset-manager";
   const DB_VERSION = 1;
   const STORE_NAME = "assets";
@@ -73,6 +160,10 @@
       if (bareScheme === "sound" && fallbackName) {
         return { kind: "sound", spriteName: STAGE_RESOURCE_NAME, soundName: fallbackName };
       }
+      if (bareScheme === "text" && fallbackName) {
+        const name = parseLocalResourceName(fallbackName, "Text variable");
+        return { kind: "text", runtimeVariableName: textRuntimeVariableName(name) };
+      }
       throw new Error(`Unsupported resource identifier: ${resourceId}`);
     }
     const scheme = resourceId.slice(0, separatorIndex).trim().toLowerCase();
@@ -88,6 +179,10 @@
       case "sound": {
         const [spriteName, soundName] = splitLocalResourcePair(payload, "sound", fallbackAssetName);
         return { kind: "sound", spriteName, soundName };
+      }
+      case "text": {
+        const name = parseLocalResourceName(payload, "Text variable");
+        return { kind: "text", runtimeVariableName: textRuntimeVariableName(name) };
       }
       default:
         throw new Error(`Unsupported resource scheme: ${scheme}`);
@@ -124,8 +219,9 @@
       __publicField(this, "externalAssets", /* @__PURE__ */ new Map());
       __publicField(this, "costumeAssets", /* @__PURE__ */ new Map());
       __publicField(this, "soundAssets", /* @__PURE__ */ new Map());
+      __publicField(this, "textAssets", /* @__PURE__ */ new Map());
       __publicField(this, "assetRegistry", /* @__PURE__ */ new Map());
-      __publicField(this, "playingAudio", /* @__PURE__ */ new Set());
+      __publicField(this, "playingAudio", /* @__PURE__ */ new Map());
       __publicField(this, "registrationVersions", /* @__PURE__ */ new Map());
       __publicField(this, "lastAssetErrorType", "");
       __publicField(this, "lastAssetErrorLabel", "");
@@ -148,8 +244,12 @@
       let fallbackLabel = normalizeName(args.NAME);
       try {
         const name = this.requireAssetName(args.NAME);
+        const resourceId = normalizeName(args.RESOURCE_ID);
+        if (resourceId === "text" || resourceId.startsWith("text:")) {
+          this.requireTextAssetName(name);
+        }
         fallbackType = "resource-id";
-        fallbackLabel = normalizeName(args.RESOURCE_ID);
+        fallbackLabel = resourceId;
         const resource = parseResourceIdentifier(args.RESOURCE_ID, name);
         switch (resource.kind) {
           case "cache":
@@ -176,6 +276,12 @@
             fallbackType = "sound";
             fallbackLabel = resource.soundName;
             this.registerSoundReference(name, resource.spriteName, resource.soundName);
+            return;
+          case "text":
+            fallbackType = "text";
+            fallbackLabel = resource.runtimeVariableName;
+            this.registerTextReference(name, resource.runtimeVariableName);
+            return;
         }
       } catch (error) {
         if (this.assetErrorVersion === errorVersion) {
@@ -212,14 +318,9 @@
       this.externalAssets.clear();
       this.costumeAssets.clear();
       this.soundAssets.clear();
+      this.textAssets.clear();
       this.assetRegistry.clear();
-      for (const audio of this.playingAudio) {
-        try {
-          audio.pause();
-          audio.currentTime = 0;
-        } catch {
-        }
-      }
+      for (const audio of [...this.playingAudio.keys()]) this.stopExternalAudio(audio);
       this.playingAudio.clear();
     }
     async deleteCachedAsset(args) {
@@ -233,13 +334,13 @@
     }
     async setThisSpriteSkin(args, util) {
       if (!util.target || util.target.isStage) throw new Error("This block must be used on a sprite or its clone.");
-      this.applySkinToTarget(util.target, await this.resolveSkin(args.NAME));
+      await this.applyAssetToTarget(util.target, args.NAME, util);
     }
-    async setSpriteSkin(args) {
+    async setSpriteSkin(args, util) {
       const name = normalizeName(args.SPRITE);
       const target = this.findTargetByName(name);
       if (!target) throw new Error(`Sprite not found: ${name}`);
-      this.applySkinToTarget(target, await this.resolveSkin(args.NAME));
+      await this.applyAssetToTarget(target, args.NAME, util);
     }
     async setStageSkin(args) {
       const stage = this.getStageTarget();
@@ -250,6 +351,36 @@
     }
     async playSoundUntilDone(args) {
       await this.playResolvedSound(args.NAME, true);
+    }
+    stopSound(args) {
+      const name = normalizeName(args.NAME);
+      const kind = this.assetRegistry.get(name);
+      if (!kind) throw new Error(`Asset is not loaded: ${name}`);
+      if (kind === "external") {
+        const asset = this.externalAssets.get(name);
+        if (!asset) throw new Error(`External asset is not loaded: ${name}`);
+        asset.mimeType = normalizeMimeType(asset.mimeType, asset.url || name);
+        if (!asset.mimeType.startsWith("audio/")) {
+          throw new Error(`Asset is not audio: ${name} (${asset.mimeType})`);
+        }
+        for (const [audio, assetName] of [...this.playingAudio]) {
+          if (assetName === name) this.stopExternalAudio(audio);
+        }
+        return;
+      }
+      if (kind === "sound") {
+        const { target, sound } = this.resolveSoundReference(name);
+        target.sprite.soundBank.stop(target, sound.soundId);
+        return;
+      }
+      throw new Error(`Asset is not audio: ${name}`);
+    }
+    stopAllSounds() {
+      for (const audio of [...this.playingAudio.keys()]) this.stopExternalAudio(audio);
+      this.playingAudio.clear();
+      for (const target of this.runtime.targets) {
+        target.sprite?.soundBank?.stopAllSounds(target);
+      }
     }
     getAssetMimeType(args) {
       const name = normalizeName(args.NAME);
@@ -268,10 +399,35 @@
           const { sound } = this.resolveSoundReference(name);
           return this.projectAssetMimeType(sound.dataFormat, "audio");
         }
+        case "text": {
+          return "text/plain";
+        }
       }
     }
     getVersion() {
       return EXTENSION_VERSION;
+    }
+    setTextValue(args) {
+      const name = this.requireTextAssetName(args.NAME);
+      const kind = this.assetRegistry.get(name);
+      if (kind !== void 0 && kind !== "text") {
+        throw new Error(`Asset is not text: ${name}`);
+      }
+      const reference = this.textAssets.get(name);
+      this.setRuntimeVariable(
+        reference?.runtimeVariableName ?? textRuntimeVariableName(name),
+        String(args.VALUE ?? "")
+      );
+    }
+    setTextStyle(args) {
+      const name = this.requireTextAssetName(args.NAME);
+      const kind = this.assetRegistry.get(name);
+      if (kind !== void 0 && kind !== "text") {
+        throw new Error(`Asset is not text: ${name}`);
+      }
+      const property = normalizeTextStyleProperty(args.PROPERTY);
+      const value = normalizeTextStyleValue(property, args.VALUE);
+      this.setRuntimeVariable(textStyleRuntimeVariableName(name, property), value);
     }
     toScratchBlock(block) {
       return {
@@ -295,6 +451,17 @@
     requireAssetName(value) {
       const name = normalizeName(value);
       if (!name) throw new Error("Asset name is empty.");
+      return name;
+    }
+    requireTextAssetName(value) {
+      const name = this.requireAssetName(value);
+      if (name.includes(":")) {
+        throw new AssetRegistrationError(
+          "asset-name",
+          name,
+          "Text asset name must not contain a colon."
+        );
+      }
       return name;
     }
     clearAssetError() {
@@ -394,6 +561,16 @@
       });
       this.assetRegistry.set(name, "sound");
     }
+    registerTextReference(name, runtimeVariableName) {
+      this.requireTextAssetName(name);
+      this.unregisterAsset(name);
+      this.textAssets.set(name, {
+        kind: "text",
+        name,
+        runtimeVariableName
+      });
+      this.assetRegistry.set(name, "text");
+    }
     unregisterAsset(name) {
       this.nextRegistrationVersion(name);
       const kind = this.assetRegistry.get(name);
@@ -403,8 +580,10 @@
         this.externalAssets.delete(name);
       } else if (kind === "costume") {
         this.costumeAssets.delete(name);
-      } else {
+      } else if (kind === "sound") {
         this.soundAssets.delete(name);
+      } else if (kind === "text") {
+        this.textAssets.delete(name);
       }
       this.assetRegistry.delete(name);
     }
@@ -495,6 +674,67 @@
       }
       throw new Error(`Asset is not an image: ${name}`);
     }
+    async applyAssetToTarget(target, value, util) {
+      const name = normalizeName(value);
+      const kind = this.assetRegistry.get(name);
+      if (!kind) throw new Error(`Asset is not loaded: ${name}`);
+      if (kind === "text") {
+        await this.applyTextToTarget(target, name, util);
+        return;
+      }
+      this.applySkinToTarget(target, await this.resolveSkin(name));
+    }
+    async applyTextToTarget(target, name, util) {
+      if (target.isStage) throw new Error(`Text asset can only be shown on a sprite: ${name}`);
+      const reference = this.textAssets.get(name);
+      if (!reference) throw new Error(`Text asset is not registered: ${name}`);
+      const temporaryVariables = this.requireTemporaryVariables();
+      const getRuntimeVariable = (variableName) => temporaryVariables.getRuntimeVariable({ VAR: variableName });
+      const style = resolveTextStyle(name, this.runtime.stageWidth, getRuntimeVariable);
+      const setFont = this.requireAnimatedTextOpcode("text_setFont");
+      const setColor = this.requireAnimatedTextOpcode("text_setColor");
+      const setWidth = this.requireAnimatedTextOpcode("text_setWidth");
+      const displayText = this.requireAnimatedTextOpcode(
+        style.animation === "none" ? "text_setText" : "text_animateText"
+      );
+      const blockUtility = { ...util, target, runtime: util?.runtime ?? this.runtime };
+      const text = getRuntimeVariable(reference.runtimeVariableName);
+      await Promise.resolve(setFont({ FONT: style.font }, blockUtility));
+      await Promise.resolve(setColor({ COLOR: style.color }, blockUtility));
+      await Promise.resolve(setWidth({ WIDTH: style.width, ALIGN: style.align }, blockUtility));
+      const displayResult = displayText(
+        style.animation === "none" ? { TEXT: String(text ?? "") } : { ANIMATE: style.animation, TEXT: String(text ?? "") },
+        blockUtility
+      );
+      if (style.animation === "none") {
+        await Promise.resolve(displayResult);
+      } else {
+        void Promise.resolve(displayResult).catch((error) => {
+          console.warn(`Animated Text failed for asset "${name}"`, error);
+        });
+      }
+    }
+    requireTemporaryVariables() {
+      const temporaryVariables = this.runtime.ext_lmsTempVars2;
+      if (!temporaryVariables?.getRuntimeVariable) {
+        throw new Error("Temporary Variables extension is not loaded.");
+      }
+      return temporaryVariables;
+    }
+    setRuntimeVariable(name, value) {
+      const temporaryVariables = this.requireTemporaryVariables();
+      if (!temporaryVariables.setRuntimeVariable) {
+        throw new Error("Temporary Variables extension does not support setting runtime variables.");
+      }
+      temporaryVariables.setRuntimeVariable({ VAR: name, STRING: value });
+    }
+    requireAnimatedTextOpcode(opcode) {
+      const implementation = this.runtime.getOpcodeFunction?.(opcode);
+      if (!implementation) {
+        throw new Error(`Animated Text extension is not loaded or does not provide ${opcode}.`);
+      }
+      return implementation;
+    }
     async ensureExternalSkin(name) {
       const asset = this.externalAssets.get(name);
       if (!asset) throw new Error(`External asset is not loaded: ${name}`);
@@ -567,10 +807,15 @@
       if (!asset.mimeType.startsWith("audio/")) throw new Error(`Asset is not audio: ${name} (${asset.mimeType})`);
       const objectUrl = URL.createObjectURL(new Blob([asset.data], { type: asset.mimeType }));
       const audio = new Audio(objectUrl);
-      this.playingAudio.add(audio);
+      this.playingAudio.set(audio, name);
+      let resolvePlayback;
+      const playbackFinished = new Promise((resolve) => {
+        resolvePlayback = resolve;
+      });
       const cleanup = () => {
         this.playingAudio.delete(audio);
         URL.revokeObjectURL(objectUrl);
+        resolvePlayback();
       };
       audio.addEventListener("ended", cleanup, { once: true });
       audio.addEventListener("error", cleanup, { once: true });
@@ -588,10 +833,17 @@
         cleanup();
         throw error;
       }
-      await new Promise((resolve) => {
-        audio.addEventListener("ended", () => resolve(), { once: true });
-        audio.addEventListener("error", () => resolve(), { once: true });
-      });
+      await playbackFinished;
+    }
+    stopExternalAudio(audio) {
+      try {
+        audio.pause();
+        audio.currentTime = 0;
+        audio.dispatchEvent(new Event("ended"));
+      } catch {
+      } finally {
+        this.playingAudio.delete(audio);
+      }
     }
     async playProjectSound(name, waitUntilDone) {
       const { target, sound } = this.resolveSoundReference(name);
@@ -633,7 +885,7 @@
       const actor = this.requireActorName(args.ACTOR ?? args.SPRITE);
       const target = this.resolveActorTarget(actor, util);
       this.stopActor(actor);
-      this.applySkinToTarget(target, await this.resolveSkin(args.NAME));
+      await this.applyAssetToTarget(target, args.NAME, util);
     }
     startActorLoop(args, util) {
       const actor = this.requireActorName(args.ACTOR);
@@ -667,6 +919,19 @@
       const actor = this.requireActorName(args.ACTOR);
       this.resolveActorTarget(actor, util);
       this.stopActor(actor);
+    }
+    async finishAllActorSequences() {
+      const pending = [];
+      for (const [actor, state] of [...this.actorAnimations]) {
+        if (state.mode !== "sequence") continue;
+        const finalImage = [...state.actions].reverse().find((action) => action.kind === "image");
+        this.stopActor(actor);
+        if (!finalImage || !this.runtime.targets.includes(state.target)) continue;
+        pending.push(this.resolveSkin(finalImage.assetName).then((skin) => {
+          if (this.runtime.targets.includes(state.target)) this.applySkinToTarget(state.target, skin);
+        }));
+      }
+      await Promise.all(pending);
     }
     deleteAllMemoryAssets() {
       this.stopAllActorAnimations();
@@ -726,7 +991,8 @@
       }
       return {
         actions: assetNames.map((assetName) => this.createAnimationAction(assetName)),
-        intervalsMs
+        intervalsMs,
+        mode
       };
     }
     startActorAnimation(actor, target, definition) {

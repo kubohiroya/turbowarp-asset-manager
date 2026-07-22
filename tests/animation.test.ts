@@ -8,6 +8,21 @@ interface TestAnimationInternals {
 describe('actor costume animation', () => {
   const updateDrawableSkinId = vi.fn();
   const playSound = vi.fn(() => Promise.resolve());
+  const stopSound = vi.fn();
+  const stopAllSounds = vi.fn();
+  const setAnimatedText = vi.fn();
+  const setTextFont = vi.fn();
+  const setTextColor = vi.fn();
+  const setTextWidth = vi.fn();
+  const animatedTextOpcodes = new Map<string, ReturnType<typeof vi.fn>>([
+    ['text_setText', setAnimatedText],
+    ['text_setFont', setTextFont],
+    ['text_setColor', setTextColor],
+    ['text_setWidth', setTextWidth]
+  ]);
+  const runtimeVariables = new Map<string, unknown>();
+  const getRuntimeVariable = vi.fn(({VAR}: {VAR: unknown}) => runtimeVariables.get(String(VAR)) ?? '');
+  const getOpcodeFunction = vi.fn((opcode: string) => animatedTextOpcodes.get(opcode));
   const setFishSize = vi.fn();
   const setStageSize = vi.fn();
   const setCloneSize = vi.fn();
@@ -32,7 +47,7 @@ describe('actor costume animation', () => {
         {name: 'Bell', assetId: 'bell', soundId: 'bell-sound', dataFormat: 'wav'},
         {name: 'Chime', assetId: 'chime', soundId: 'chime-sound', dataFormat: 'mp3'}
       ],
-      soundBank: {playSound}
+      soundBank: {playSound, stop: stopSound, stopAllSounds}
     }
   };
   const stage: TurboWarpTarget = {
@@ -82,6 +97,16 @@ describe('actor costume animation', () => {
     bird.size = 80;
     updateDrawableSkinId.mockClear();
     playSound.mockClear();
+    stopSound.mockClear();
+    stopAllSounds.mockClear();
+    setAnimatedText.mockClear();
+    setTextFont.mockClear();
+    setTextColor.mockClear();
+    setTextWidth.mockClear();
+    runtimeVariables.clear();
+    getRuntimeVariable.mockClear();
+    getOpcodeFunction.mockClear();
+    getOpcodeFunction.mockImplementation((opcode: string) => animatedTextOpcodes.get(opcode));
     setFishSize.mockClear();
     setStageSize.mockClear();
     setCloneSize.mockClear();
@@ -107,6 +132,9 @@ describe('actor costume animation', () => {
             updateDrawableSkinId
           },
           targets: [stage, sprite, clone, bird],
+          stageWidth: 480,
+          ext_lmsTempVars2: {getRuntimeVariable},
+          getOpcodeFunction,
           requestRedraw: vi.fn(),
           on: runtimeOn
         }
@@ -150,6 +178,7 @@ describe('actor costume animation', () => {
     expect(opcodes).toContain('startActorLoop');
     expect(opcodes).toContain('startActorSequence');
     expect(opcodes).toContain('stopActorAnimation');
+    expect(opcodes).toContain('finishAllActorSequences');
   });
 
   it('loops comma-separated asset and duration strings in the background', async () => {
@@ -351,6 +380,36 @@ describe('actor costume animation', () => {
     expect(updateDrawableSkinId).toHaveBeenLastCalledWith(7, 11);
   });
 
+  it('finishes sequences on their final image without stopping loops', async () => {
+    const extension = await createExtension();
+    extension.startActorSequence({
+      ACTOR: 'Fish', ASSETS: 'Fish1,Bell,Fish3', DURATIONS: '30,30'
+    });
+    extension.startActorLoop({
+      ACTOR: 'Bird', ASSETS: 'Bird1,Bird2', DURATIONS: '0.1,0.1'
+    });
+    await flushFrame();
+
+    await extension.finishAllActorSequences();
+
+    expect(updateDrawableSkinId).toHaveBeenCalledWith(7, 13);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(updateDrawableSkinId).toHaveBeenCalledWith(9, 22);
+  });
+
+  it('finishes a sound-only sequence without applying an image', async () => {
+    const extension = await createExtension();
+    extension.startActorSequence({ACTOR: 'Fish', ASSETS: 'Bell,Chime', DURATIONS: '30'});
+    await flushFrame();
+    updateDrawableSkinId.mockClear();
+
+    await extension.finishAllActorSequences();
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    expect(updateDrawableSkinId).not.toHaveBeenCalled();
+    expect(playSound).toHaveBeenCalledTimes(1);
+  });
+
   it('setSpriteSkin cancels an existing animation', async () => {
     const extension = await createExtension();
     extension.startActorLoop({ACTOR: 'Fish', COSTUMES: 'Fish1,Fish2', DURATIONS: '0.1,0.1'});
@@ -379,6 +438,23 @@ describe('actor costume animation', () => {
     expect(updateDrawableSkinId).toHaveBeenLastCalledWith(8, 13);
     expect(setCloneSize).toHaveBeenLastCalledWith(160);
     expect(setCloneSize).toHaveBeenCalledTimes(1);
+  });
+
+  it('lets the DSL show path replace an actor animation with current runtime text', async () => {
+    const extension = await createExtension();
+    await extension.registerAsset({RESOURCE_ID: 'text', NAME: 'Narration'});
+    runtimeVariables.set('text:Narration', 'むかし　むかし、あるところに...');
+    extension.startActorLoop({ACTOR: 'Fish', ASSETS: 'Fish1,Fish2', DURATIONS: '0.1,0.1'});
+    await flushFrame();
+
+    await extension.setThisSpriteSkin({NAME: 'Narration'}, {target: sprite});
+    expect(setAnimatedText).toHaveBeenLastCalledWith(
+      {TEXT: 'むかし　むかし、あるところに...'},
+      expect.objectContaining({target: sprite, runtime: Scratch.vm.runtime})
+    );
+
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(updateDrawableSkinId).toHaveBeenCalledTimes(1);
   });
 
   it('replaces an existing animation for the same actor', async () => {

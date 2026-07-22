@@ -1,7 +1,14 @@
 import definitions from './block-definitions.json' with {type: 'json'};
+import {
+  normalizeTextStyleProperty,
+  normalizeTextStyleValue,
+  resolveTextStyle,
+  textRuntimeVariableName,
+  textStyleRuntimeVariableName
+} from './text-style.js';
 
 export const EXTENSION_ID = 'twAssetManager';
-export const EXTENSION_VERSION = '2026-07-18-typed-animation-actions';
+export const EXTENSION_VERSION = '2026-07-23';
 
 const DB_NAME = 'tw-asset-manager';
 const DB_VERSION = 1;
@@ -10,7 +17,7 @@ const STAGE_RESOURCE_NAME = '@stage';
 
 type BlockArgs = Record<string, unknown>;
 type BlockTypeName = 'COMMAND' | 'BOOLEAN' | 'REPORTER';
-type AssetKind = 'external' | 'costume' | 'sound';
+type AssetKind = 'external' | 'costume' | 'sound' | 'text';
 
 interface DefinitionArgument {
   type: 'STRING';
@@ -59,6 +66,12 @@ interface SoundAssetReference {
   assetId: string | null;
 }
 
+interface TextAssetReference {
+  kind: 'text';
+  name: string;
+  runtimeVariableName: string;
+}
+
 interface ResolvedSkin {
   skinId: number;
   sourceSize: number | null;
@@ -69,7 +82,8 @@ export type ParsedResourceIdentifier =
   | {kind: 'external'; url: string}
   | {kind: 'costume'; spriteName: string; costumeName: string | null}
   | {kind: 'backdrop'; backdropName: string}
-  | {kind: 'sound'; spriteName: string; soundName: string};
+  | {kind: 'sound'; spriteName: string; soundName: string}
+  | {kind: 'text'; runtimeVariableName: string};
 
 const blockDefinitions = definitions.blocks as readonly DefinitionBlock[];
 
@@ -127,6 +141,10 @@ export function parseResourceIdentifier(
     if (bareScheme === 'sound' && fallbackName) {
       return {kind: 'sound', spriteName: STAGE_RESOURCE_NAME, soundName: fallbackName};
     }
+    if (bareScheme === 'text' && fallbackName) {
+      const name = parseLocalResourceName(fallbackName, 'Text variable');
+      return {kind: 'text', runtimeVariableName: textRuntimeVariableName(name)};
+    }
     throw new Error(`Unsupported resource identifier: ${resourceId}`);
   }
 
@@ -144,6 +162,10 @@ export function parseResourceIdentifier(
     case 'sound': {
       const [spriteName, soundName] = splitLocalResourcePair(payload, 'sound', fallbackAssetName);
       return {kind: 'sound', spriteName, soundName};
+    }
+    case 'text': {
+      const name = parseLocalResourceName(payload, 'Text variable');
+      return {kind: 'text', runtimeVariableName: textRuntimeVariableName(name)};
     }
     default:
       throw new Error(`Unsupported resource scheme: ${scheme}`);
@@ -186,8 +208,9 @@ export class AssetManagerExtension {
   private readonly externalAssets = new Map<string, ExternalMemoryAsset>();
   private readonly costumeAssets = new Map<string, CostumeAssetReference>();
   private readonly soundAssets = new Map<string, SoundAssetReference>();
+  private readonly textAssets = new Map<string, TextAssetReference>();
   private readonly assetRegistry = new Map<string, AssetKind>();
-  private readonly playingAudio = new Set<HTMLAudioElement>();
+  private readonly playingAudio = new Map<HTMLAudioElement, string>();
   private readonly registrationVersions = new Map<string, number>();
   private lastAssetErrorType = '';
   private lastAssetErrorLabel = '';
@@ -209,8 +232,12 @@ export class AssetManagerExtension {
     let fallbackLabel = normalizeName(args.NAME);
     try {
       const name = this.requireAssetName(args.NAME);
+      const resourceId = normalizeName(args.RESOURCE_ID);
+      if (resourceId === 'text' || resourceId.startsWith('text:')) {
+        this.requireTextAssetName(name);
+      }
       fallbackType = 'resource-id';
-      fallbackLabel = normalizeName(args.RESOURCE_ID);
+      fallbackLabel = resourceId;
       const resource = parseResourceIdentifier(args.RESOURCE_ID, name);
       switch (resource.kind) {
         case 'cache':
@@ -237,6 +264,12 @@ export class AssetManagerExtension {
           fallbackType = 'sound';
           fallbackLabel = resource.soundName;
           this.registerSoundReference(name, resource.spriteName, resource.soundName);
+          return;
+        case 'text':
+          fallbackType = 'text';
+          fallbackLabel = resource.runtimeVariableName;
+          this.registerTextReference(name, resource.runtimeVariableName);
+          return;
       }
     } catch (error) {
       if (this.assetErrorVersion === errorVersion) {
@@ -278,10 +311,9 @@ export class AssetManagerExtension {
     this.externalAssets.clear();
     this.costumeAssets.clear();
     this.soundAssets.clear();
+    this.textAssets.clear();
     this.assetRegistry.clear();
-    for (const audio of this.playingAudio) {
-      try { audio.pause(); audio.currentTime = 0; } catch { /* ignored */ }
-    }
+    for (const audio of [...this.playingAudio.keys()]) this.stopExternalAudio(audio);
     this.playingAudio.clear();
   }
 
@@ -299,14 +331,14 @@ export class AssetManagerExtension {
 
   async setThisSpriteSkin(args: BlockArgs, util: ScratchBlockUtility): Promise<void> {
     if (!util.target || util.target.isStage) throw new Error('This block must be used on a sprite or its clone.');
-    this.applySkinToTarget(util.target, await this.resolveSkin(args.NAME));
+    await this.applyAssetToTarget(util.target, args.NAME, util);
   }
 
-  async setSpriteSkin(args: BlockArgs): Promise<void> {
+  async setSpriteSkin(args: BlockArgs, util?: ScratchBlockUtility): Promise<void> {
     const name = normalizeName(args.SPRITE);
     const target = this.findTargetByName(name);
     if (!target) throw new Error(`Sprite not found: ${name}`);
-    this.applySkinToTarget(target, await this.resolveSkin(args.NAME));
+    await this.applyAssetToTarget(target, args.NAME, util);
   }
 
   async setStageSkin(args: BlockArgs): Promise<void> {
@@ -320,6 +352,38 @@ export class AssetManagerExtension {
 
   async playSoundUntilDone(args: BlockArgs): Promise<void> {
     await this.playResolvedSound(args.NAME, true);
+  }
+
+  stopSound(args: BlockArgs): void {
+    const name = normalizeName(args.NAME);
+    const kind = this.assetRegistry.get(name);
+    if (!kind) throw new Error(`Asset is not loaded: ${name}`);
+    if (kind === 'external') {
+      const asset = this.externalAssets.get(name);
+      if (!asset) throw new Error(`External asset is not loaded: ${name}`);
+      asset.mimeType = normalizeMimeType(asset.mimeType, asset.url || name);
+      if (!asset.mimeType.startsWith('audio/')) {
+        throw new Error(`Asset is not audio: ${name} (${asset.mimeType})`);
+      }
+      for (const [audio, assetName] of [...this.playingAudio]) {
+        if (assetName === name) this.stopExternalAudio(audio);
+      }
+      return;
+    }
+    if (kind === 'sound') {
+      const {target, sound} = this.resolveSoundReference(name);
+      target.sprite!.soundBank!.stop(target, sound.soundId as string);
+      return;
+    }
+    throw new Error(`Asset is not audio: ${name}`);
+  }
+
+  stopAllSounds(): void {
+    for (const audio of [...this.playingAudio.keys()]) this.stopExternalAudio(audio);
+    this.playingAudio.clear();
+    for (const target of this.runtime.targets) {
+      target.sprite?.soundBank?.stopAllSounds(target);
+    }
   }
 
   getAssetMimeType(args: BlockArgs): string {
@@ -339,11 +403,38 @@ export class AssetManagerExtension {
         const {sound} = this.resolveSoundReference(name);
         return this.projectAssetMimeType(sound.dataFormat, 'audio');
       }
+      case 'text': {
+        return 'text/plain';
+      }
     }
   }
 
   getVersion(): string {
     return EXTENSION_VERSION;
+  }
+
+  setTextValue(args: BlockArgs): void {
+    const name = this.requireTextAssetName(args.NAME);
+    const kind = this.assetRegistry.get(name);
+    if (kind !== undefined && kind !== 'text') {
+      throw new Error(`Asset is not text: ${name}`);
+    }
+    const reference = this.textAssets.get(name);
+    this.setRuntimeVariable(
+      reference?.runtimeVariableName ?? textRuntimeVariableName(name),
+      String(args.VALUE ?? '')
+    );
+  }
+
+  setTextStyle(args: BlockArgs): void {
+    const name = this.requireTextAssetName(args.NAME);
+    const kind = this.assetRegistry.get(name);
+    if (kind !== undefined && kind !== 'text') {
+      throw new Error(`Asset is not text: ${name}`);
+    }
+    const property = normalizeTextStyleProperty(args.PROPERTY);
+    const value = normalizeTextStyleValue(property, args.VALUE);
+    this.setRuntimeVariable(textStyleRuntimeVariableName(name, property), value);
   }
 
   private toScratchBlock(block: DefinitionBlock): Record<string, unknown> {
@@ -371,6 +462,18 @@ export class AssetManagerExtension {
   private requireAssetName(value: unknown): string {
     const name = normalizeName(value);
     if (!name) throw new Error('Asset name is empty.');
+    return name;
+  }
+
+  private requireTextAssetName(value: unknown): string {
+    const name = this.requireAssetName(value);
+    if (name.includes(':')) {
+      throw new AssetRegistrationError(
+        'asset-name',
+        name,
+        'Text asset name must not contain a colon.'
+      );
+    }
     return name;
   }
 
@@ -485,6 +588,17 @@ export class AssetManagerExtension {
     this.assetRegistry.set(name, 'sound');
   }
 
+  private registerTextReference(name: string, runtimeVariableName: string): void {
+    this.requireTextAssetName(name);
+    this.unregisterAsset(name);
+    this.textAssets.set(name, {
+      kind: 'text',
+      name,
+      runtimeVariableName
+    });
+    this.assetRegistry.set(name, 'text');
+  }
+
   private unregisterAsset(name: string): void {
     this.nextRegistrationVersion(name);
     const kind = this.assetRegistry.get(name);
@@ -494,8 +608,10 @@ export class AssetManagerExtension {
       this.externalAssets.delete(name);
     } else if (kind === 'costume') {
       this.costumeAssets.delete(name);
-    } else {
+    } else if (kind === 'sound') {
       this.soundAssets.delete(name);
+    } else if (kind === 'text') {
+      this.textAssets.delete(name);
     }
     this.assetRegistry.delete(name);
   }
@@ -621,6 +737,85 @@ export class AssetManagerExtension {
     throw new Error(`Asset is not an image: ${name}`);
   }
 
+  protected async applyAssetToTarget(
+    target: TurboWarpTarget,
+    value: unknown,
+    util?: ScratchBlockUtility
+  ): Promise<void> {
+    const name = normalizeName(value);
+    const kind = this.assetRegistry.get(name);
+    if (!kind) throw new Error(`Asset is not loaded: ${name}`);
+    if (kind === 'text') {
+      await this.applyTextToTarget(target, name, util);
+      return;
+    }
+    this.applySkinToTarget(target, await this.resolveSkin(name));
+  }
+
+  private async applyTextToTarget(
+    target: TurboWarpTarget,
+    name: string,
+    util?: ScratchBlockUtility
+  ): Promise<void> {
+    if (target.isStage) throw new Error(`Text asset can only be shown on a sprite: ${name}`);
+    const reference = this.textAssets.get(name);
+    if (!reference) throw new Error(`Text asset is not registered: ${name}`);
+
+    const temporaryVariables = this.requireTemporaryVariables();
+    const getRuntimeVariable = (variableName: string): unknown =>
+      temporaryVariables.getRuntimeVariable({VAR: variableName});
+    const style = resolveTextStyle(name, this.runtime.stageWidth, getRuntimeVariable);
+    const setFont = this.requireAnimatedTextOpcode('text_setFont');
+    const setColor = this.requireAnimatedTextOpcode('text_setColor');
+    const setWidth = this.requireAnimatedTextOpcode('text_setWidth');
+    const displayText = this.requireAnimatedTextOpcode(
+      style.animation === 'none' ? 'text_setText' : 'text_animateText'
+    );
+    const blockUtility = {...util, target, runtime: util?.runtime ?? this.runtime};
+    const text = getRuntimeVariable(reference.runtimeVariableName);
+
+    await Promise.resolve(setFont({FONT: style.font}, blockUtility));
+    await Promise.resolve(setColor({COLOR: style.color}, blockUtility));
+    await Promise.resolve(setWidth({WIDTH: style.width, ALIGN: style.align}, blockUtility));
+    const displayResult = displayText(
+      style.animation === 'none'
+        ? {TEXT: String(text ?? '')}
+        : {ANIMATE: style.animation, TEXT: String(text ?? '')},
+      blockUtility
+    );
+    if (style.animation === 'none') {
+      await Promise.resolve(displayResult);
+    } else {
+      void Promise.resolve(displayResult).catch((error) => {
+        console.warn(`Animated Text failed for asset "${name}"`, error);
+      });
+    }
+  }
+
+  private requireTemporaryVariables(): TurboWarpTemporaryVariablesExtension {
+    const temporaryVariables = this.runtime.ext_lmsTempVars2;
+    if (!temporaryVariables?.getRuntimeVariable) {
+      throw new Error('Temporary Variables extension is not loaded.');
+    }
+    return temporaryVariables;
+  }
+
+  private setRuntimeVariable(name: string, value: string): void {
+    const temporaryVariables = this.requireTemporaryVariables();
+    if (!temporaryVariables.setRuntimeVariable) {
+      throw new Error('Temporary Variables extension does not support setting runtime variables.');
+    }
+    temporaryVariables.setRuntimeVariable({VAR: name, STRING: value});
+  }
+
+  private requireAnimatedTextOpcode(opcode: string): TurboWarpOpcodeFunction {
+    const implementation = this.runtime.getOpcodeFunction?.(opcode);
+    if (!implementation) {
+      throw new Error(`Animated Text extension is not loaded or does not provide ${opcode}.`);
+    }
+    return implementation;
+  }
+
   private async ensureExternalSkin(name: string): Promise<number> {
     const asset = this.externalAssets.get(name);
     if (!asset) throw new Error(`External asset is not loaded: ${name}`);
@@ -703,10 +898,15 @@ export class AssetManagerExtension {
     if (!asset.mimeType.startsWith('audio/')) throw new Error(`Asset is not audio: ${name} (${asset.mimeType})`);
     const objectUrl = URL.createObjectURL(new Blob([asset.data], {type: asset.mimeType}));
     const audio = new Audio(objectUrl);
-    this.playingAudio.add(audio);
+    this.playingAudio.set(audio, name);
+    let resolvePlayback!: () => void;
+    const playbackFinished = new Promise<void>((resolve) => {
+      resolvePlayback = resolve;
+    });
     const cleanup = () => {
       this.playingAudio.delete(audio);
       URL.revokeObjectURL(objectUrl);
+      resolvePlayback();
     };
     audio.addEventListener('ended', cleanup, {once: true});
     audio.addEventListener('error', cleanup, {once: true});
@@ -724,10 +924,19 @@ export class AssetManagerExtension {
       cleanup();
       throw error;
     }
-    await new Promise<void>((resolve) => {
-      audio.addEventListener('ended', () => resolve(), {once: true});
-      audio.addEventListener('error', () => resolve(), {once: true});
-    });
+    await playbackFinished;
+  }
+
+  private stopExternalAudio(audio: HTMLAudioElement): void {
+    try {
+      audio.pause();
+      audio.currentTime = 0;
+      audio.dispatchEvent(new Event('ended'));
+    } catch {
+      // Ignore cleanup failures from partially initialized browser audio.
+    } finally {
+      this.playingAudio.delete(audio);
+    }
   }
 
   private async playProjectSound(name: string, waitUntilDone: boolean): Promise<void> {
