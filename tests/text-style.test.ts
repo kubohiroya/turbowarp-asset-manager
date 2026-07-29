@@ -27,7 +27,7 @@ describe('runtime text style', () => {
     expect(resolveTextStyle('Narration', 600, (name) => values.get(name) ?? '')).toEqual({
       animation: 'none',
       font: 'Handwriting',
-      color: '#575e75',
+      color: '#ffffff',
       width: 600,
       align: 'center'
     });

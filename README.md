@@ -8,6 +8,13 @@ Download [`dist/asset-manager.js`](dist/asset-manager.js), then open TurboWarp D
 
 The built JavaScript file is committed to this repository so that users do not need to install Node.js or run the build process.
 
+## Extension ID compatibility
+
+The current extension ID remains `twAssetManager` for compatibility with projects that already
+store its opcodes. A future standards-compliant ID is planned as
+`kubohiroyaassetmanager`. That change must be released together with a schema-aware project
+migration; replacing the ID in this repository alone would break existing blocks.
+
 ## Features
 
 - register external image and audio URLs;
@@ -62,7 +69,7 @@ Runtime text rendering requires both TurboWarp extensions below to be loaded uns
 - [Temporary Variables](https://extensions.turbowarp.org/Lily/TempVariables2.js), extension ID `lmsTempVars2`;
 - [Animated Text](https://extensions.turbowarp.org/lab/text.js), extension ID `text`.
 
-Registering a text asset does not require the runtime variable to exist yet. The `set text asset [NAME] to [VALUE]` block stores the value in the internal `text:<NAME>` namespace. Each time the asset is shown, Asset Manager reads the latest value and style through `lmsTempVars2`, reapplies the complete style, and invokes Animated Text for the destination sprite or clone. A missing runtime variable therefore displays an empty string. Missing extension dependencies are reported when a text value or style is set, or when the text asset is shown, rather than when it is registered.
+Registering a text asset does not require the runtime variable to exist yet. The `set text asset [NAME] to [VALUE]` block stores the value in the internal `text:<NAME>` namespace. Each time the asset is shown, Asset Manager reads the latest value and style through `lmsTempVars2`, reapplies the complete style, and invokes Animated Text for the destination sprite or clone. Updating a text value also refreshes every sprite or clone currently displaying that asset. A missing runtime variable therefore displays an empty string. Missing extension dependencies are reported when a text value or style is set, or when the text asset is shown, rather than when it is registered.
 
 The `set text asset [NAME] style [PROPERTY] to [VALUE]` block changes one style property at a time. An empty value resets that property to its default.
 
@@ -70,11 +77,11 @@ The `set text asset [NAME] style [PROPERTY] to [VALUE]` block changes one style 
 |---|---|---|
 | `animation` | `none`, `type`, `typing`, `rainbow`, `zoom`, `shake` | `none` |
 | `font` | Any non-empty font name accepted by Animated Text | `Handwriting` |
-| `color` | `#rgb` or `#rrggbb` | `#575e75` |
+| `color` | `#rgb` or `#rrggbb` | `#ffffff` |
 | `width` | Positive number | Current stage width |
 | `align` | `left`, `center`, `right` | `center` |
 
-`typing` is a DSL-friendly alias for Animated Text's `type` value. The full style is reapplied before every display so that a previous text asset or sprite cannot leak its style into the next one. Animated display starts in the background; the `show` action can immediately continue to its existing position and size steps without waiting for the animation to finish.
+`typing` is a DSL-friendly alias for Animated Text's `type` value. The full style is reapplied before every display so that a previous text asset or sprite cannot leak its style into the next one. When the installed Animated Text version supports outline controls, Asset Manager also applies a two-pixel black outline. Animated display starts in the background; the `show` action can immediately continue to its existing position and size steps without waiting for the animation to finish.
 
 The existing paper-theater `show` action can use text assets, so it retains the same position and size arguments without adding another DSL action:
 
@@ -84,7 +91,7 @@ actor=Prompt,Narration
 text=Narration:むかし　むかし、あるところに...
 textStyle=Narration:animation:typing
 textStyle=Narration:font:Sans Serif
-textStyle=Narration:color:#575e75
+textStyle=Narration:color:#ffffff
 textStyle=Narration:width:200
 textStyle=Narration:align:left
 action=Prompt:show:Narration:0,0,100
@@ -167,6 +174,10 @@ action=Fish:setSkin:Fish3
 stops the animation for `Fish` before applying `Fish3`.
 
 Animation state is keyed by the unique ACTOR name. In tmpose-kamishibai, each Actor sprite clone receives its own ACTOR name, so an ACTOR name maps to exactly one VM target; duplicate ACTOR names are rejected as a project invariant violation. The resolved target is retained in the state only as the drawing destination and for deletion cleanup. Starting a new animation replaces that ACTOR's previous animation. ACTOR deletion, green flag, project stop, runtime disposal, and deleting all in-memory assets cancel the relevant timers.
+
+## Loading indicator compatibility
+
+Four hidden compatibility opcodes support projects that show a loading animation while assets are prepared. `setLoadingCostumes` configures an ordered, de-duplicated list of loading image assets. `prepareLoadingAssets` validates those names against a project list and moves their definitions to the front while preserving relative order. `loadingAssetCount` reports how many prioritized entries were found, and `loadingCostumeAt` cycles through the configured costume names using a one-based index.
 
 ## Blocks
 

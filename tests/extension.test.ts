@@ -128,12 +128,16 @@ describe('project-local assets', () => {
   const setTextFont = vi.fn();
   const setTextColor = vi.fn();
   const setTextWidth = vi.fn();
+  const setTextOutlineWidth = vi.fn();
+  const setTextOutlineColor = vi.fn();
   const animatedTextOpcodes = new Map<string, ReturnType<typeof vi.fn>>([
     ['text_setText', setAnimatedText],
     ['text_animateText', animateText],
     ['text_setFont', setTextFont],
     ['text_setColor', setTextColor],
-    ['text_setWidth', setTextWidth]
+    ['text_setWidth', setTextWidth],
+    ['text_setOutlineWidth', setTextOutlineWidth],
+    ['text_setOutlineColor', setTextOutlineColor]
   ]);
   const getOpcodeFunction = vi.fn((opcode: string) => animatedTextOpcodes.get(opcode));
   const runtimeVariables = new Map<string, unknown>();
@@ -267,6 +271,8 @@ describe('project-local assets', () => {
     setTextFont.mockClear();
     setTextColor.mockClear();
     setTextWidth.mockClear();
+    setTextOutlineWidth.mockClear();
+    setTextOutlineColor.mockClear();
     getOpcodeFunction.mockClear();
     getOpcodeFunction.mockImplementation((opcode: string) => animatedTextOpcodes.get(opcode));
     getRuntimeVariable.mockClear();
@@ -303,7 +309,7 @@ describe('project-local assets', () => {
       },
       extensions: {unsandboxed: true, register: vi.fn()},
       BlockType: {COMMAND: 'command', BOOLEAN: 'boolean', REPORTER: 'reporter'},
-      ArgumentType: {STRING: 'string'},
+      ArgumentType: {STRING: 'string', NUMBER: 'number'},
       translate: (text: string) => text
     });
   });
@@ -511,11 +517,19 @@ describe('project-local assets', () => {
       expect.objectContaining({target: sprite, runtime: Scratch.vm.runtime})
     );
     expect(setTextColor).toHaveBeenLastCalledWith(
-      {COLOR: '#575e75'},
+      {COLOR: '#ffffff'},
       expect.objectContaining({target: sprite, runtime: Scratch.vm.runtime})
     );
     expect(setTextWidth).toHaveBeenLastCalledWith(
       {WIDTH: 640, ALIGN: 'center'},
+      expect.objectContaining({target: sprite, runtime: Scratch.vm.runtime})
+    );
+    expect(setTextOutlineWidth).toHaveBeenLastCalledWith(
+      {WIDTH: 2},
+      expect.objectContaining({target: sprite, runtime: Scratch.vm.runtime})
+    );
+    expect(setTextOutlineColor).toHaveBeenLastCalledWith(
+      {COLOR: '#000000'},
       expect.objectContaining({target: sprite, runtime: Scratch.vm.runtime})
     );
     expect(setAnimatedText).toHaveBeenLastCalledWith(
@@ -532,8 +546,23 @@ describe('project-local assets', () => {
       expect.objectContaining({target: turtle, runtime: Scratch.vm.runtime})
     );
 
+    setAnimatedText.mockClear();
+    await extension.setTextValue({NAME: 'Narration', VALUE: '表示中に更新される'});
+    expect(setAnimatedText).toHaveBeenCalledTimes(2);
+    expect(setAnimatedText).toHaveBeenCalledWith(
+      {TEXT: '表示中に更新される'},
+      expect.objectContaining({target: sprite})
+    );
+    expect(setAnimatedText).toHaveBeenCalledWith(
+      {TEXT: '表示中に更新される'},
+      expect.objectContaining({target: turtle})
+    );
+
     extension.deleteMemoryAsset({NAME: 'Narration'});
     expect(extension.isLoaded({NAME: 'Narration'})).toBe(false);
+    setAnimatedText.mockClear();
+    await extension.setTextValue({NAME: 'Narration', VALUE: 'unregistered'});
+    expect(setAnimatedText).not.toHaveBeenCalled();
   });
 
   it('stores namespaced text and style values and applies a typing animation', async () => {
@@ -615,7 +644,7 @@ describe('project-local assets', () => {
     await extension.setThisSpriteSkin({NAME: 'Plain'}, {target: sprite});
 
     expect(setTextFont).toHaveBeenLastCalledWith({FONT: 'Handwriting'}, expect.any(Object));
-    expect(setTextColor).toHaveBeenLastCalledWith({COLOR: '#575e75'}, expect.any(Object));
+    expect(setTextColor).toHaveBeenLastCalledWith({COLOR: '#ffffff'}, expect.any(Object));
     expect(setTextWidth).toHaveBeenLastCalledWith(
       {WIDTH: 640, ALIGN: 'center'},
       expect.any(Object)
@@ -637,8 +666,8 @@ describe('project-local assets', () => {
       .toThrow('positive number');
     expect(() => extension.setTextStyle({NAME: 'Narration', PROPERTY: 'align', VALUE: 'justify'}))
       .toThrow('Invalid text alignment');
-    expect(() => extension.setTextValue({NAME: 'chapter:title', VALUE: 'invalid'}))
-      .toThrow('must not contain a colon');
+    await expect(extension.setTextValue({NAME: 'chapter:title', VALUE: 'invalid'}))
+      .rejects.toThrow('must not contain a colon');
 
     runtimeVariables.set('textStyle:Narration:width', 'broken');
     await expect(extension.setThisSpriteSkin({NAME: 'Narration'}, {target: sprite}))
@@ -660,8 +689,8 @@ describe('project-local assets', () => {
     await extension.registerAsset({RESOURCE_ID: 'text', NAME: 'Narration'});
     delete Scratch.vm.runtime.ext_lmsTempVars2;
 
-    expect(() => extension.setTextValue({NAME: 'Narration', VALUE: 'text'}))
-      .toThrow('Temporary Variables extension is not loaded');
+    await expect(extension.setTextValue({NAME: 'Narration', VALUE: 'text'}))
+      .rejects.toThrow('Temporary Variables extension is not loaded');
     await expect(extension.setThisSpriteSkin({NAME: 'Narration'}, {target: sprite}))
       .rejects.toThrow('Temporary Variables extension is not loaded');
   });

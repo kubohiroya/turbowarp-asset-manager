@@ -27,8 +27,10 @@
   ];
   const DEFAULT_STAGE_WIDTH = 480;
   const DEFAULT_FONT = "Handwriting";
-  const DEFAULT_COLOR = "#575e75";
+  const DEFAULT_COLOR = "#ffffff";
   const DEFAULT_ALIGNMENT = "center";
+  const DEFAULT_OUTLINE_WIDTH = 2;
+  const DEFAULT_OUTLINE_COLOR = "#000000";
   function textRuntimeVariableName(name) {
     return `${TEXT_RUNTIME_NAMESPACE}:${name}`;
   }
@@ -104,12 +106,61 @@
     };
   }
   const EXTENSION_ID = "twAssetManager";
-  const EXTENSION_VERSION = "2026-07-23";
+  const EXTENSION_VERSION = "2026-07-26";
   const DB_NAME = "tw-asset-manager";
   const DB_VERSION = 1;
   const STORE_NAME = "assets";
   const STAGE_RESOURCE_NAME = "@stage";
   const blockDefinitions = definitions.blocks;
+  blockDefinitions.unshift(
+    {
+      opcode: "setLoadingCostumes",
+      blockType: "COMMAND",
+      text: "set loading costume assets to [NAMES]",
+      description: "Configures the comma-separated image assets used by the loading indicator.",
+      arguments: {
+        NAMES: {
+          type: "STRING",
+          defaultValue: "loading1,loading2"
+        }
+      },
+      hideFromPalette: true
+    },
+    {
+      opcode: "prepareLoadingAssets",
+      blockType: "COMMAND",
+      text: "prioritize loading assets in list [LIST]",
+      description: "Moves configured loading assets to the front of the named asset definition list.",
+      arguments: {
+        LIST: {
+          type: "STRING",
+          defaultValue: "assetList"
+        }
+      },
+      hideFromPalette: true
+    },
+    {
+      opcode: "loadingAssetCount",
+      blockType: "REPORTER",
+      text: "loading asset count",
+      description: "Returns the number of configured loading assets present in the prepared asset list.",
+      arguments: {},
+      hideFromPalette: true
+    },
+    {
+      opcode: "loadingCostumeAt",
+      blockType: "REPORTER",
+      text: "loading costume for asset number [INDEX]",
+      description: "Returns the configured loading costume asset for a one-based regular asset number.",
+      arguments: {
+        INDEX: {
+          type: "NUMBER",
+          defaultValue: "1"
+        }
+      },
+      hideFromPalette: true
+    }
+  );
   class AssetRegistrationError extends Error {
     constructor(assetErrorType, assetErrorLabel, message) {
       super(message);
@@ -221,11 +272,58 @@
       __publicField(this, "soundAssets", /* @__PURE__ */ new Map());
       __publicField(this, "textAssets", /* @__PURE__ */ new Map());
       __publicField(this, "assetRegistry", /* @__PURE__ */ new Map());
+      __publicField(this, "displayedAssets", /* @__PURE__ */ new Map());
       __publicField(this, "playingAudio", /* @__PURE__ */ new Map());
       __publicField(this, "registrationVersions", /* @__PURE__ */ new Map());
       __publicField(this, "lastAssetErrorType", "");
       __publicField(this, "lastAssetErrorLabel", "");
       __publicField(this, "assetErrorVersion", 0);
+    }
+    setLoadingCostumes(args) {
+      const seen = /* @__PURE__ */ new Set();
+      this.loadingCostumes = String(args.NAMES ?? "").split(",").map((name) => normalizeName(name)).filter((name) => {
+        if (!name || seen.has(name)) return false;
+        seen.add(name);
+        return true;
+      });
+      this.loadingAssetCountValue = 0;
+    }
+    prepareLoadingAssets(args, util) {
+      const listName = normalizeName(args.LIST);
+      const list = util.target?.lookupVariableByNameAndType?.(listName, "list");
+      if (!list || !Array.isArray(list.value)) {
+        throw new Error(`Loading asset list not found: ${listName || "(empty)"}`);
+      }
+      const loadingCostumes = this.loadingCostumes ?? [];
+      const loadingNames = new Set(loadingCostumes);
+      const entries = list.value.map((entry) => String(entry));
+      const declaredNames = new Set(entries.map((entry) => {
+        const separatorIndex = entry.indexOf(",");
+        return normalizeName(separatorIndex < 0 ? entry : entry.slice(0, separatorIndex));
+      }));
+      const missingNames = loadingCostumes.filter((name) => !declaredNames.has(name));
+      if (missingNames.length > 0) {
+        throw new Error(`Loading asset is not declared: ${missingNames.join(", ")}`);
+      }
+      const prioritized = [];
+      const regular = [];
+      for (const entry of entries) {
+        const separatorIndex = entry.indexOf(",");
+        const assetName = normalizeName(separatorIndex < 0 ? entry : entry.slice(0, separatorIndex));
+        (loadingNames.has(assetName) ? prioritized : regular).push(entry);
+      }
+      list.value.splice(0, list.value.length, ...prioritized, ...regular);
+      this.loadingAssetCountValue = prioritized.length;
+    }
+    loadingAssetCount() {
+      return this.loadingAssetCountValue ?? 0;
+    }
+    loadingCostumeAt(args) {
+      const loadingCostumes = this.loadingCostumes ?? [];
+      if (loadingCostumes.length === 0) return "";
+      const numericIndex = Number(args.INDEX);
+      const index = Number.isFinite(numericIndex) ? Math.max(1, Math.trunc(numericIndex)) : 1;
+      return loadingCostumes[(index - 1) % loadingCostumes.length];
     }
     getInfo() {
       return {
@@ -320,6 +418,7 @@
       this.soundAssets.clear();
       this.textAssets.clear();
       this.assetRegistry.clear();
+      this.displayedAssets.clear();
       for (const audio of [...this.playingAudio.keys()]) this.stopExternalAudio(audio);
       this.playingAudio.clear();
     }
@@ -407,7 +506,7 @@
     getVersion() {
       return EXTENSION_VERSION;
     }
-    setTextValue(args) {
+    async setTextValue(args) {
       const name = this.requireTextAssetName(args.NAME);
       const kind = this.assetRegistry.get(name);
       if (kind !== void 0 && kind !== "text") {
@@ -417,6 +516,15 @@
       this.setRuntimeVariable(
         reference?.runtimeVariableName ?? textRuntimeVariableName(name),
         String(args.VALUE ?? "")
+      );
+      const targets = this.runtime.targets.filter(
+        (target) => this.displayedAssets.get(target.id) === name
+      );
+      await Promise.all(
+        targets.map((target) => this.applyTextToTarget(target, name, {
+          runtime: this.runtime,
+          target
+        }))
       );
     }
     setTextStyle(args) {
@@ -586,6 +694,9 @@
         this.textAssets.delete(name);
       }
       this.assetRegistry.delete(name);
+      for (const [targetId, displayedName] of this.displayedAssets) {
+        if (displayedName === name) this.displayedAssets.delete(targetId);
+      }
     }
     openDatabase() {
       return new Promise((resolve, reject) => {
@@ -680,9 +791,10 @@
       if (!kind) throw new Error(`Asset is not loaded: ${name}`);
       if (kind === "text") {
         await this.applyTextToTarget(target, name, util);
-        return;
+      } else {
+        this.applySkinToTarget(target, await this.resolveSkin(name));
       }
-      this.applySkinToTarget(target, await this.resolveSkin(name));
+      this.displayedAssets.set(target.id, name);
     }
     async applyTextToTarget(target, name, util) {
       if (target.isStage) throw new Error(`Text asset can only be shown on a sprite: ${name}`);
@@ -694,6 +806,8 @@
       const setFont = this.requireAnimatedTextOpcode("text_setFont");
       const setColor = this.requireAnimatedTextOpcode("text_setColor");
       const setWidth = this.requireAnimatedTextOpcode("text_setWidth");
+      const setOutlineWidth = this.runtime.getOpcodeFunction?.("text_setOutlineWidth");
+      const setOutlineColor = this.runtime.getOpcodeFunction?.("text_setOutlineColor");
       const displayText = this.requireAnimatedTextOpcode(
         style.animation === "none" ? "text_setText" : "text_animateText"
       );
@@ -702,6 +816,12 @@
       await Promise.resolve(setFont({ FONT: style.font }, blockUtility));
       await Promise.resolve(setColor({ COLOR: style.color }, blockUtility));
       await Promise.resolve(setWidth({ WIDTH: style.width, ALIGN: style.align }, blockUtility));
+      if (setOutlineWidth) {
+        await Promise.resolve(setOutlineWidth({ WIDTH: DEFAULT_OUTLINE_WIDTH }, blockUtility));
+      }
+      if (setOutlineColor) {
+        await Promise.resolve(setOutlineColor({ COLOR: DEFAULT_OUTLINE_COLOR }, blockUtility));
+      }
       const displayResult = displayText(
         style.animation === "none" ? { TEXT: String(text ?? "") } : { ANIMATE: style.animation, TEXT: String(text ?? "") },
         blockUtility

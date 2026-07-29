@@ -23,8 +23,10 @@ export interface TextStyle {
 
 const DEFAULT_STAGE_WIDTH = 480;
 const DEFAULT_FONT = 'Handwriting';
-const DEFAULT_COLOR = '#575e75';
+const DEFAULT_COLOR = '#ffffff';
 const DEFAULT_ALIGNMENT: TextAlignment = 'center';
+export const DEFAULT_OUTLINE_WIDTH = 2;
+export const DEFAULT_OUTLINE_COLOR = '#000000';
 
 export function textRuntimeVariableName(name: string): string {
   return `${TEXT_RUNTIME_NAMESPACE}:${name}`;
