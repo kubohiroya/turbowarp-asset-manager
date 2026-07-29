@@ -10,10 +10,9 @@ The built JavaScript file is committed to this repository so that users do not n
 
 ## Extension ID compatibility
 
-The current extension ID remains `twAssetManager` for compatibility with projects that already
-store its opcodes. A future standards-compliant ID is planned as
-`kubohiroyaassetmanager`. That change must be released together with a schema-aware project
-migration; replacing the ID in this repository alone would break existing blocks.
+This migration release uses the standards-compliant ID `kubohiroyaassetmanager`. Existing projects
+that store `twAssetManager` opcodes must apply a schema-aware project migration at the same time;
+replacing the JavaScript artifact alone would break their existing blocks.
 
 ## Features
 

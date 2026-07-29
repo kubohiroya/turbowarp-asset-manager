@@ -9,7 +9,7 @@ import {
   textStyleRuntimeVariableName
 } from './text-style.js';
 
-export const EXTENSION_ID = 'twAssetManager';
+export const EXTENSION_ID = 'kubohiroyaassetmanager';
 export const EXTENSION_VERSION = '2026-07-26';
 
 const DB_NAME = 'tw-asset-manager';
