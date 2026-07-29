@@ -8,6 +8,19 @@ Download [`dist/asset-manager.js`](dist/asset-manager.js), then open TurboWarp D
 
 The built JavaScript file is committed to this repository so that users do not need to install Node.js or run the build process.
 
+The versioned npm package contains the same reviewed build:
+
+```bash
+pnpm add --save-exact @kubohiroya/turbowarp-asset-manager@0.2.1
+```
+
+Load `node_modules/@kubohiroya/turbowarp-asset-manager/dist/asset-manager.js`, or use the
+version-pinned CDN URL:
+
+```text
+https://cdn.jsdelivr.net/npm/@kubohiroya/turbowarp-asset-manager@0.2.1/dist/asset-manager.js
+```
+
 ## Extension ID compatibility
 
 This migration release uses the standards-compliant ID `kubohiroyaassetmanager`. Existing projects
