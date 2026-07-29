@@ -141,7 +141,7 @@ describe('actor costume animation', () => {
       },
       extensions: {unsandboxed: true, register: vi.fn()},
       BlockType: {COMMAND: 'command', BOOLEAN: 'boolean', REPORTER: 'reporter'},
-      ArgumentType: {STRING: 'string'},
+      ArgumentType: {STRING: 'string', NUMBER: 'number'},
       translate: (text: string) => text
     });
   });

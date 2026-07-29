@@ -36,6 +36,7 @@ interface TurboWarpTarget {
   sprite?: TurboWarpSprite;
   setSize(size: number): void;
   emitVisualChange?(): void;
+  lookupVariableByNameAndType?(name: string, type: string): {value: unknown} | null;
 }
 interface TurboWarpRuntime {
   renderer: TurboWarpRenderer;
@@ -65,7 +66,7 @@ interface ScratchTranslate {
 interface ScratchApi {
   extensions: { unsandboxed: boolean; register(extension: unknown): void };
   BlockType: Record<'COMMAND' | 'BOOLEAN' | 'REPORTER', string>;
-  ArgumentType: Record<'STRING', string>;
+  ArgumentType: Record<'STRING' | 'NUMBER', string>;
   translate: ScratchTranslate;
   vm: { runtime: TurboWarpRuntime };
 }
