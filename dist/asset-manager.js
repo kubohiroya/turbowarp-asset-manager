@@ -1,5 +1,5 @@
 // Name: Asset Manager
-// ID: twAssetManager
+// ID: kubohiroyaassetmanager
 // Description: Register, cache, display, and play image, audio, and runtime text assets in TurboWarp.
 // By: Hiroya Kubo
 // License: MPL-2.0
@@ -105,7 +105,7 @@
       align: align ? align : defaults.align
     };
   }
-  const EXTENSION_ID = "twAssetManager";
+  const EXTENSION_ID = "kubohiroyaassetmanager";
   const EXTENSION_VERSION = "2026-07-26";
   const DB_NAME = "tw-asset-manager";
   const DB_VERSION = 1;

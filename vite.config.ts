@@ -4,7 +4,7 @@ import {turboWarpExtension} from '@kubohiroya/vite-plugin-turbowarp-extension';
 export default defineConfig({
   plugins: [
     turboWarpExtension({
-      id: 'twAssetManager',
+      id: 'kubohiroyaassetmanager',
       name: 'Asset Manager',
       description: 'Register, cache, display, and play image, audio, and runtime text assets in TurboWarp.',
       author: 'Hiroya Kubo',
