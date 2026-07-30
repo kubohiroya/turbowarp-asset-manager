@@ -189,7 +189,7 @@ Animation state is keyed by the unique ACTOR name. In tmpose-kamishibai, each Ac
 
 ## Loading indicator compatibility
 
-Four hidden compatibility opcodes support projects that show a loading animation while assets are prepared. `setLoadingCostumes` configures an ordered, de-duplicated list of loading image assets. `prepareLoadingAssets` validates those names against a project list and moves their definitions to the front while preserving relative order. `loadingAssetCount` reports how many prioritized entries were found, and `loadingCostumeAt` cycles through the configured costume names using a one-based index.
+Six hidden compatibility opcodes support projects that show a loading animation while assets are prepared. `setLoadingBackdrop` configures one image asset to display behind the loading indicator, and `loadingBackdrop` reports its normalized name. `setLoadingCostumes` configures an ordered, de-duplicated list of loading image assets. `prepareLoadingAssets` validates those names against a project list, moves the backdrop first, then moves the costume definitions to the front while preserving their relative order. `loadingAssetCount` reports how many prioritized entries were found, and `loadingCostumeAt` cycles through the configured costume names using a one-based index.
 
 ## Blocks
 
