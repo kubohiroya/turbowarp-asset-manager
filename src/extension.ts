@@ -10,7 +10,7 @@ import {
 } from './text-style.js';
 
 export const EXTENSION_ID = 'kubohiroyaassetmanager';
-export const EXTENSION_VERSION = '2026-07-26';
+export const EXTENSION_VERSION = '2026-08-03-project-asset-validation-v1';
 
 const DB_NAME = 'tw-asset-manager';
 const DB_VERSION = 1;
@@ -82,6 +82,23 @@ interface ResolvedSkin {
 const blockDefinitions = definitions.blocks as DefinitionBlock[];
 
 blockDefinitions.unshift(
+  {
+    opcode: 'validateProjectAssetAddress',
+    blockType: 'REPORTER',
+    text: 'validate project asset address [RESOURCE_ID] for [NAME]',
+    description: 'Returns a JSON validation result without fetching, caching, registering, or rendering the asset.',
+    arguments: {
+      RESOURCE_ID: {
+        type: 'STRING',
+        defaultValue: 'costume:Sprite1:costume1'
+      },
+      NAME: {
+        type: 'STRING',
+        defaultValue: 'asset1'
+      }
+    },
+    hideFromPalette: true
+  },
   {
     opcode: 'setLoadingBackdrop',
     blockType: 'COMMAND',
@@ -159,6 +176,19 @@ export type ParsedResourceIdentifier =
   | {kind: 'backdrop'; backdropName: string}
   | {kind: 'sound'; spriteName: string; soundName: string}
   | {kind: 'text'; runtimeVariableName: string};
+
+export type ProjectAssetAddressValidation =
+  | {
+      ok: true;
+      kind: ParsedResourceIdentifier['kind'];
+      projectLocal: boolean;
+    }
+  | {
+      ok: false;
+      type: string;
+      label: string;
+      message: string;
+    };
 
 class AssetRegistrationError extends Error {
   constructor(
@@ -275,6 +305,188 @@ function parseLocalResourceName(payload: string, label: string): string {
   return name;
 }
 
+function requireAssetNameValue(value: unknown): string {
+  const name = normalizeName(value);
+  if (!name) throw new Error('Asset name is empty.');
+  return name;
+}
+
+function requireTextAssetNameValue(value: unknown): string {
+  const name = requireAssetNameValue(value);
+  if (name.includes(':')) {
+    throw new AssetRegistrationError(
+      'asset-name',
+      name,
+      'Text asset name must not contain a colon.'
+    );
+  }
+  return name;
+}
+
+function findStageTarget(runtime: TurboWarpRuntime): TurboWarpTarget {
+  const stage = runtime.targets.find((target) => target.isStage);
+  if (!stage) throw new Error('Stage not found.');
+  return stage;
+}
+
+function findProjectTargetByName(
+  runtime: TurboWarpRuntime,
+  name: string
+): TurboWarpTarget | null {
+  return runtime.targets.find(
+    (target) => !target.isStage && target.isOriginal && target.sprite?.name === name
+  ) ?? runtime.targets.find(
+    (target) => !target.isStage && target.sprite?.name === name
+  ) ?? null;
+}
+
+function findProjectCostume(
+  target: TurboWarpTarget,
+  costumeName: string,
+  assetId: string | null
+): TurboWarpCostume | null {
+  const costumes = target.sprite?.costumes ?? [];
+  return (assetId
+    ? costumes.find((costume) => costume.assetId === assetId)
+    : undefined) ?? costumes.find((costume) => costume.name === costumeName) ?? null;
+}
+
+function findProjectSound(
+  target: TurboWarpTarget,
+  soundName: string,
+  assetId: string | null
+): TurboWarpSound | null {
+  const sounds = target.sprite?.sounds ?? [];
+  return (assetId
+    ? sounds.find((sound) => sound.assetId === assetId)
+    : undefined) ?? sounds.find((sound) => sound.name === soundName) ?? null;
+}
+
+function resolveCostumeAddress(
+  runtime: TurboWarpRuntime,
+  name: string,
+  spriteName: string,
+  costumeName: string | null
+): {target: TurboWarpTarget; costume: TurboWarpCostume; costumeName: string} {
+  const target = findProjectTargetByName(runtime, spriteName);
+  if (!target) {
+    throw new AssetRegistrationError('sprite', spriteName, `Sprite not found: ${spriteName}`);
+  }
+  const costumes = target.sprite?.costumes ?? [];
+  const costume = costumeName === null
+    ? costumes.find((candidate) => candidate.name === name)
+      ?? (costumes.length === 1 ? costumes[0] : null)
+    : findProjectCostume(target, costumeName, null);
+  if (!costume && costumeName === null && costumes.length > 1) {
+    throw new AssetRegistrationError(
+      'costume',
+      name,
+      `Costume shorthand is ambiguous: ${spriteName} has multiple costumes and none is named ${name}.`
+    );
+  }
+  const resolvedCostumeName = costume?.name ?? costumeName ?? name;
+  if (!costume) {
+    throw new AssetRegistrationError(
+      'costume',
+      resolvedCostumeName,
+      `Costume not found: ${spriteName}/${resolvedCostumeName}`
+    );
+  }
+  return {target, costume, costumeName: resolvedCostumeName};
+}
+
+function resolveBackdropAddress(
+  runtime: TurboWarpRuntime,
+  backdropName: string
+): {target: TurboWarpTarget; costume: TurboWarpCostume} {
+  const target = findStageTarget(runtime);
+  const costume = findProjectCostume(target, backdropName, null);
+  if (!costume) {
+    throw new AssetRegistrationError(
+      'backdrop',
+      backdropName,
+      `Backdrop not found: ${backdropName}`
+    );
+  }
+  return {target, costume};
+}
+
+function resolveSoundAddress(
+  runtime: TurboWarpRuntime,
+  spriteName: string,
+  soundName: string
+): {target: TurboWarpTarget; sound: TurboWarpSound; isStage: boolean} {
+  const isStage = spriteName.toLowerCase() === STAGE_RESOURCE_NAME;
+  const target = isStage
+    ? findStageTarget(runtime)
+    : findProjectTargetByName(runtime, spriteName);
+  if (!target) {
+    throw new AssetRegistrationError(
+      'sprite',
+      spriteName,
+      `Sound source not found: ${spriteName}`
+    );
+  }
+  const sound = findProjectSound(target, soundName, null);
+  if (!sound) {
+    throw new AssetRegistrationError(
+      'sound',
+      soundName,
+      `Sound not found: ${spriteName}/${soundName}`
+    );
+  }
+  return {target, sound, isStage};
+}
+
+export function validateProjectAssetAddress(
+  runtime: TurboWarpRuntime,
+  assetName: unknown,
+  resourceIdentifier: unknown
+): ProjectAssetAddressValidation {
+  let fallbackType = 'asset-name';
+  let fallbackLabel = normalizeName(assetName);
+  try {
+    const name = requireAssetNameValue(assetName);
+    const resourceId = normalizeName(resourceIdentifier);
+    if (resourceId === 'text' || resourceId.startsWith('text:')) {
+      requireTextAssetNameValue(name);
+    }
+    fallbackType = 'resource-id';
+    fallbackLabel = resourceId;
+    const resource = parseResourceIdentifier(resourceIdentifier, name);
+    switch (resource.kind) {
+      case 'costume':
+        resolveCostumeAddress(runtime, name, resource.spriteName, resource.costumeName);
+        break;
+      case 'backdrop':
+        resolveBackdropAddress(runtime, resource.backdropName);
+        break;
+      case 'sound':
+        resolveSoundAddress(runtime, resource.spriteName, resource.soundName);
+        break;
+      case 'text':
+        requireTextAssetNameValue(name);
+        break;
+    }
+    return {
+      ok: true,
+      kind: resource.kind,
+      projectLocal: resource.kind !== 'cache' && resource.kind !== 'external'
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      type: error instanceof AssetRegistrationError
+        ? error.assetErrorType
+        : fallbackType,
+      label: error instanceof AssetRegistrationError
+        ? error.assetErrorLabel
+        : fallbackLabel,
+      message: error instanceof Error ? error.message : String(error)
+    };
+  }
+}
+
 export class AssetManagerExtension {
   protected readonly runtime = Scratch.vm.runtime;
   private readonly renderer = this.runtime.renderer;
@@ -371,6 +583,12 @@ export class AssetManagerExtension {
       color1: '#5b7cfa', color2: '#425ed8', color3: '#2f46aa',
       blocks: blockDefinitions.map((block) => this.toScratchBlock(block))
     };
+  }
+
+  validateProjectAssetAddress(args: BlockArgs): string {
+    return JSON.stringify(
+      validateProjectAssetAddress(this.runtime, args.NAME, args.RESOURCE_ID)
+    );
   }
 
   async registerAsset(args: BlockArgs): Promise<void> {
@@ -618,21 +836,11 @@ export class AssetManagerExtension {
   }
 
   private requireAssetName(value: unknown): string {
-    const name = normalizeName(value);
-    if (!name) throw new Error('Asset name is empty.');
-    return name;
+    return requireAssetNameValue(value);
   }
 
   private requireTextAssetName(value: unknown): string {
-    const name = this.requireAssetName(value);
-    if (name.includes(':')) {
-      throw new AssetRegistrationError(
-        'asset-name',
-        name,
-        'Text asset name must not contain a colon.'
-      );
-    }
-    return name;
+    return requireTextAssetNameValue(value);
   }
 
   private clearAssetError(): void {
@@ -668,29 +876,8 @@ export class AssetManagerExtension {
     spriteName: string,
     costumeName: string | null
   ): void {
-    const target = this.findTargetByName(spriteName);
-    if (!target) {
-      throw new AssetRegistrationError('sprite', spriteName, `Sprite not found: ${spriteName}`);
-    }
-    const costumes = target.sprite?.costumes ?? [];
-    const costume = costumeName === null
-      ? costumes.find((candidate) => candidate.name === name) ?? (costumes.length === 1 ? costumes[0] : null)
-      : this.findCostume(target, costumeName, null);
-    if (!costume && costumeName === null && costumes.length > 1) {
-      throw new AssetRegistrationError(
-        'costume',
-        name,
-        `Costume shorthand is ambiguous: ${spriteName} has multiple costumes and none is named ${name}.`
-      );
-    }
-    const resolvedCostumeName = costume?.name ?? costumeName ?? name;
-    if (!costume) {
-      throw new AssetRegistrationError(
-        'costume',
-        resolvedCostumeName,
-        `Costume not found: ${spriteName}/${resolvedCostumeName}`
-      );
-    }
+    const {target, costume, costumeName: resolvedCostumeName} =
+      resolveCostumeAddress(this.runtime, name, spriteName, costumeName);
     this.unregisterAsset(name);
     this.costumeAssets.set(name, {
       kind: 'costume',
@@ -705,11 +892,7 @@ export class AssetManagerExtension {
   }
 
   private registerBackdropReference(name: string, backdropName: string): void {
-    const stage = this.getStageTarget();
-    const costume = this.findCostume(stage, backdropName, null);
-    if (!costume) {
-      throw new AssetRegistrationError('backdrop', backdropName, `Backdrop not found: ${backdropName}`);
-    }
+    const {target: stage, costume} = resolveBackdropAddress(this.runtime, backdropName);
     this.unregisterAsset(name);
     this.costumeAssets.set(name, {
       kind: 'costume',
@@ -724,15 +907,11 @@ export class AssetManagerExtension {
   }
 
   private registerSoundReference(name: string, spriteName: string, soundName: string): void {
-    const isStage = spriteName.toLowerCase() === STAGE_RESOURCE_NAME;
-    const target = isStage ? this.getStageTarget() : this.findTargetByName(spriteName);
-    if (!target) {
-      throw new AssetRegistrationError('sprite', spriteName, `Sound source not found: ${spriteName}`);
-    }
-    const sound = this.findSound(target, soundName, null);
-    if (!sound) {
-      throw new AssetRegistrationError('sound', soundName, `Sound not found: ${spriteName}/${soundName}`);
-    }
+    const {target, sound, isStage} = resolveSoundAddress(
+      this.runtime,
+      spriteName,
+      soundName
+    );
     this.unregisterAsset(name);
     this.soundAssets.set(name, {
       kind: 'sound',
@@ -834,16 +1013,11 @@ export class AssetManagerExtension {
   }
 
   private getStageTarget(): TurboWarpTarget {
-    const stage = this.runtime.targets.find((target) => target.isStage);
-    if (!stage) throw new Error('Stage not found.');
-    return stage;
+    return findStageTarget(this.runtime);
   }
 
   protected findTargetByName(name: string): TurboWarpTarget | null {
-    const targets = this.runtime.targets;
-    return targets.find((target) => !target.isStage && target.isOriginal && target.sprite?.name === name)
-      ?? targets.find((target) => !target.isStage && target.sprite?.name === name)
-      ?? null;
+    return findProjectTargetByName(this.runtime, name);
   }
 
   private resolveReferencedTarget(
@@ -864,10 +1038,7 @@ export class AssetManagerExtension {
     costumeName: string,
     assetId: string | null
   ): TurboWarpCostume | null {
-    const costumes = target.sprite?.costumes ?? [];
-    return (assetId ? costumes.find((costume) => costume.assetId === assetId) : undefined)
-      ?? costumes.find((costume) => costume.name === costumeName)
-      ?? null;
+    return findProjectCostume(target, costumeName, assetId);
   }
 
   private findSound(
@@ -875,10 +1046,7 @@ export class AssetManagerExtension {
     soundName: string,
     assetId: string | null
   ): TurboWarpSound | null {
-    const sounds = target.sprite?.sounds ?? [];
-    return (assetId ? sounds.find((sound) => sound.assetId === assetId) : undefined)
-      ?? sounds.find((sound) => sound.name === soundName)
-      ?? null;
+    return findProjectSound(target, soundName, assetId);
   }
 
   protected async resolveSkin(value: unknown): Promise<ResolvedSkin> {
