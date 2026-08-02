@@ -3,7 +3,8 @@ import {
   AssetManagerExtension,
   guessMimeType,
   normalizeMimeType,
-  parseResourceIdentifier
+  parseResourceIdentifier,
+  validateProjectAssetAddress
 } from '../src/extension.js';
 
 interface TestExternalAsset {
@@ -318,6 +319,8 @@ describe('project-local assets', () => {
     const extension = new AssetManagerExtension();
     const blocks = extension.getInfo().blocks;
     expect(blocks.find((block) => block.opcode === 'loadAsset')).toMatchObject({hideFromPalette: true});
+    expect(blocks.find((block) => block.opcode === 'validateProjectAssetAddress'))
+      .toMatchObject({hideFromPalette: true});
     expect(blocks.find((block) => block.opcode === 'registerAsset')).toBeDefined();
     expect(blocks.find((block) => block.opcode === 'assetErrorType')).toBeDefined();
     expect(blocks.find((block) => block.opcode === 'assetErrorLabel')).toBeDefined();
@@ -325,6 +328,54 @@ describe('project-local assets', () => {
     expect(blocks.find((block) => block.opcode === 'setTextStyle')).toBeDefined();
     expect(blocks.find((block) => block.opcode === 'stopSound')).toBeDefined();
     expect(blocks.find((block) => block.opcode === 'stopAllSounds')).toBeDefined();
+  });
+
+  it('validates project asset addresses without registration side effects', () => {
+    const extension = new AssetManagerExtension();
+
+    expect(JSON.parse(extension.validateProjectAssetAddress({
+      RESOURCE_ID: 'costume:Hero:normal',
+      NAME: 'hero'
+    }))).toEqual({ok: true, kind: 'costume', projectLocal: true});
+    expect(validateProjectAssetAddress(
+      Scratch.vm.runtime,
+      'opening',
+      'sound:@stage:opening'
+    )).toEqual({ok: true, kind: 'sound', projectLocal: true});
+    expect(validateProjectAssetAddress(
+      Scratch.vm.runtime,
+      'forest',
+      'backdrop:forest'
+    )).toEqual({ok: true, kind: 'backdrop', projectLocal: true});
+    expect(validateProjectAssetAddress(
+      Scratch.vm.runtime,
+      'Narration',
+      'text'
+    )).toEqual({ok: true, kind: 'text', projectLocal: true});
+    expect(JSON.parse(extension.validateProjectAssetAddress({
+      RESOURCE_ID: 'https://example.com/image.png',
+      NAME: 'remote'
+    }))).toEqual({ok: true, kind: 'external', projectLocal: false});
+    for (const [resourceId, name, type, label] of [
+      ['costume:Missing:walk', 'missing', 'sprite', 'Missing'],
+      ['costume:Hero:missing', 'missing', 'costume', 'missing'],
+      ['backdrop:missing', 'missing', 'backdrop', 'missing'],
+      ['sound:Hero:missing', 'missing', 'sound', 'missing'],
+      ['costume', 'Ambiguous', 'costume', 'Ambiguous'],
+      ['text', 'chapter:title', 'asset-name', 'chapter:title']
+    ]) {
+      expect(JSON.parse(extension.validateProjectAssetAddress({
+        RESOURCE_ID: resourceId,
+        NAME: name
+      }))).toMatchObject({ok: false, type, label});
+    }
+
+    expect(extension.isLoaded({NAME: 'hero'})).toBe(false);
+    expect(extension.isLoaded({NAME: 'opening'})).toBe(false);
+    expect(extension.assetErrorType()).toBe('');
+    expect(extension.assetErrorLabel()).toBe('');
+    expect(updateDrawableSkinId).not.toHaveBeenCalled();
+    expect(destroySkin).not.toHaveBeenCalled();
   });
 
   it('reports structured asset registration errors and clears them after success', async () => {
