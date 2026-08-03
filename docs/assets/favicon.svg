@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Asset Manager">
+  <defs>
+    <linearGradient id="a" x1="8" y1="4" x2="56" y2="60" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#5b7cfa"/>
+      <stop offset="1" stop-color="#2f46aa"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="18" fill="url(#a)"/>
+  <path d="M19 47 29 17h7l10 30h-7l-2-7H27l-2 7h-6Zm10-13h6l-3-10-3 10Z" fill="#fff"/>
+</svg>

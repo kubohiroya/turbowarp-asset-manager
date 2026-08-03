@@ -1,0 +1,376 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Visual user guide for the TurboWarp Asset Manager extension.">
+  <title>Asset Manager guide for TurboWarp</title>
+  <link rel="canonical" href="https://kubohiroya.github.io/turbowarp-asset-manager/">
+  <link rel="alternate" hreflang="en" href="https://kubohiroya.github.io/turbowarp-asset-manager/">
+  <link rel="alternate" hreflang="ja" href="https://kubohiroya.github.io/turbowarp-asset-manager/ja/">
+  <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to the guide</a>
+  <header class="site-header">
+    <div class="header-inner">
+      <a class="brand" href="./" aria-label="Asset Manager guide home">
+        <span class="brand-mark" aria-hidden="true">A</span>
+        <span class="brand-text">Asset Manager</span>
+      </a>
+      <nav class="primary-nav" aria-label="Guide sections">
+        <a href="#quick-start">Quick start</a>
+        <a href="#how-it-works">How it works</a>
+        <a href="#recipes">Recipes</a>
+        <a href="#reference">Reference</a>
+      </nav>
+      <nav class="language-switch" aria-label="Language">
+        <a href="./" lang="en" aria-current="page">EN</a>
+        <a href="ja/" lang="ja">日本語</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main" class="page-shell">
+    <section class="hero" aria-labelledby="hero-title">
+      <div>
+        <p class="eyebrow">TurboWarp custom extension</p>
+        <h1 id="hero-title">Use every project asset through one name.</h1>
+        <p class="hero-copy">
+          Asset Manager registers web images and audio, project costumes, backdrops, sounds,
+          and live text. Your scripts can then display, play, animate, cache, and replace them
+          through one consistent set of blocks.
+        </p>
+        <div class="hero-actions">
+          <a class="button button-primary" href="#quick-start">Start in three steps</a>
+          <a class="button" href="#how-it-works">See the diagrams</a>
+        </div>
+      </div>
+      <div class="hero-map" aria-label="A resource becomes a named asset, then an output">
+        <div class="mini-flow">
+          <div class="mini-node">URL or project resource</div>
+          <div class="mini-arrow" aria-hidden="true">→</div>
+          <div class="mini-node mini-node-strong">Named asset</div>
+        </div>
+        <div class="mini-flow">
+          <div class="mini-node">Named asset</div>
+          <div class="mini-arrow" aria-hidden="true">→</div>
+          <div class="mini-node">Sprite, stage, or sound</div>
+        </div>
+      </div>
+    </section>
+
+    <section id="quick-start" class="section" aria-labelledby="quick-start-title">
+      <p class="eyebrow">Quick start</p>
+      <h2 id="quick-start-title">Load, register, use.</h2>
+      <p class="section-intro">
+        Asset Manager must run without the extension sandbox because it works with TurboWarp's
+        renderer, audio system, and project resources.
+      </p>
+
+      <ol class="steps">
+        <li>
+          <h3>Load the extension</h3>
+          <p>In TurboWarp, choose <strong>Add Extension → Custom Extension</strong> and paste:</p>
+          <pre><code>https://cdn.jsdelivr.net/npm/@kubohiroya/turbowarp-asset-manager@0.2.1/dist/asset-manager.js</code></pre>
+          <p>Enable <strong>Run extension without sandbox</strong>.</p>
+        </li>
+        <li>
+          <h3>Register a resource</h3>
+          <p>Give the resource a short name that the rest of the project will use.</p>
+          <pre><code>register resource [https://example.com/hero.png]
+  as asset [Hero]</code></pre>
+        </li>
+        <li>
+          <h3>Use the named asset</h3>
+          <p>The same name now works in display, sound, and animation blocks when its type fits.</p>
+          <pre><code>show asset [Hero] on this sprite</code></pre>
+        </li>
+      </ol>
+
+      <aside class="callout callout-warning">
+        <strong>External files need browser access.</strong>
+        The server hosting an image or audio file must allow cross-origin requests (CORS).
+        Use HTTPS when the TurboWarp editor is loaded over HTTPS.
+      </aside>
+    </section>
+
+    <section id="how-it-works" class="section" aria-labelledby="how-title">
+      <p class="eyebrow">How it works</p>
+      <h2 id="how-title">One registry connects every source to the right output.</h2>
+      <p class="section-intro">
+        Registration records the asset's type and location under the name you choose. Later blocks
+        resolve that name and select the correct renderer, audio, or text path automatically.
+      </p>
+
+      <figure class="diagram" aria-describedby="registry-description">
+        <figcaption>From a resource identifier to a visible or audible result</figcaption>
+        <p id="registry-description" class="sr-only">
+          Web URLs, project resources, and runtime text enter the register resource block. The asset
+          registry remembers their chosen names and types. A display, play, or animate block then
+          routes each asset to a sprite, stage, sound output, or Animated Text.
+        </p>
+        <div class="hub-flow" aria-hidden="true">
+          <div class="node-stack">
+            <div class="diagram-node"><strong>Web URL</strong><span>PNG, SVG, MP3…</span></div>
+            <div class="diagram-node"><strong>Project resource</strong><span>costume, backdrop, sound</span></div>
+            <div class="diagram-node"><strong>Runtime text</strong><span>value + style</span></div>
+          </div>
+          <div class="flow-arrow">→</div>
+          <div class="diagram-node diagram-node-primary">
+            <strong>Register resource as asset</strong>
+            <span>remember name + type</span>
+          </div>
+          <div class="flow-arrow">→</div>
+          <div class="node-stack">
+            <div class="diagram-node diagram-node-accent"><strong>Sprite or stage</strong><span>image / text</span></div>
+            <div class="diagram-node diagram-node-accent"><strong>Speakers</strong><span>audio</span></div>
+            <div class="diagram-node diagram-node-accent"><strong>Actor timeline</strong><span>mixed assets</span></div>
+          </div>
+        </div>
+      </figure>
+
+      <h3>Which resource identifier should I use?</h3>
+      <div class="resource-table-wrap">
+        <table>
+          <thead>
+            <tr><th>Source</th><th>Resource identifier</th><th>What registration keeps</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Web image or audio</td>
+              <td><code>https://example.com/asset.png</code></td>
+              <td>Downloaded bytes in memory and IndexedDB</td>
+            </tr>
+            <tr>
+              <td>Sprite costume</td>
+              <td><code>costume:Sprite1:costume1</code></td>
+              <td>A reference to the existing project costume</td>
+            </tr>
+            <tr>
+              <td>Stage backdrop</td>
+              <td><code>backdrop:backdrop1</code></td>
+              <td>A reference to the existing backdrop</td>
+            </tr>
+            <tr>
+              <td>Sprite or stage sound</td>
+              <td><code>sound:Sprite1:sound1</code> or <code>sound:@stage:name</code></td>
+              <td>A reference to the existing project sound</td>
+            </tr>
+            <tr>
+              <td>Live text</td>
+              <td><code>text:Narration</code></td>
+              <td>The runtime-variable name; the current value is read when shown</td>
+            </tr>
+            <tr>
+              <td>Previously cached web asset</td>
+              <td>Leave <code>RESOURCE_ID</code> empty</td>
+              <td>Bytes loaded from IndexedDB under the asset name</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3 id="cache-flow">How web assets and the cache work</h3>
+      <p>
+        Supplying a URL always fetches fresh data and refreshes the named cache entry. Supplying an
+        empty resource identifier skips the network and reloads that same name from IndexedDB.
+      </p>
+      <figure class="diagram" aria-describedby="cache-description">
+        <figcaption>Two ways to fill the in-memory registry</figcaption>
+        <p id="cache-description" class="sr-only">
+          With a URL, Asset Manager fetches the resource, normalizes its media type, writes the
+          named entry to IndexedDB, and registers it in memory. With an empty resource identifier,
+          Asset Manager reads the named entry from IndexedDB and registers it in memory without a
+          network request.
+        </p>
+        <div aria-hidden="true">
+          <div class="lane">
+            <span class="lane-label">URL supplied — refresh</span>
+            <ol class="flow-list" style="--flow-columns: 4">
+              <li class="diagram-node"><strong>Fetch URL</strong><span>browser request</span></li>
+              <li class="diagram-node"><strong>Detect type</strong><span>MIME + file extension</span></li>
+              <li class="diagram-node diagram-node-primary"><strong>Write cache</strong><span>name → bytes</span></li>
+              <li class="diagram-node diagram-node-accent"><strong>Ready in memory</strong><span>use blocks now</span></li>
+            </ol>
+          </div>
+          <div class="lane">
+            <span class="lane-label">Empty RESOURCE_ID — reuse</span>
+            <ol class="flow-list" style="--flow-columns: 3">
+              <li class="diagram-node"><strong>Look up name</strong><span>IndexedDB</span></li>
+              <li class="diagram-node"><strong>Read cached bytes</strong><span>no network fetch</span></li>
+              <li class="diagram-node diagram-node-accent"><strong>Ready in memory</strong><span>same asset name</span></li>
+            </ol>
+          </div>
+        </div>
+      </figure>
+
+      <h3 id="animation-flow">How an actor animation is scheduled</h3>
+      <p>
+        <code>ASSETS</code> and <code>DURATIONS</code> describe a timeline. Images change the actor's
+        skin; audio starts playing. A zero duration groups the next asset with the current event.
+      </p>
+      <figure class="diagram" aria-describedby="animation-description">
+        <figcaption>Example: <code>ASSETS = NoonSkin,Bell,NextSkin</code> and <code>DURATIONS = 0,1,2</code></figcaption>
+        <p id="animation-description" class="sr-only">
+          At time zero, NoonSkin is shown and Bell starts because their separating duration is zero.
+          After one second, NextSkin is shown. In a loop, it waits two more seconds and returns to
+          the first event.
+        </p>
+        <ol class="timeline" aria-hidden="true">
+          <li><strong>NoonSkin</strong><span>image at 0 s</span></li>
+          <li class="audio"><strong>Bell</strong><span>audio at 0 s</span></li>
+          <li><strong>wait</strong><span>1 second</span></li>
+          <li><strong>NextSkin</strong><span>image at 1 s</span></li>
+          <li><strong>loop wait</strong><span>2 seconds</span></li>
+        </ol>
+        <div class="timeline-legend" aria-hidden="true">
+          <span class="legend-key">image event</span>
+          <span class="legend-key legend-key-audio">audio event</span>
+        </div>
+      </figure>
+
+      <h3 id="text-flow">How live text reaches a sprite</h3>
+      <p>
+        Text assets use two supporting unsandboxed extensions: Temporary Variables stores the live
+        value and style; Animated Text draws it on the destination sprite or clone.
+      </p>
+      <figure class="diagram" aria-describedby="text-description">
+        <figcaption>Live value and style are read again every time the asset is shown</figcaption>
+        <p id="text-description" class="sr-only">
+          Register text Narration, then set its value and optional style. When it is shown, Asset
+          Manager reads the latest temporary variables, reapplies the complete style, and asks
+          Animated Text to display it on the target sprite. Updating a displayed text value refreshes
+          every target that currently shows that asset.
+        </p>
+        <ol class="flow-list" style="--flow-columns: 4" aria-hidden="true">
+          <li class="diagram-node"><strong>Register text</strong><span>text:Narration</span></li>
+          <li class="diagram-node"><strong>Set value + style</strong><span>Temporary Variables</span></li>
+          <li class="diagram-node diagram-node-primary"><strong>Show asset</strong><span>read latest state</span></li>
+          <li class="diagram-node diagram-node-accent"><strong>Animated Text</strong><span>draw on target</span></li>
+        </ol>
+      </figure>
+    </section>
+
+    <section id="recipes" class="section" aria-labelledby="recipes-title">
+      <p class="eyebrow">Practical recipes</p>
+      <h2 id="recipes-title">Common tasks</h2>
+      <div class="card-grid">
+        <article class="card">
+          <h3>Show a web image</h3>
+          <pre><code>register resource [https://example.com/card.png]
+  as asset [Card]
+show asset [Card] on this sprite</code></pre>
+          <p>The downloaded image is also stored in the browser cache under <code>Card</code>.</p>
+        </article>
+        <article class="card">
+          <h3>Reuse a project costume</h3>
+          <pre><code>register resource [costume:Hero:running]
+  as asset [HeroRunning]
+show asset [HeroRunning] on this sprite</code></pre>
+          <p>No image is copied. Asset Manager points to the costume already owned by the project.</p>
+        </article>
+        <article class="card">
+          <h3>Play a sound</h3>
+          <pre><code>register resource [sound:@stage:opening]
+  as asset [Opening]
+play asset [Opening] as sound until done</code></pre>
+          <p>Use the non-waiting play block when the next script step should begin immediately.</p>
+        </article>
+        <article class="card">
+          <h3>Display styled live text</h3>
+          <pre><code>register resource [text:Narration]
+  as asset [Narration]
+set text asset [Narration] to [Once upon a time…]
+set text asset [Narration] style [animation] to [typing]
+show asset [Narration] on this sprite</code></pre>
+          <p>Load Temporary Variables and Animated Text before using text display blocks.</p>
+        </article>
+      </div>
+
+      <aside class="callout">
+        <strong>Memory and cache are separate.</strong>
+        Deleting an asset from memory stops using it in the current session but does not remove its
+        IndexedDB entry. Use the cache deletion blocks when stored web data must also be removed.
+      </aside>
+    </section>
+
+    <section id="reference" class="section" aria-labelledby="reference-title">
+      <p class="eyebrow">Block guide</p>
+      <h2 id="reference-title">Choose a block by intent</h2>
+      <div class="resource-table-wrap">
+        <table>
+          <thead>
+            <tr><th>I want to…</th><th>Use this block</th><th>Important behavior</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Register any source</td><td><code>register resource … as asset …</code></td><td>A URL refreshes the cache; an empty ID reads it.</td></tr>
+            <tr><td>Check registration</td><td><code>asset … is loaded</code></td><td>True for every registered asset type.</td></tr>
+            <tr><td>Show on a sprite or clone</td><td><code>show asset … on this sprite</code></td><td>Accepts image and text assets.</td></tr>
+            <tr><td>Change the stage</td><td><code>set stage backdrop to asset …</code></td><td>Accepts external images, costumes, and backdrops.</td></tr>
+            <tr><td>Play audio</td><td><code>play asset … as sound</code></td><td>Use “until done” when the script must wait.</td></tr>
+            <tr><td>Animate an actor</td><td><code>loop actor …</code> / <code>play actor … once</code></td><td>Lists can mix image and audio assets.</td></tr>
+            <tr><td>Update live text</td><td><code>set text asset …</code></td><td>Currently displayed targets refresh.</td></tr>
+            <tr><td>Release registrations</td><td><code>delete asset … from memory</code></td><td>Project-owned costumes and sounds are not deleted.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="troubleshooting" class="section" aria-labelledby="troubleshooting-title">
+      <p class="eyebrow">Troubleshooting</p>
+      <h2 id="troubleshooting-title">When something does not appear or play</h2>
+      <details open>
+        <summary>The external URL fails to load</summary>
+        <div>
+          Confirm the URL uses HTTP or HTTPS, opens directly, and sends a CORS header that permits
+          the TurboWarp editor's origin. The <code>asset registration error type</code> reporter
+          returns <code>external</code> for a failed web request.
+        </div>
+      </details>
+      <details>
+        <summary>A costume, backdrop, or sound cannot be found</summary>
+        <div>
+          Match names exactly. Use the full form such as <code>costume:Hero:running</code> when a
+          shorthand could be ambiguous. Check <code>asset registration error type</code> and
+          <code>asset registration error label</code> to identify the missing project resource.
+        </div>
+      </details>
+      <details>
+        <summary>Text is blank or reports a missing dependency</summary>
+        <div>
+          Load both Temporary Variables and Animated Text without sandboxing. Then set the text value
+          before showing it. A registered text asset with no stored value intentionally displays an
+          empty string.
+        </div>
+      </details>
+      <details>
+        <summary>An animation duration list is rejected</summary>
+        <div>
+          A loop needs one duration per asset. A one-shot sequence needs one fewer duration than
+          assets. Values must be non-negative, and a loop must contain at least one positive duration.
+        </div>
+      </details>
+      <details>
+        <summary>A cached asset cannot be restored</summary>
+        <div>
+          Cache entries are looked up by the exact registered name and are stored in the current
+          browser's IndexedDB. Browser storage cleanup, private sessions, or a different app profile
+          can make an earlier entry unavailable.
+        </div>
+      </details>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <p>TurboWarp Asset Manager · MPL-2.0</p>
+      <p>
+        <a href="https://github.com/kubohiroya/turbowarp-asset-manager">Source and releases</a>
+        · <a href="https://github.com/kubohiroya/turbowarp-asset-manager/issues">Report a problem</a>
+      </p>
+    </div>
+  </footer>
+</body>
+</html>

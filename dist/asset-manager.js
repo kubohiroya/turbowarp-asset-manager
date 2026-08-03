@@ -107,6 +107,7 @@
   }
   const EXTENSION_ID = "kubohiroyaassetmanager";
   const EXTENSION_VERSION = "2026-08-03-project-asset-validation-v1";
+  const EXTENSION_DOCS_URI = "https://kubohiroya.github.io/turbowarp-asset-manager/";
   const DB_NAME = "tw-asset-manager";
   const DB_VERSION = 1;
   const STORE_NAME = "assets";
@@ -521,6 +522,7 @@
       return {
         id: EXTENSION_ID,
         name: Scratch.translate(definitions.extensionName),
+        docsURI: EXTENSION_DOCS_URI,
         color1: "#5b7cfa",
         color2: "#425ed8",
         color3: "#2f46aa",

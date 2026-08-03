@@ -1,6 +1,7 @@
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {
   AssetManagerExtension,
+  EXTENSION_DOCS_URI,
   guessMimeType,
   normalizeMimeType,
   parseResourceIdentifier,
@@ -328,6 +329,13 @@ describe('project-local assets', () => {
     expect(blocks.find((block) => block.opcode === 'setTextStyle')).toBeDefined();
     expect(blocks.find((block) => block.opcode === 'stopSound')).toBeDefined();
     expect(blocks.find((block) => block.opcode === 'stopAllSounds')).toBeDefined();
+  });
+
+  it('links the default English user guide from the extension palette', () => {
+    const extension = new AssetManagerExtension();
+
+    expect(extension.getInfo().docsURI).toBe(EXTENSION_DOCS_URI);
+    expect(EXTENSION_DOCS_URI).toBe('https://kubohiroya.github.io/turbowarp-asset-manager/');
   });
 
   it('validates project asset addresses without registration side effects', () => {
