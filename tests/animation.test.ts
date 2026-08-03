@@ -3,7 +3,7 @@ import {AnimatedAssetManagerExtension} from '../src/animation.js';
 
 interface TestAnimationInternals {
   actorAnimations: Map<string, {target: TurboWarpTarget}>;
-  displayedAssets: Map<string, {assetName: string; assetKind: string}>;
+  displayedAssets: Map<string, {assetName: string; assetKind: string; skinId: number | null}>;
 }
 
 const ALL_FEATURES = {
@@ -21,6 +21,7 @@ function deferred<T>() {
 
 describe('actor costume animation', () => {
   const updateDrawableSkinId = vi.fn();
+  const rendererDrawables: Array<{skin: {id: number}} | undefined> = [];
   const playSound = vi.fn(() => Promise.resolve());
   const stopSound = vi.fn();
   const stopAllSounds = vi.fn();
@@ -110,6 +111,10 @@ describe('actor costume animation', () => {
     clone.size = 100;
     bird.size = 80;
     updateDrawableSkinId.mockClear();
+    rendererDrawables.length = 0;
+    updateDrawableSkinId.mockImplementation((drawableId: number, skinId: number) => {
+      rendererDrawables[drawableId] = {skin: {id: skinId}};
+    });
     playSound.mockClear();
     stopSound.mockClear();
     stopAllSounds.mockClear();
@@ -140,6 +145,7 @@ describe('actor costume animation', () => {
       vm: {
         runtime: {
           renderer: {
+            _allDrawables: rendererDrawables,
             createSVGSkin: vi.fn(() => 1),
             createBitmapSkin: vi.fn(() => 2),
             destroySkin: vi.fn(),
@@ -539,7 +545,8 @@ describe('actor costume animation', () => {
     emitRuntime('STOP_FOR_TARGET', clone);
     expect(internals.displayedAssets.get(clone.id)).toEqual({
       assetName: 'Fish1',
-      assetKind: 'costume'
+      assetKind: 'costume',
+      skinId: 11
     });
 
     Scratch.vm.runtime.targets.splice(Scratch.vm.runtime.targets.indexOf(clone), 1);
@@ -547,7 +554,8 @@ describe('actor costume animation', () => {
     expect(internals.displayedAssets.has(clone.id)).toBe(false);
     expect(internals.displayedAssets.get(sprite.id)).toEqual({
       assetName: 'Fish2',
-      assetKind: 'costume'
+      assetKind: 'costume',
+      skinId: 12
     });
 
     for (let index = 0; index < 3; index += 1) {

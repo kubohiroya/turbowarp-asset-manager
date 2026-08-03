@@ -101,6 +101,12 @@ type RegisteredAsset =
 interface DisplayBinding {
   assetName: string;
   assetKind: 'external' | 'costume' | 'backdrop' | 'text';
+  skinId: number | null;
+}
+
+interface RegistrationToken {
+  version: number;
+  cancellationVersion: number;
 }
 
 const blockDefinitions = definitions.blocks as DefinitionBlock[];
@@ -575,6 +581,8 @@ export class AssetManagerExtension {
   private readonly displayedAssets = new Map<string, DisplayBinding>();
   private readonly playingAudio = new Map<HTMLAudioElement, string>();
   private readonly registrationVersions = new Map<string, number>();
+  private readonly successfulRegistrationVersions = new Map<string, number>();
+  private readonly registrationCancellationVersions = new Map<string, number>();
   private readonly registrationCommits = new Map<string, Promise<void>>();
   private readonly committedCacheRecords = new Map<string, AssetRecord | null>();
   protected readonly featureFlags: AssetManagerFeatureFlags;
@@ -797,7 +805,7 @@ export class AssetManagerExtension {
 
   deleteAllMemoryAssets(): void {
     for (const name of this.registrationVersions.keys()) {
-      this.registrationVersions.set(name, (this.registrationVersions.get(name) ?? 0) + 1);
+      this.cancelRegistrations(name);
     }
     for (const asset of this.externalAssets.values()) this.deleteOwnedSkinIfExists(asset);
     this.externalAssets.clear();
@@ -1049,24 +1057,35 @@ export class AssetManagerExtension {
     this.lastAssetErrorLabel = '';
   }
 
-  private nextRegistrationVersion(name: string): number {
+  private beginRegistration(name: string): RegistrationToken {
     const version = (this.registrationVersions.get(name) ?? 0) + 1;
     this.registrationVersions.set(name, version);
-    return version;
+    return {
+      version,
+      cancellationVersion: this.registrationCancellationVersions.get(name) ?? 0
+    };
+  }
+
+  private cancelRegistrations(name: string): void {
+    const cancellationVersion = (this.registrationCancellationVersions.get(name) ?? 0) + 1;
+    this.registrationCancellationVersions.set(name, cancellationVersion);
+  }
+
+  private isRegistrationCancellationCurrent(
+    name: string,
+    token: RegistrationToken
+  ): boolean {
+    return (this.registrationCancellationVersions.get(name) ?? 0) === token.cancellationVersion;
   }
 
   private async registerExternalAsset(url: string, name: string): Promise<void> {
-    const version = this.nextRegistrationVersion(name);
-    const previousCached = this.committedCacheRecords.has(name)
-      ? this.committedCacheRecords.get(name) ?? null
-      : await this.cacheGet(name);
-    if (!this.committedCacheRecords.has(name)) {
-      this.committedCacheRecords.set(name, previousCached);
-    }
+    const token = this.beginRegistration(name);
     const record = url
       ? await this.fetchExternalAsset(url, name)
-      : previousCached;
-    if (this.registrationVersions.get(name) !== version) return;
+      : this.committedCacheRecords.has(name)
+      ? this.committedCacheRecords.get(name) ?? null
+      : await this.cacheGet(name);
+    if (!this.isRegistrationCancellationCurrent(name, token)) return;
     if (!record) {
       const candidates = suggestNames(name, this.assetRegistry.keys());
       throw new AssetManagerError(
@@ -1086,22 +1105,7 @@ export class AssetManagerExtension {
       mimeType: normalizeMimeType(record.mimeType, record.url || name),
       skinId: null
     };
-    if (url) {
-      await this.cachePut({...record, generation: version});
-      if (this.registrationVersions.get(name) !== version) {
-        await this.restoreCacheIfGeneration(name, version, previousCached);
-        return;
-      }
-    }
-    try {
-      await this.commitPreparedAsset(name, 'external', prepared, version);
-      if (url && this.registrationVersions.get(name) === version) {
-        this.committedCacheRecords.set(name, {...record, generation: version});
-      }
-    } catch (error) {
-      if (url) await this.restoreCacheIfGeneration(name, version, previousCached);
-      throw error;
-    }
+    await this.commitPreparedAsset(name, 'external', prepared, token, url ? record : undefined);
   }
 
   private async registerCostumeReference(
@@ -1109,10 +1113,10 @@ export class AssetManagerExtension {
     spriteName: string,
     costumeName: string | null
   ): Promise<void> {
-    const version = this.nextRegistrationVersion(name);
+    const token = this.beginRegistration(name);
     const {target, costume, costumeName: resolvedCostumeName} =
       resolveCostumeAddress(this.runtime, name, spriteName, costumeName);
-    if (this.registrationVersions.get(name) !== version) return;
+    if (!this.isRegistrationCancellationCurrent(name, token)) return;
     await this.commitPreparedAsset(name, 'costume', {
       kind: 'costume',
       name,
@@ -1121,13 +1125,13 @@ export class AssetManagerExtension {
       isStage: false,
       costumeName: resolvedCostumeName,
       assetId: costume.assetId ?? null
-    }, version);
+    }, token);
   }
 
   private async registerBackdropReference(name: string, backdropName: string): Promise<void> {
-    const version = this.nextRegistrationVersion(name);
+    const token = this.beginRegistration(name);
     const {target: stage, costume} = resolveBackdropAddress(this.runtime, backdropName);
-    if (this.registrationVersions.get(name) !== version) return;
+    if (!this.isRegistrationCancellationCurrent(name, token)) return;
     await this.commitPreparedAsset(name, 'backdrop', {
       kind: 'backdrop',
       name,
@@ -1136,7 +1140,7 @@ export class AssetManagerExtension {
       isStage: true,
       costumeName: backdropName,
       assetId: costume.assetId ?? null
-    }, version);
+    }, token);
   }
 
   private async registerSoundReference(
@@ -1144,14 +1148,14 @@ export class AssetManagerExtension {
     spriteName: string,
     soundName: string
   ): Promise<void> {
-    const version = this.nextRegistrationVersion(name);
+    const token = this.beginRegistration(name);
     const {target, sound, isStage} = resolveSoundAddress(
       this.runtime,
       spriteName,
       soundName,
       name
     );
-    if (this.registrationVersions.get(name) !== version) return;
+    if (!this.isRegistrationCancellationCurrent(name, token)) return;
     await this.commitPreparedAsset(name, 'sound', {
       kind: 'sound',
       name,
@@ -1160,22 +1164,22 @@ export class AssetManagerExtension {
       isStage,
       soundName,
       assetId: sound.assetId ?? null
-    }, version);
+    }, token);
   }
 
   private async registerTextReference(name: string, runtimeVariableName: string): Promise<void> {
-    const version = this.nextRegistrationVersion(name);
+    const token = this.beginRegistration(name);
     this.requireTextAssetName(name);
-    if (this.registrationVersions.get(name) !== version) return;
+    if (!this.isRegistrationCancellationCurrent(name, token)) return;
     await this.commitPreparedAsset(name, 'text', {
       kind: 'text',
       name,
       runtimeVariableName
-    }, version);
+    }, token);
   }
 
   private unregisterAsset(name: string): void {
-    this.nextRegistrationVersion(name);
+    this.cancelRegistrations(name);
     const kind = this.assetRegistry.get(name);
     if (!kind) return;
     const asset = this.getRegisteredAsset(name, kind);
@@ -1191,15 +1195,56 @@ export class AssetManagerExtension {
     name: string,
     kind: AssetKind,
     prepared: RegisteredAsset,
-    version: number
+    token: RegistrationToken,
+    cacheRecord?: AssetRecord
   ): Promise<void> {
     const previousCommit = this.registrationCommits.get(name) ?? Promise.resolve();
     const commit = previousCommit.catch(() => undefined).then(async () => {
-      if (this.registrationVersions.get(name) !== version) {
+      if (!this.isRegistrationCancellationCurrent(name, token) ||
+          token.version < (this.successfulRegistrationVersions.get(name) ?? 0)) {
         this.disposeRegisteredAsset(prepared);
         return;
       }
-      await this.commitPreparedAssetNow(name, kind, prepared, version);
+
+      const currentKind = this.assetRegistry.get(name);
+      const current = currentKind ? this.getRegisteredAsset(name, currentKind) : undefined;
+      this.assertReplacementKind(name, currentKind, current, kind, prepared);
+
+      let previousCached: AssetRecord | null | undefined;
+      let nextCached: AssetRecord | undefined;
+      if (cacheRecord) {
+        previousCached = this.committedCacheRecords.has(name)
+          ? this.committedCacheRecords.get(name) ?? null
+          : await this.cacheGet(name);
+        if (!this.isRegistrationCancellationCurrent(name, token)) {
+          this.disposeRegisteredAsset(prepared);
+          return;
+        }
+        nextCached = {...cacheRecord, generation: token.version};
+        await this.cachePut(nextCached);
+        if (!this.isRegistrationCancellationCurrent(name, token)) {
+          await this.restoreCacheIfGeneration(name, token.version, previousCached);
+          this.disposeRegisteredAsset(prepared);
+          return;
+        }
+      }
+
+      try {
+        await this.commitPreparedAssetNow(name, kind, prepared, token);
+      } catch (error) {
+        if (cacheRecord) {
+          await this.restoreCacheIfGeneration(name, token.version, previousCached ?? null);
+        }
+        throw error;
+      }
+      if (!this.isRegistrationCancellationCurrent(name, token)) {
+        if (cacheRecord) {
+          await this.restoreCacheIfGeneration(name, token.version, previousCached ?? null);
+        }
+        return;
+      }
+      this.successfulRegistrationVersions.set(name, token.version);
+      if (nextCached) this.committedCacheRecords.set(name, nextCached);
     });
     this.registrationCommits.set(name, commit);
     try {
@@ -1213,7 +1258,7 @@ export class AssetManagerExtension {
     name: string,
     kind: AssetKind,
     prepared: RegisteredAsset,
-    version: number
+    token: RegistrationToken
   ): Promise<void> {
     const currentKind = this.assetRegistry.get(name);
     const current = currentKind ? this.getRegisteredAsset(name, currentKind) : undefined;
@@ -1221,7 +1266,7 @@ export class AssetManagerExtension {
 
     if (currentKind === kind && current &&
         this.featureFlags.ENABLE_LIVE_ASSET_REPLACEMENT) {
-      await this.replaceRegisteredAsset(name, kind, current, prepared, version);
+      await this.replaceRegisteredAsset(name, kind, current, prepared, token);
       return;
     }
 
@@ -1272,24 +1317,30 @@ export class AssetManagerExtension {
     kind: AssetKind,
     current: RegisteredAsset,
     prepared: RegisteredAsset,
-    version: number
+    token: RegistrationToken
   ): Promise<void> {
-    const targets = [...this.displayedAssets]
-      .filter(([, binding]) => binding.assetName === name && binding.assetKind === kind)
-      .flatMap(([targetId]) => {
+    const managedDisplays = [...this.displayedAssets]
+      .filter(([, binding]) =>
+        binding.assetName === name && binding.assetKind === kind
+      )
+      .flatMap(([targetId, binding]) => {
         const target = this.runtime.targets.find((candidate) => candidate.id === targetId);
-        if (target) return [target];
+        if (target && this.isDisplayBindingCurrent(target, binding)) {
+          return [{target, binding}];
+        }
         this.displayedAssets.delete(targetId);
         return [];
       });
-    let preparedDisplays: Array<{target: TurboWarpTarget; skin: ResolvedSkin | null}>;
+    let preparedDisplays: Array<{
+      target: TurboWarpTarget;
+      binding: DisplayBinding;
+      skin: ResolvedSkin | null;
+    }>;
     try {
-      preparedDisplays = await Promise.all(
-        targets.map(async (target) => ({
-          target,
-          skin: kind === 'text' ? null : await this.resolveSkinFromAsset(name, kind, prepared)
-        }))
-      );
+      const skin = kind === 'text' || managedDisplays.length === 0
+        ? null
+        : await this.resolveSkinFromAsset(name, kind, prepared);
+      preparedDisplays = managedDisplays.map(({target, binding}) => ({target, binding, skin}));
     } catch (error) {
       this.disposeRegisteredAsset(prepared);
       throw new AssetManagerError(
@@ -1304,19 +1355,26 @@ export class AssetManagerExtension {
       );
     }
 
-    if (this.registrationVersions.get(name) !== version) {
+    if (!this.isRegistrationCancellationCurrent(name, token)) {
       this.disposeRegisteredAsset(prepared);
       return;
     }
 
     this.installRegisteredAsset(name, kind, prepared);
+    const attemptedTargets: TurboWarpTarget[] = [];
     try {
       for (const display of preparedDisplays) {
-        if (this.registrationVersions.get(name) !== version) break;
+        if (!this.isRegistrationCancellationCurrent(name, token)) break;
         if (!this.runtime.targets.includes(display.target)) {
           this.displayedAssets.delete(display.target.id);
           continue;
         }
+        if (this.displayedAssets.get(display.target.id) !== display.binding) continue;
+        if (!this.isDisplayBindingCurrent(display.target, display.binding)) {
+          this.displayedAssets.delete(display.target.id);
+          continue;
+        }
+        attemptedTargets.push(display.target);
         if (kind === 'text') {
           await this.applyTextReferenceToTarget(
             display.target,
@@ -1327,18 +1385,18 @@ export class AssetManagerExtension {
         } else if (display.skin) {
           this.applySkinToTarget(display.target, display.skin);
         }
-        if (this.registrationVersions.get(name) === version) {
-          this.setDisplayBinding(display.target, name, kind);
+        if (this.isRegistrationCancellationCurrent(name, token)) {
+          this.setDisplayBinding(display.target, name, kind, display.skin?.skinId);
         }
       }
     } catch (error) {
-      if (this.registrationVersions.get(name) !== version) {
+      if (!this.isRegistrationCancellationCurrent(name, token)) {
         this.disposeRegisteredAsset(current);
         return;
       }
       this.installRegisteredAsset(name, kind, current);
       let rollbackError: unknown;
-      for (const target of targets) {
+      for (const target of attemptedTargets) {
         if (!this.runtime.targets.includes(target)) continue;
         try {
           if (kind === 'text') {
@@ -1349,7 +1407,10 @@ export class AssetManagerExtension {
               {runtime: this.runtime, target}
             );
           } else {
-            this.applySkinToTarget(target, await this.resolveSkinFromAsset(name, kind, current));
+            const currentSkin = await this.resolveSkinFromAsset(name, kind, current);
+            this.applySkinToTarget(target, currentSkin);
+            this.setDisplayBinding(target, name, kind, currentSkin.skinId);
+            continue;
           }
           this.setDisplayBinding(target, name, kind);
         } catch (rollbackFailure) {
@@ -1552,6 +1613,7 @@ export class AssetManagerExtension {
   ): Promise<void> {
     const name = normalizeName(value);
     const kind = this.assetRegistry.get(name);
+    let skinId: number | undefined;
     if (!kind) throw this.assetNotRegistered('show', name);
     if (!this.runtime.targets.includes(target)) return;
     if (kind === 'text') {
@@ -1560,19 +1622,37 @@ export class AssetManagerExtension {
       const skin = await this.resolveSkin(name);
       if (!this.runtime.targets.includes(target)) return;
       this.applySkinToTarget(target, skin);
+      skinId = skin.skinId;
     } else {
       throw this.assetTypeMismatch('show', name, 'image or text', kind);
     }
     if (!this.runtime.targets.includes(target)) return;
-    this.setDisplayBinding(target, name, kind);
+    this.setDisplayBinding(target, name, kind, skinId);
   }
 
-  protected setDisplayBinding(target: TurboWarpTarget, name: string, kind: AssetKind): void {
+  protected setDisplayBinding(
+    target: TurboWarpTarget,
+    name: string,
+    kind: AssetKind,
+    skinId?: number
+  ): void {
     if (kind === 'sound') {
       this.displayedAssets.delete(target.id);
       return;
     }
-    this.displayedAssets.set(target.id, {assetName: name, assetKind: kind});
+    this.displayedAssets.set(target.id, {
+      assetName: name,
+      assetKind: kind,
+      skinId: skinId ?? null
+    });
+  }
+
+  private isDisplayBindingCurrent(target: TurboWarpTarget, binding: DisplayBinding): boolean {
+    if (binding.assetKind === 'text') return true;
+    if (binding.skinId === null || target.drawableID === undefined || target.drawableID === null) {
+      return false;
+    }
+    return this.renderer._allDrawables?.[target.drawableID]?.skin?.id === binding.skinId;
   }
 
   protected applyResolvedSkinToTarget(
@@ -1586,7 +1666,7 @@ export class AssetManagerExtension {
       throw this.assetTypeMismatch('show', name, 'image', kind);
     }
     this.applySkinToTarget(target, skin);
-    this.setDisplayBinding(target, name, kind);
+    this.setDisplayBinding(target, name, kind, skin.skinId);
   }
 
   private async applyTextToTarget(

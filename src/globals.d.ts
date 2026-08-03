@@ -1,4 +1,5 @@
 interface TurboWarpRenderer {
+  readonly _allDrawables?: Array<{readonly skin?: {readonly id: number} | null} | undefined>;
   createSVGSkin(svg: string): number;
   createBitmapSkin(bitmap: ImageBitmap, resolution: number): number;
   destroySkin(skinId: number): void;

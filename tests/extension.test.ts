@@ -23,8 +23,9 @@ type TestCacheRecord = Omit<TestExternalAsset, 'kind' | 'skinId'> & {generation?
 
 interface TestExtensionInternals {
   externalAssets: Map<string, TestExternalAsset>;
+  textAssets: Map<string, {kind: 'text'; name: string; runtimeVariableName: string}>;
   assetRegistry: Map<string, 'external' | 'costume' | 'backdrop' | 'sound' | 'text'>;
-  displayedAssets: Map<string, {assetName: string; assetKind: string}>;
+  displayedAssets: Map<string, {assetName: string; assetKind: string; skinId: number | null}>;
   playingAudio: Map<HTMLAudioElement, string>;
   fetchExternalAsset(url: string, name: string): Promise<TestExternalAsset>;
   cacheGet(name: string): Promise<TestCacheRecord | null>;
@@ -138,6 +139,7 @@ describe('parseResourceIdentifier', () => {
 
 describe('project-local assets', () => {
   const updateDrawableSkinId = vi.fn();
+  const rendererDrawables: Array<{skin: {id: number}} | undefined> = [];
   const destroySkin = vi.fn();
   const playSound = vi.fn(() => Promise.resolve());
   const stopSound = vi.fn();
@@ -281,6 +283,10 @@ describe('project-local assets', () => {
     stage.size = 100;
     urashima.size = 100;
     updateDrawableSkinId.mockClear();
+    rendererDrawables.length = 0;
+    updateDrawableSkinId.mockImplementation((drawableId: number, skinId: number) => {
+      rendererDrawables[drawableId] = {skin: {id: skinId}};
+    });
     destroySkin.mockClear();
     playSound.mockClear();
     stopSound.mockClear();
@@ -314,6 +320,7 @@ describe('project-local assets', () => {
       vm: {
         runtime: {
           renderer: {
+            _allDrawables: rendererDrawables,
             createSVGSkin: vi.fn(() => 1),
             createBitmapSkin: vi.fn(() => 2),
             destroySkin,
@@ -814,12 +821,64 @@ describe('project-local assets', () => {
     expect(updateDrawableSkinId).toHaveBeenCalledWith(0, 43);
     expect(internals.displayedAssets.get(sprite.id)).toEqual({
       assetName: 'shared',
-      assetKind: 'costume'
+      assetKind: 'costume',
+      skinId: 43
     });
     expect(internals.displayedAssets.get(stage.id)).toEqual({
       assetName: 'shared',
-      assetKind: 'costume'
+      assetKind: 'costume',
+      skinId: 43
     });
+  });
+
+  it('leaves a display alone after another feature changes its skin', async () => {
+    const extension = new AssetManagerExtension(ALL_FEATURES);
+    const internals = extension as unknown as TestExtensionInternals;
+    await extension.registerAsset({RESOURCE_ID: 'costume:Hero:normal', NAME: 'shared'});
+    await extension.setThisSpriteSkin({NAME: 'shared'}, {target: sprite});
+    Scratch.vm.runtime.renderer.updateDrawableSkinId(7, 999);
+    updateDrawableSkinId.mockClear();
+
+    await extension.registerAsset({RESOURCE_ID: 'costume:Turtle:walk', NAME: 'shared'});
+
+    expect(updateDrawableSkinId).not.toHaveBeenCalled();
+    expect(rendererDrawables[7]?.skin.id).toBe(999);
+    expect(internals.displayedAssets.has(sprite.id)).toBe(false);
+  });
+
+  it('creates one shared external skin for every managed display', async () => {
+    const extension = new AssetManagerExtension(ALL_FEATURES);
+    const internals = extension as unknown as TestExtensionInternals;
+    internals.externalAssets.set('shared', {
+      kind: 'external', name: 'shared', url: 'https://example.com/old.png',
+      mimeType: 'image/png', data: new ArrayBuffer(0), cachedAt: 1, skinId: 501
+    });
+    internals.assetRegistry.set('shared', 'external');
+    await extension.setThisSpriteSkin({NAME: 'shared'}, {target: sprite});
+    await extension.setStageSkin({NAME: 'shared'});
+    vi.spyOn(internals, 'cacheGet').mockResolvedValue(null);
+    vi.spyOn(internals, 'cachePut').mockResolvedValue();
+    vi.spyOn(internals, 'restoreCacheIfGeneration').mockResolvedValue();
+    vi.spyOn(internals, 'fetchExternalAsset').mockResolvedValue({
+      kind: 'external', name: 'shared', url: 'https://example.com/new.png',
+      mimeType: 'image/png', data: new ArrayBuffer(0), cachedAt: 2, skinId: null
+    });
+    vi.stubGlobal('createImageBitmap', vi.fn(async () => ({} as ImageBitmap)));
+    const createBitmapSkin = vi.mocked(Scratch.vm.runtime.renderer.createBitmapSkin);
+    createBitmapSkin.mockClear();
+    createBitmapSkin.mockReturnValue(601);
+    updateDrawableSkinId.mockClear();
+
+    await extension.registerAsset({
+      RESOURCE_ID: 'https://example.com/new.png',
+      NAME: 'shared'
+    });
+
+    expect(createBitmapSkin).toHaveBeenCalledOnce();
+    expect(updateDrawableSkinId).toHaveBeenCalledTimes(2);
+    expect(updateDrawableSkinId).toHaveBeenCalledWith(7, 601);
+    expect(updateDrawableSkinId).toHaveBeenCalledWith(0, 601);
+    expect(internals.externalAssets.get('shared')?.skinId).toBe(601);
   });
 
   it('restores the old registration and display when reapply fails', async () => {
@@ -860,7 +919,7 @@ describe('project-local assets', () => {
     expect(setAnimatedText).not.toHaveBeenCalled();
   });
 
-  it('keeps the last-started same-name text replacement under concurrency', async () => {
+  it('serializes same-name text replacements and keeps the last-started result', async () => {
     const extension = new AssetManagerExtension(ALL_FEATURES);
     await extension.registerAsset({RESOURCE_ID: 'text:Initial', NAME: 'script'});
     runtimeVariables.set('text:Initial', 'initial');
@@ -873,11 +932,47 @@ describe('project-local assets', () => {
     const second = extension.registerAsset({RESOURCE_ID: 'text:Second', NAME: 'script'});
     await Promise.all([first, second]);
 
-    expect(setAnimatedText).toHaveBeenCalledOnce();
+    expect(setAnimatedText).toHaveBeenCalledTimes(2);
     expect(setAnimatedText).toHaveBeenLastCalledWith(
       {TEXT: 'second'},
       expect.objectContaining({target: sprite})
     );
+  });
+
+  it('finishes an active valid replacement when a newer registration is invalid', async () => {
+    const extension = new AssetManagerExtension(ALL_FEATURES);
+    const internals = extension as unknown as TestExtensionInternals;
+    await extension.registerAsset({RESOURCE_ID: 'text:Initial', NAME: 'script'});
+    runtimeVariables.set('text:Initial', 'initial');
+    runtimeVariables.set('text:Replacement', 'replacement');
+    await extension.setThisSpriteSkin({NAME: 'script'}, {target: sprite});
+    await extension.setThisSpriteSkin({NAME: 'script'}, {target: turtle});
+    setAnimatedText.mockClear();
+    const firstDisplay = deferred<void>();
+    setAnimatedText.mockReturnValueOnce(firstDisplay.promise);
+
+    const replacement = extension.registerAsset({
+      RESOURCE_ID: 'text:Replacement',
+      NAME: 'script'
+    });
+    await vi.waitFor(() => expect(setAnimatedText).toHaveBeenCalledOnce());
+    await expect(extension.registerAsset({
+      RESOURCE_ID: 'costume:Missing:walk',
+      NAME: 'script'
+    })).rejects.toThrow('[SPRITE_NOT_FOUND]');
+    firstDisplay.resolve();
+    await replacement;
+
+    expect(setAnimatedText).toHaveBeenCalledTimes(2);
+    expect(setAnimatedText).toHaveBeenCalledWith(
+      {TEXT: 'replacement'},
+      expect.objectContaining({target: sprite})
+    );
+    expect(setAnimatedText).toHaveBeenCalledWith(
+      {TEXT: 'replacement'},
+      expect.objectContaining({target: turtle})
+    );
+    expect(internals.textAssets.get('script')?.runtimeVariableName).toBe('text:Replacement');
   });
 
   it('rejects public kind changes and allows them after explicit deletion', async () => {
@@ -911,7 +1006,7 @@ describe('project-local assets', () => {
     });
     internals.assetRegistry.set('shared', 'external');
     vi.spyOn(internals, 'cacheGet').mockResolvedValue(previousCache);
-    vi.spyOn(internals, 'cachePut').mockResolvedValue();
+    const cachePut = vi.spyOn(internals, 'cachePut').mockResolvedValue();
     const restore = vi.spyOn(internals, 'restoreCacheIfGeneration').mockResolvedValue();
     vi.spyOn(internals, 'fetchExternalAsset').mockResolvedValue({
       kind: 'external', name: 'shared', url: 'https://example.com/new.mp3',
@@ -924,7 +1019,8 @@ describe('project-local assets', () => {
     })).rejects.toThrow('[ASSET_TYPE_CHANGE]');
 
     expect(internals.externalAssets.get('shared')?.url).toBe('https://example.com/old.png');
-    expect(restore).toHaveBeenCalledWith('shared', 1, previousCache);
+    expect(cachePut).not.toHaveBeenCalled();
+    expect(restore).not.toHaveBeenCalled();
   });
 
   it('keeps active external audio running while replacing future playback data', async () => {
@@ -992,6 +1088,32 @@ describe('project-local assets', () => {
       url: 'https://example.com/fast.png',
       generation: 2
     }));
+  });
+
+  it('commits an older valid external registration after a newer attempt is invalid', async () => {
+    const extension = new AssetManagerExtension();
+    const internals = extension as unknown as TestExtensionInternals;
+    const pending = deferred<TestExternalAsset>();
+    vi.spyOn(internals, 'cacheGet').mockResolvedValue(null);
+    vi.spyOn(internals, 'cachePut').mockResolvedValue();
+    vi.spyOn(internals, 'restoreCacheIfGeneration').mockResolvedValue();
+    vi.spyOn(internals, 'fetchExternalAsset').mockReturnValue(pending.promise);
+
+    const validRegistration = extension.registerAsset({
+      RESOURCE_ID: 'https://example.com/valid.png',
+      NAME: 'shared'
+    });
+    await expect(extension.registerAsset({
+      RESOURCE_ID: 'costume:Missing:walk',
+      NAME: 'shared'
+    })).rejects.toThrow('[SPRITE_NOT_FOUND]');
+    pending.resolve({
+      kind: 'external', name: 'shared', url: 'https://example.com/valid.png',
+      mimeType: 'image/png', data: new ArrayBuffer(0), cachedAt: 1, skinId: null
+    });
+    await validRegistration;
+
+    expect(internals.externalAssets.get('shared')?.url).toBe('https://example.com/valid.png');
   });
 
   it('does not let an older registration failure overwrite newer Reporter state', async () => {

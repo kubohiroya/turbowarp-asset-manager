@@ -243,7 +243,12 @@
       <p>
         Images and text refresh immediately. Text rereads its latest body and full style, and starts
         a configured animation again from the beginning. Audio already playing continues; the next
-        playback uses the replacement. With strict-kind replacement enabled, the public kinds
+        playback uses the replacement. Same-name commits run serially, so an active commit finishes
+        atomically and the last-started successful registration remains afterward. A newer invalid
+        attempt does not cancel an earlier valid one. For images, Asset Manager also verifies the
+        renderer skin it applied before refreshing a target. A later costume or renderer change
+        releases that stale display binding instead of being overwritten. With strict-kind
+        replacement enabled, the public kinds
         <code>external</code>, <code>costume</code>, <code>backdrop</code>, <code>sound</code>, and
         <code>text</code> cannot replace one another. External image/audio changes are rejected too.
         Delete the old registration first when a kind change is intentional.
