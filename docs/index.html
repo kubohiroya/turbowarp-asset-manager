@@ -79,7 +79,7 @@
         <li>
           <h3>Load the extension</h3>
           <p>In TurboWarp, choose <strong>Add Extension → Custom Extension</strong> and paste:</p>
-          <pre><code>https://cdn.jsdelivr.net/npm/@kubohiroya/turbowarp-asset-manager@0.3.0/dist/asset-manager.js</code></pre>
+          <pre><code>https://cdn.jsdelivr.net/npm/@kubohiroya/turbowarp-asset-manager@0.4.0/dist/asset-manager.js</code></pre>
           <p>Enable <strong>Run extension without sandbox</strong>.</p>
         </li>
         <li>
@@ -260,6 +260,11 @@
       </aside>
 
       <h3 id="diagnostic-errors">Diagnostic error codes</h3>
+      <p class="callout">
+        <strong>Upgrading from 0.3.0:</strong> update scripts that compare
+        <code>asset registration error type</code> against the previous lowercase type tokens.
+        Version 0.4.0 returns the uppercase diagnostic codes below.
+      </p>
       <p>
         User-facing errors begin with <code>[Asset Manager][CODE]</code> and retain the operation,
         relevant asset/resource/actor names, a correction hint, nearby candidates, and the original

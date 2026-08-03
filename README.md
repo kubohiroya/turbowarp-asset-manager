@@ -11,14 +11,14 @@ The built JavaScript file is committed to this repository so that users do not n
 The versioned npm package contains the same reviewed build:
 
 ```bash
-pnpm add --save-exact @kubohiroya/turbowarp-asset-manager@0.3.0
+pnpm add --save-exact @kubohiroya/turbowarp-asset-manager@0.4.0
 ```
 
 Load `node_modules/@kubohiroya/turbowarp-asset-manager/dist/asset-manager.js`, or use the
 version-pinned CDN URL:
 
 ```text
-https://cdn.jsdelivr.net/npm/@kubohiroya/turbowarp-asset-manager@0.3.0/dist/asset-manager.js
+https://cdn.jsdelivr.net/npm/@kubohiroya/turbowarp-asset-manager@0.4.0/dist/asset-manager.js
 ```
 
 ## Extension ID compatibility
@@ -140,6 +140,8 @@ To roll back either behavior, set its flag to `false` and reload the extension. 
 User-facing failures are `AssetManagerError` instances. They retain a stable `code`, operation, relevant asset/resource/actor names, a correction hint, candidate names, and the original `cause`. Messages begin with `[Asset Manager][CODE]`. Candidate lookup searches the relevant registered assets, actors, costumes, or sounds, prioritizes a case-insensitive exact match, and then returns up to three names by edit distance.
 
 The `asset registration error type` and `asset registration error label` Reporter blocks expose the latest `register resource` failure to scripts and monitors. The type Reporter returns the stable code; the label Reporter returns the most relevant asset name, resource ID, or actor name. Starting a registration clears both values, and concurrent registrations allow only the most recently started operation to update them. Both Reporters are empty after a successful latest registration.
+
+When upgrading from `0.3.0`, update scripts that compare `asset registration error type` against the previous lowercase type tokens. Version `0.4.0` returns the uppercase diagnostic codes below, such as `SOURCE_ASSET_NOT_FOUND` and `RESOURCE_ID_INVALID`.
 
 Stable codes are:
 
