@@ -204,6 +204,30 @@ ol {
   color: var(--text);
 }
 
+.github-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.42rem;
+  padding: 0.38rem 0.58rem;
+  border-radius: 0.65rem;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 750;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.github-link:hover {
+  color: var(--text);
+  background: var(--surface-soft);
+}
+
+.github-link svg {
+  width: 1.3rem;
+  height: 1.3rem;
+  flex: none;
+}
+
 .language-switch {
   display: inline-flex;
   padding: 0.2rem;
@@ -733,6 +757,14 @@ details > div {
   }
 
   .brand-text {
+    display: none;
+  }
+
+  .github-link {
+    padding: 0.38rem;
+  }
+
+  .github-label {
     display: none;
   }
 
