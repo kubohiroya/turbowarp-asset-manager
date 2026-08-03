@@ -505,6 +505,14 @@ export class AssetManagerExtension {
   private lastAssetErrorLabel = '';
   private assetErrorVersion = 0;
 
+  constructor() {
+    this.runtime.on?.('STOP_FOR_TARGET', (target?: TurboWarpTarget) => {
+      if (target && !this.runtime.targets.includes(target)) {
+        this.displayedAssets.delete(target.id);
+      }
+    });
+  }
+
   setLoadingBackdrop(args: BlockArgs): void {
     this.loadingBackdropName = normalizeName(args.NAME);
     this.loadingAssetCountValue = 0;
