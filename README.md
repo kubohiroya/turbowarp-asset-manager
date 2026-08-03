@@ -40,9 +40,14 @@ replacing the JavaScript artifact alone would break their existing blocks.
 - animate named actors with background loops or one-shot asset sequences;
 - play audio assets with or without waiting for completion;
 - normalize missing or generic MIME types from file extensions;
+- preserve the last-started valid external download in both memory and IndexedDB;
+- optionally live-replace managed image and text displays after a same-kind registration;
+- optionally reject same-name public-kind changes, including external image/audio changes;
 - release only renderer skins owned by Asset Manager when registrations are removed.
 
 The current-sprite block works with clones. A stage drawable ID of `0` is treated as valid. Project-local assets remain owned by the Scratch VM and are not written to IndexedDB. Text assets store only a runtime-variable name; they never copy or cache its value.
+
+External URL downloads are prepared before they are persisted. A per-name registration generation is checked before the IndexedDB write and again before the in-memory commit. If same-name requests finish out of order, an older completion cannot replace the cache or registration selected by the most recently started valid request.
 
 ## Resource identifiers
 
@@ -111,24 +116,51 @@ action=Prompt:show:Narration:0,0,100
 
 The actor name in `actor=` and the target name in `action=` must match (`Prompt` in this example). The second `actor=` item, each `text=` / `textStyle=` item, and the `show` asset item all name the registered text asset (`Narration`). The tmpose-kamishibai integration should map `text=` and `textStyle=` to Asset Manager's two setter blocks; Asset Manager itself does not parse the DSL.
 
-## Registration errors
+## Safe same-name replacement
 
-The `asset registration error type` and `asset registration error label` Reporter blocks expose the latest `register resource` failure to other scripts and variable monitors. Registration still reports its original error to TurboWarp. Starting a new registration clears both values; a failure then sets them again. Concurrent registrations use the most recently started registration for these Reporter values.
+Two startup-fixed feature flags control the rollout. Both default to `false`. A host can enable them by defining the configuration object before loading `dist/asset-manager.js`:
 
-The type Reporter returns these stable tokens:
+```js
+globalThis.__TW_ASSET_MANAGER_FEATURE_FLAGS__ = {
+  ENABLE_LIVE_ASSET_REPLACEMENT: true,
+  ENABLE_STRICT_ASSET_KIND_REPLACEMENT: true
+};
+```
 
-| Type | Label |
+With `ENABLE_LIVE_ASSET_REPLACEMENT`, registering the same public kind under an existing name prepares the new resource, commits the registry, reapplies only targets that Asset Manager still tracks as displaying that name, and then releases the old owned resource. Images and text refresh immediately. Text reads its latest body and complete style again, and a configured animation starts again from the beginning. Audio already playing is not interrupted; its next playback uses the new registration. If preparation, registry commit, or display reapply fails, Asset Manager restores the old registration and managed display.
+
+Display bindings retain the target ID, asset name, and public kind. A later Asset Manager display replaces the binding, and removing a target or asset removes stale bindings. This prevents replacement from rewriting unrelated targets.
+
+With `ENABLE_STRICT_ASSET_KIND_REPLACEMENT`, a name keeps its public DSL kind: `external`, `costume`, `backdrop`, `sound`, or `text`. Replacing it with another kind throws `ASSET_TYPE_CHANGE`; an external image also cannot become external audio or vice versa. Explicitly delete the registration before intentionally reusing its name for another kind.
+
+To roll back either behavior, set its flag to `false` and reload the extension. The default flag-off path retains the earlier registration behavior. Cache-generation and diagnostic fixes are unconditional and can be reverted independently from the two flagged features.
+
+## Diagnostic errors
+
+User-facing failures are `AssetManagerError` instances. They retain a stable `code`, operation, relevant asset/resource/actor names, a correction hint, candidate names, and the original `cause`. Messages begin with `[Asset Manager][CODE]`. Candidate lookup searches the relevant registered assets, actors, costumes, or sounds, prioritizes a case-insensitive exact match, and then returns up to three names by edit distance.
+
+The `asset registration error type` and `asset registration error label` Reporter blocks expose the latest `register resource` failure to scripts and monitors. The type Reporter returns the stable code; the label Reporter returns the most relevant asset name, resource ID, or actor name. Starting a registration clears both values, and concurrent registrations allow only the most recently started operation to update them. Both Reporters are empty after a successful latest registration.
+
+Stable codes are:
+
+| Code | Meaning |
 |---|---|
-| `sprite` | Missing sprite name |
-| `costume` | Missing or ambiguous costume name |
-| `backdrop` | Missing backdrop name |
-| `sound` | Missing sound name |
-| `asset-name` | Invalid registration asset name |
-| `resource-id` | Invalid resource identifier |
-| `cache` | Asset name missing from the cache |
-| `external` | External resource URL that failed |
+| `INVALID_ASSET_NAME` | The registration name is empty or invalid. |
+| `ASSET_NOT_REGISTERED` | No registered or cached asset has the requested name. |
+| `ASSET_TYPE_MISMATCH` | An operation requires a different registered kind. |
+| `ASSET_TYPE_CHANGE` | Strict replacement rejected a public-kind or external media-kind change. |
+| `SPRITE_NOT_FOUND` | A sprite, stage, target, or drawable is missing. |
+| `SPRITE_NAME_AMBIGUOUS` | More than one actor target has the requested name. |
+| `SOURCE_ASSET_NOT_FOUND` | A referenced costume, backdrop, or sound is missing or ambiguous. |
+| `RESOURCE_ID_INVALID` | The resource identifier has an unsupported or invalid form. |
+| `DEPENDENCY_MISSING` | A required TurboWarp extension or runtime service is unavailable. |
+| `STYLE_PROPERTY_INVALID` | A text style property name is unsupported. |
+| `STYLE_VALUE_INVALID` | A text style value is invalid. |
+| `PLAYBACK_FAILED` | Audio playback failed. |
+| `ANIMATION_FAILED` | Background actor or text animation failed. |
+| `REPLACEMENT_FAILED` | Preparing or applying a replacement failed. |
 
-Both Reporters return an empty string after a successful registration.
+Synchronous operations throw without also logging the same exception. Background audio and animation failures cannot be returned to a block, so they are wrapped with context and sent to `console.error` exactly once.
 
 The old `load asset from URL [URL] or cache as [NAME]` opcode remains available to existing projects, but it is hidden from the block palette.
 
@@ -208,7 +240,7 @@ Registers an external URL, cached asset, sprite costume, stage backdrop, project
 
 ### `asset registration error type`
 
-Returns the stable type token for the most recent asset registration error, or an empty string when the latest registration succeeded.
+Returns the stable error code for the most recent asset registration failure, or an empty string when the latest registration succeeded.
 
 | Property | Value |
 |---|---|
@@ -217,7 +249,7 @@ Returns the stable type token for the most recent asset registration error, or a
 
 ### `asset registration error label`
 
-Returns the missing or invalid name associated with the most recent asset registration error, or an empty string when the latest registration succeeded.
+Returns the relevant asset, resource, or actor name for the most recent registration failure, or an empty string when the latest registration succeeded.
 
 | Property | Value |
 |---|---|

@@ -3,8 +3,13 @@ import {AnimatedAssetManagerExtension} from '../src/animation.js';
 
 interface TestAnimationInternals {
   actorAnimations: Map<string, {target: TurboWarpTarget}>;
-  displayedAssets: Map<string, string>;
+  displayedAssets: Map<string, {assetName: string; assetKind: string}>;
 }
+
+const ALL_FEATURES = {
+  ENABLE_LIVE_ASSET_REPLACEMENT: true,
+  ENABLE_STRICT_ASSET_KIND_REPLACEMENT: true
+} as const;
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -160,8 +165,12 @@ describe('actor costume animation', () => {
     vi.unstubAllGlobals();
   });
 
-  async function createExtension(): Promise<AnimatedAssetManagerExtension> {
-    const extension = new AnimatedAssetManagerExtension();
+  async function createExtension(
+    featureFlags?: typeof ALL_FEATURES
+  ): Promise<AnimatedAssetManagerExtension> {
+    const extension = featureFlags
+      ? new AnimatedAssetManagerExtension(featureFlags)
+      : new AnimatedAssetManagerExtension();
     await extension.registerAsset({RESOURCE_ID: 'costume:Fish:Fish1', NAME: 'Fish1'});
     await extension.registerAsset({RESOURCE_ID: 'costume:Fish:Fish2', NAME: 'Fish2'});
     await extension.registerAsset({RESOURCE_ID: 'costume:Fish:Fish3', NAME: 'Fish3'});
@@ -478,6 +487,19 @@ describe('actor costume animation', () => {
     expect(updateDrawableSkinId).toHaveBeenLastCalledWith(7, 13);
   });
 
+  it('live-replaces the image currently displayed by an actor animation', async () => {
+    const extension = await createExtension(ALL_FEATURES);
+    extension.startActorSequence({ACTOR: 'Fish', ASSETS: 'Fish1', DURATIONS: ''});
+    await flushFrame();
+    expect(updateDrawableSkinId).toHaveBeenLastCalledWith(7, 11);
+    updateDrawableSkinId.mockClear();
+
+    await extension.registerAsset({RESOURCE_ID: 'costume:Bird:Bird1', NAME: 'Fish1'});
+
+    expect(updateDrawableSkinId).toHaveBeenCalledOnce();
+    expect(updateDrawableSkinId).toHaveBeenLastCalledWith(7, 21);
+  });
+
   it('animates different actors independently', async () => {
     const extension = await createExtension();
     extension.startActorLoop({ACTOR: 'Fish', COSTUMES: 'Fish1,Fish2', DURATIONS: '0.1,0.1'});
@@ -515,12 +537,18 @@ describe('actor costume animation', () => {
     const internals = extension as unknown as TestAnimationInternals;
 
     emitRuntime('STOP_FOR_TARGET', clone);
-    expect(internals.displayedAssets.get(clone.id)).toBe('Fish1');
+    expect(internals.displayedAssets.get(clone.id)).toEqual({
+      assetName: 'Fish1',
+      assetKind: 'costume'
+    });
 
     Scratch.vm.runtime.targets.splice(Scratch.vm.runtime.targets.indexOf(clone), 1);
     emitRuntime('STOP_FOR_TARGET', clone);
     expect(internals.displayedAssets.has(clone.id)).toBe(false);
-    expect(internals.displayedAssets.get(sprite.id)).toBe('Fish2');
+    expect(internals.displayedAssets.get(sprite.id)).toEqual({
+      assetName: 'Fish2',
+      assetKind: 'costume'
+    });
 
     for (let index = 0; index < 3; index += 1) {
       const temporaryClone: TurboWarpTarget = {...clone, id: `temporary-clone-${index}`};
@@ -589,7 +617,7 @@ describe('actor costume animation', () => {
     })).toThrow('Actor not found: Missing');
     expect(() => extension.startActorLoop({
       ACTOR: 'Fish', COSTUMES: 'Missing', DURATIONS: '0.5'
-    })).toThrow('Asset is not registered: Missing');
+    })).toThrow('[ASSET_NOT_REGISTERED]');
   });
 
   it('rejects malformed costume and duration lists', async () => {

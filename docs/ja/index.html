@@ -182,20 +182,23 @@
       <p>
         URL を指定すると必ず新しいデータを取得し、同名のキャッシュを更新します。
         リソース識別子を空欄にすると通信せず、同じ名前のデータを IndexedDB から読み込みます。
+        名前ごとの世代を確認してから IndexedDB とメモリーを更新するため、先に開始した古い通信が
+        遅れて完了しても、最後に開始した有効な登録を上書きしません。
       </p>
       <figure class="diagram" aria-describedby="cache-description">
         <figcaption>メモリー上の登録簿を用意する 2 つの経路</figcaption>
         <p id="cache-description" class="sr-only">
-          URL を指定した場合は、リソースの取得、メディア種別の正規化、同名の IndexedDB エントリーへの
-          保存を行い、メモリーへ登録します。空のリソース識別子を指定した場合は、通信せず同名の
-          IndexedDB エントリーを読み、メモリーへ登録します。
+          URL を指定した場合は、リソースの取得、メディア種別の正規化、最新世代であることの確認、
+          同名の IndexedDB エントリーへの保存を行い、メモリーへ登録します。空のリソース識別子を
+          指定した場合は、通信せず同名の IndexedDB エントリーを読み、メモリーへ登録します。
         </p>
         <div aria-hidden="true">
           <div class="lane">
             <span class="lane-label">URL を指定 — 更新</span>
-            <ol class="flow-list" style="--flow-columns: 4">
+            <ol class="flow-list" style="--flow-columns: 5">
               <li class="diagram-node"><strong>URL を取得</strong><span>ブラウザーの通信</span></li>
               <li class="diagram-node"><strong>種類を判定</strong><span>MIME と拡張子</span></li>
+              <li class="diagram-node"><strong>世代を確認</strong><span>最後の要求を優先</span></li>
               <li class="diagram-node diagram-node-primary"><strong>キャッシュへ保存</strong><span>名前 → データ</span></li>
               <li class="diagram-node diagram-node-accent"><strong>メモリーで利用可能</strong><span>すぐブロックで使える</span></li>
             </ol>
@@ -210,6 +213,71 @@
           </div>
         </div>
       </figure>
+
+      <h3 id="replacement-flow">同名アセットを安全に置き換える仕組み</h3>
+      <p>
+        置換機能は、起動時に固定される 2 つのフラグで段階導入します。どちらも既定値は
+        <code>false</code> です。利用するプロジェクトでは、拡張機能の読み込み前に次の設定を行います。
+      </p>
+      <pre><code>globalThis.__TW_ASSET_MANAGER_FEATURE_FLAGS__ = {
+  ENABLE_LIVE_ASSET_REPLACEMENT: true,
+  ENABLE_STRICT_ASSET_KIND_REPLACEMENT: true
+};</code></pre>
+      <figure class="diagram" aria-describedby="replacement-description">
+        <figcaption>新しい内容の準備が完了してからライブ置換を確定する</figcaption>
+        <p id="replacement-description" class="sr-only">
+          Asset Manager は新しい内容を準備し、登録簿を更新し、同じアセット名と公開種別に結び付いている
+          対象だけへ表示を適用し直し、成功後に古い所有リソースを解放します。準備や表示の再適用に失敗した
+          場合は、古い登録、表示、キャッシュを復元します。
+        </p>
+        <ol class="flow-list" style="--flow-columns: 4" aria-hidden="true">
+          <li class="diagram-node"><strong>新内容を準備</strong><span>読み込み・検証</span></li>
+          <li class="diagram-node diagram-node-primary"><strong>登録簿を確定</strong><span>同じ名前・種類</span></li>
+          <li class="diagram-node diagram-node-accent"><strong>表示を再適用</strong><span>管理対象だけ</span></li>
+          <li class="diagram-node"><strong>旧内容を解放</strong><span>成功した後</span></li>
+        </ol>
+      </figure>
+      <p>
+        画像とテキストはすぐに更新されます。テキストは最新の本文と全スタイルを読み直し、指定された
+        アニメーションを先頭から開始します。再生中の音声は中断せず、次回再生から新しい登録を使います。
+        strict kind を有効にすると、公開種別 <code>external</code>、<code>costume</code>、
+        <code>backdrop</code>、<code>sound</code>、<code>text</code> 間の変更と、external の画像・音声間の
+        変更を拒否します。意図的に種類を変える場合だけ、先に古い登録を削除してください。
+      </p>
+      <aside class="callout callout-warning">
+        <strong>すぐにロールバックできます。</strong>
+        対応するフラグを <code>false</code> に戻して拡張機能を読み直します。既存の意図を回復する診断改善と
+        キャッシュ世代修正は、フラグに関係なく有効です。
+      </aside>
+
+      <h3 id="diagnostic-errors">診断エラーコード</h3>
+      <p>
+        利用者向けエラーは <code>[Asset Manager][CODE]</code> で始まり、操作名、asset/resource/actor 名、
+        修正ヒント、近い候補、元の例外を保持します。登録エラーの Reporter は最新のコードと関連名を返します。
+        同期失敗は同じ内容を二重ログせず throw し、バックグラウンドの再生・アニメーション失敗だけを
+        文脈付きで 1 回 <code>console.error</code> します。
+      </p>
+      <div class="resource-table-wrap">
+        <table>
+          <thead><tr><th>コード</th><th>確認すること</th></tr></thead>
+          <tbody>
+            <tr><td><code>INVALID_ASSET_NAME</code></td><td>空でない有効な登録名を使います。</td></tr>
+            <tr><td><code>ASSET_NOT_REGISTERED</code></td><td>対象名を登録し、提示された近い候補を確認します。</td></tr>
+            <tr><td><code>ASSET_TYPE_MISMATCH</code></td><td>操作が必要とする画像・音声・テキスト種別を使います。</td></tr>
+            <tr><td><code>ASSET_TYPE_CHANGE</code></td><td>意図的な公開種別／external媒体種別変更では先に削除します。</td></tr>
+            <tr><td><code>SPRITE_NOT_FOUND</code></td><td>actor／対象名と描画対象が存在することを確認します。</td></tr>
+            <tr><td><code>SPRITE_NAME_AMBIGUOUS</code></td><td>actor 対象へ一意な名前を付けます。</td></tr>
+            <tr><td><code>SOURCE_ASSET_NOT_FOUND</code></td><td>コスチューム、背景、音の名前を確認します。</td></tr>
+            <tr><td><code>RESOURCE_ID_INVALID</code></td><td>HTTP(S) または対応するプロジェクト内識別子を使います。</td></tr>
+            <tr><td><code>DEPENDENCY_MISSING</code></td><td>必要な TurboWarp 拡張またはランタイム機能を読み込みます。</td></tr>
+            <tr><td><code>STYLE_PROPERTY_INVALID</code></td><td>対応するテキストスタイルのプロパティを使います。</td></tr>
+            <tr><td><code>STYLE_VALUE_INVALID</code></td><td>保存されたテキストスタイル値を修正します。</td></tr>
+            <tr><td><code>PLAYBACK_FAILED</code></td><td>音声データとブラウザーの再生許可を確認します。</td></tr>
+            <tr><td><code>ANIMATION_FAILED</code></td><td>actor、アセット、Animated Text 依存を確認します。</td></tr>
+            <tr><td><code>REPLACEMENT_FAILED</code></td><td>読み込み・表示準備を確認します。古い状態は維持されます。</td></tr>
+          </tbody>
+        </table>
+      </div>
 
       <h3 id="animation-flow">アクターのアニメーションが進む仕組み</h3>
       <p>
@@ -310,6 +378,7 @@
           </thead>
           <tbody>
             <tr><td>素材を登録する</td><td><code>register resource … as asset …</code></td><td>URL はキャッシュを更新し、空欄はキャッシュを読みます。</td></tr>
+            <tr><td>登録失敗を調べる</td><td><code>asset registration error type/label</code></td><td>安定した診断コードと関連名を返します。</td></tr>
             <tr><td>登録を確認する</td><td><code>asset … is loaded</code></td><td>どの種類の登録済みアセットにも使えます。</td></tr>
             <tr><td>スプライト／クローンに表示する</td><td><code>show asset … on this sprite</code></td><td>画像とテキストを表示できます。</td></tr>
             <tr><td>ステージを変える</td><td><code>set stage backdrop to asset …</code></td><td>外部画像、コスチューム、背景に使えます。</td></tr>
@@ -330,7 +399,7 @@
         <div>
           URL が HTTP または HTTPS で、直接開けること、TurboWarp エディターのオリジンを許可する
           CORS ヘッダーが返ることを確認します。Web 取得に失敗すると
-          <code>asset registration error type</code> は <code>external</code> を返します。
+          <code>asset registration error type</code> は <code>REPLACEMENT_FAILED</code> を返します。
         </div>
       </details>
       <details>
@@ -338,7 +407,18 @@
         <div>
           名前を正確に合わせてください。省略形が曖昧になる場合は <code>costume:Hero:running</code> の
           ようにすべて指定します。<code>asset registration error type</code> と
-          <code>asset registration error label</code> で見つからなかった素材を確認できます。
+          <code>asset registration error label</code> で見つからなかった素材を確認できます。コードは
+          <code>SOURCE_ASSET_NOT_FOUND</code>、素材元のスプライト自体がない場合は
+          <code>SPRITE_NOT_FOUND</code> です。
+        </div>
+      </details>
+      <details>
+        <summary>同名での再登録が拒否される</summary>
+        <div>
+          <code>ASSET_TYPE_CHANGE</code> は、strict kind により公開種別または external の画像・音声種別の
+          変更が検出されたことを表します。意図的な変更の場合だけ、既存のメモリー登録を先に削除します。
+          <code>REPLACEMENT_FAILED</code> の場合は新内容の準備・再適用に失敗しており、古い登録と管理中の
+          表示が維持されています。
         </div>
       </details>
       <details>

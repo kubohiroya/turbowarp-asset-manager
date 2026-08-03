@@ -19,11 +19,27 @@ interface TestExternalAsset {
   skinId: number | null;
 }
 
+type TestCacheRecord = Omit<TestExternalAsset, 'kind' | 'skinId'> & {generation?: number};
+
 interface TestExtensionInternals {
   externalAssets: Map<string, TestExternalAsset>;
-  assetRegistry: Map<string, 'external' | 'costume' | 'sound' | 'text'>;
-  fetchAndCache(url: string, name: string): Promise<TestExternalAsset>;
+  assetRegistry: Map<string, 'external' | 'costume' | 'backdrop' | 'sound' | 'text'>;
+  displayedAssets: Map<string, {assetName: string; assetKind: string}>;
+  playingAudio: Map<HTMLAudioElement, string>;
+  fetchExternalAsset(url: string, name: string): Promise<TestExternalAsset>;
+  cacheGet(name: string): Promise<TestCacheRecord | null>;
+  cachePut(record: TestCacheRecord): Promise<void>;
+  restoreCacheIfGeneration(
+    name: string,
+    generation: number,
+    previous: TestCacheRecord | null
+  ): Promise<void>;
 }
+
+const ALL_FEATURES = {
+  ENABLE_LIVE_ASSET_REPLACEMENT: true,
+  ENABLE_STRICT_ASSET_KIND_REPLACEMENT: true
+} as const;
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -368,12 +384,12 @@ describe('project-local assets', () => {
       NAME: 'remote'
     }))).toEqual({ok: true, kind: 'external', projectLocal: false});
     for (const [resourceId, name, type, label] of [
-      ['costume:Missing:walk', 'missing', 'sprite', 'Missing'],
-      ['costume:Hero:missing', 'missing', 'costume', 'missing'],
-      ['backdrop:missing', 'missing', 'backdrop', 'missing'],
-      ['sound:Hero:missing', 'missing', 'sound', 'missing'],
-      ['costume', 'Ambiguous', 'costume', 'Ambiguous'],
-      ['text', 'chapter:title', 'asset-name', 'chapter:title']
+      ['costume:Missing:walk', 'missing', 'SPRITE_NOT_FOUND', 'Missing'],
+      ['costume:Hero:missing', 'missing', 'SOURCE_ASSET_NOT_FOUND', 'missing'],
+      ['backdrop:missing', 'missing', 'SOURCE_ASSET_NOT_FOUND', 'missing'],
+      ['sound:Hero:missing', 'missing', 'SOURCE_ASSET_NOT_FOUND', 'missing'],
+      ['costume', 'Ambiguous', 'SOURCE_ASSET_NOT_FOUND', 'Ambiguous'],
+      ['text', 'chapter:title', 'INVALID_ASSET_NAME', 'chapter:title']
     ]) {
       expect(JSON.parse(extension.validateProjectAssetAddress({
         RESOURCE_ID: resourceId,
@@ -396,32 +412,32 @@ describe('project-local assets', () => {
 
     await expect(extension.registerAsset({RESOURCE_ID: 'costume:Missing:walk', NAME: 'missing'}))
       .rejects.toThrow('Sprite not found');
-    expect(extension.assetErrorType()).toBe('sprite');
+    expect(extension.assetErrorType()).toBe('SPRITE_NOT_FOUND');
     expect(extension.assetErrorLabel()).toBe('Missing');
 
     await expect(extension.registerAsset({RESOURCE_ID: 'costume:Hero:missing', NAME: 'missing'}))
       .rejects.toThrow('Costume not found');
-    expect(extension.assetErrorType()).toBe('costume');
+    expect(extension.assetErrorType()).toBe('SOURCE_ASSET_NOT_FOUND');
     expect(extension.assetErrorLabel()).toBe('missing');
 
     await expect(extension.registerAsset({RESOURCE_ID: 'backdrop:missing', NAME: 'missing'}))
       .rejects.toThrow('Backdrop not found');
-    expect(extension.assetErrorType()).toBe('backdrop');
+    expect(extension.assetErrorType()).toBe('SOURCE_ASSET_NOT_FOUND');
     expect(extension.assetErrorLabel()).toBe('missing');
 
     await expect(extension.registerAsset({RESOURCE_ID: 'sound:Hero:missing', NAME: 'missing'}))
       .rejects.toThrow('Sound not found');
-    expect(extension.assetErrorType()).toBe('sound');
+    expect(extension.assetErrorType()).toBe('SOURCE_ASSET_NOT_FOUND');
     expect(extension.assetErrorLabel()).toBe('missing');
 
     await expect(extension.registerAsset({RESOURCE_ID: 'text', NAME: 'chapter:title'}))
-      .rejects.toThrow('Text asset name must not contain a colon');
-    expect(extension.assetErrorType()).toBe('asset-name');
+      .rejects.toThrow('[INVALID_ASSET_NAME]');
+    expect(extension.assetErrorType()).toBe('INVALID_ASSET_NAME');
     expect(extension.assetErrorLabel()).toBe('chapter:title');
 
     await expect(extension.registerAsset({RESOURCE_ID: 'ftp://example.com/a.png', NAME: 'invalid'}))
       .rejects.toThrow('Unsupported resource scheme');
-    expect(extension.assetErrorType()).toBe('resource-id');
+    expect(extension.assetErrorType()).toBe('RESOURCE_ID_INVALID');
     expect(extension.assetErrorLabel()).toBe('ftp://example.com/a.png');
 
     await extension.registerAsset({RESOURCE_ID: 'costume:Hero:normal', NAME: 'hero'});
@@ -516,7 +532,7 @@ describe('project-local assets', () => {
 
     await expect(extension.registerAsset({RESOURCE_ID: 'costume', NAME: 'Ambiguous'}))
       .rejects.toThrow('Costume shorthand is ambiguous');
-    expect(extension.assetErrorType()).toBe('costume');
+    expect(extension.assetErrorType()).toBe('SOURCE_ASSET_NOT_FOUND');
     expect(extension.assetErrorLabel()).toBe('Ambiguous');
   });
 
@@ -757,12 +773,198 @@ describe('project-local assets', () => {
       .rejects.toThrow('Temporary Variables extension is not loaded');
   });
 
+  it('suggests the closest registered asset for a misspelled name', async () => {
+    const extension = new AssetManagerExtension();
+    await extension.registerAsset({RESOURCE_ID: 'text', NAME: 'Narration'});
+
+    await expect(extension.setThisSpriteSkin({NAME: 'Naration'}, {target: sprite}))
+      .rejects.toThrow(
+        '[Asset Manager][ASSET_NOT_REGISTERED] Cannot show asset "Naration": ' +
+        'no registered asset has that name. Did you mean "Narration"?'
+      );
+  });
+
+  it('keeps legacy replacement behavior while the live flag is off', async () => {
+    const extension = new AssetManagerExtension();
+    const internals = extension as unknown as TestExtensionInternals;
+    await extension.registerAsset({RESOURCE_ID: 'costume:Hero:normal', NAME: 'shared'});
+    await extension.setThisSpriteSkin({NAME: 'shared'}, {target: sprite});
+    updateDrawableSkinId.mockClear();
+
+    await extension.registerAsset({RESOURCE_ID: 'costume:Turtle:walk', NAME: 'shared'});
+
+    expect(updateDrawableSkinId).not.toHaveBeenCalled();
+    expect(internals.displayedAssets.has(sprite.id)).toBe(false);
+    await extension.setThisSpriteSkin({NAME: 'shared'}, {target: sprite});
+    expect(updateDrawableSkinId).toHaveBeenLastCalledWith(7, 43);
+  });
+
+  it('reapplies a same-kind image replacement to every managed display', async () => {
+    const extension = new AssetManagerExtension(ALL_FEATURES);
+    const internals = extension as unknown as TestExtensionInternals;
+    await extension.registerAsset({RESOURCE_ID: 'costume:Hero:normal', NAME: 'shared'});
+    await extension.setThisSpriteSkin({NAME: 'shared'}, {target: sprite});
+    await extension.setStageSkin({NAME: 'shared'});
+    updateDrawableSkinId.mockClear();
+
+    await extension.registerAsset({RESOURCE_ID: 'costume:Turtle:walk', NAME: 'shared'});
+
+    expect(updateDrawableSkinId).toHaveBeenCalledTimes(2);
+    expect(updateDrawableSkinId).toHaveBeenCalledWith(7, 43);
+    expect(updateDrawableSkinId).toHaveBeenCalledWith(0, 43);
+    expect(internals.displayedAssets.get(sprite.id)).toEqual({
+      assetName: 'shared',
+      assetKind: 'costume'
+    });
+    expect(internals.displayedAssets.get(stage.id)).toEqual({
+      assetName: 'shared',
+      assetKind: 'costume'
+    });
+  });
+
+  it('restores the old registration and display when reapply fails', async () => {
+    const extension = new AssetManagerExtension(ALL_FEATURES);
+    await extension.registerAsset({RESOURCE_ID: 'costume:Hero:normal', NAME: 'shared'});
+    await extension.setThisSpriteSkin({NAME: 'shared'}, {target: sprite});
+    updateDrawableSkinId.mockClear();
+    updateDrawableSkinId.mockImplementationOnce(() => {
+      throw new Error('renderer rejected replacement');
+    });
+
+    await expect(extension.registerAsset({
+      RESOURCE_ID: 'costume:Turtle:walk',
+      NAME: 'shared'
+    })).rejects.toThrow('[REPLACEMENT_FAILED]');
+
+    expect(updateDrawableSkinId).toHaveBeenLastCalledWith(7, 42);
+    await extension.setStageSkin({NAME: 'shared'});
+    expect(updateDrawableSkinId).toHaveBeenLastCalledWith(0, 42);
+  });
+
+  it('restarts a displayed text asset from the latest body and style', async () => {
+    const extension = new AssetManagerExtension(ALL_FEATURES);
+    await extension.registerAsset({RESOURCE_ID: 'text:Narration', NAME: 'script'});
+    runtimeVariables.set('text:Narration', 'old body');
+    await extension.setThisSpriteSkin({NAME: 'script'}, {target: sprite});
+    setAnimatedText.mockClear();
+    animateText.mockClear();
+    runtimeVariables.set('text:Replacement', 'new body');
+    runtimeVariables.set('textStyle:script:animation', 'type');
+
+    await extension.registerAsset({RESOURCE_ID: 'text:Replacement', NAME: 'script'});
+
+    expect(animateText).toHaveBeenLastCalledWith(
+      {ANIMATE: 'type', TEXT: 'new body'},
+      expect.objectContaining({target: sprite})
+    );
+    expect(setAnimatedText).not.toHaveBeenCalled();
+  });
+
+  it('keeps the last-started same-name text replacement under concurrency', async () => {
+    const extension = new AssetManagerExtension(ALL_FEATURES);
+    await extension.registerAsset({RESOURCE_ID: 'text:Initial', NAME: 'script'});
+    runtimeVariables.set('text:Initial', 'initial');
+    runtimeVariables.set('text:First', 'first');
+    runtimeVariables.set('text:Second', 'second');
+    await extension.setThisSpriteSkin({NAME: 'script'}, {target: sprite});
+    setAnimatedText.mockClear();
+
+    const first = extension.registerAsset({RESOURCE_ID: 'text:First', NAME: 'script'});
+    const second = extension.registerAsset({RESOURCE_ID: 'text:Second', NAME: 'script'});
+    await Promise.all([first, second]);
+
+    expect(setAnimatedText).toHaveBeenCalledOnce();
+    expect(setAnimatedText).toHaveBeenLastCalledWith(
+      {TEXT: 'second'},
+      expect.objectContaining({target: sprite})
+    );
+  });
+
+  it('rejects public kind changes and allows them after explicit deletion', async () => {
+    const extension = new AssetManagerExtension(ALL_FEATURES);
+    const internals = extension as unknown as TestExtensionInternals;
+    await extension.registerAsset({RESOURCE_ID: 'costume:Hero:normal', NAME: 'shared'});
+
+    await expect(extension.registerAsset({RESOURCE_ID: 'backdrop:forest', NAME: 'shared'}))
+      .rejects.toThrow('[ASSET_TYPE_CHANGE]');
+    expect(internals.assetRegistry.get('shared')).toBe('costume');
+
+    extension.deleteMemoryAsset({NAME: 'shared'});
+    await extension.registerAsset({RESOURCE_ID: 'backdrop:forest', NAME: 'shared'});
+    expect(internals.assetRegistry.get('shared')).toBe('backdrop');
+  });
+
+  it('rejects image-to-audio external replacement without interrupting old state', async () => {
+    const extension = new AssetManagerExtension(ALL_FEATURES);
+    const internals = extension as unknown as TestExtensionInternals;
+    const previousCache: TestCacheRecord = {
+      name: 'shared',
+      url: 'https://example.com/old.png',
+      mimeType: 'image/png',
+      data: new ArrayBuffer(0),
+      cachedAt: 1
+    };
+    internals.externalAssets.set('shared', {
+      ...previousCache,
+      kind: 'external',
+      skinId: null
+    });
+    internals.assetRegistry.set('shared', 'external');
+    vi.spyOn(internals, 'cacheGet').mockResolvedValue(previousCache);
+    vi.spyOn(internals, 'cachePut').mockResolvedValue();
+    const restore = vi.spyOn(internals, 'restoreCacheIfGeneration').mockResolvedValue();
+    vi.spyOn(internals, 'fetchExternalAsset').mockResolvedValue({
+      kind: 'external', name: 'shared', url: 'https://example.com/new.mp3',
+      mimeType: 'audio/mpeg', data: new ArrayBuffer(0), cachedAt: 2, skinId: null
+    });
+
+    await expect(extension.registerAsset({
+      RESOURCE_ID: 'https://example.com/new.mp3',
+      NAME: 'shared'
+    })).rejects.toThrow('[ASSET_TYPE_CHANGE]');
+
+    expect(internals.externalAssets.get('shared')?.url).toBe('https://example.com/old.png');
+    expect(restore).toHaveBeenCalledWith('shared', 1, previousCache);
+  });
+
+  it('keeps active external audio running while replacing future playback data', async () => {
+    const extension = new AssetManagerExtension(ALL_FEATURES);
+    const internals = extension as unknown as TestExtensionInternals;
+    const pause = vi.fn();
+    const activeAudio = {pause} as unknown as HTMLAudioElement;
+    internals.externalAssets.set('voice', {
+      kind: 'external', name: 'voice', url: 'https://example.com/old.mp3',
+      mimeType: 'audio/mpeg', data: new ArrayBuffer(0), cachedAt: 1, skinId: null
+    });
+    internals.assetRegistry.set('voice', 'external');
+    internals.playingAudio.set(activeAudio, 'voice');
+    vi.spyOn(internals, 'cacheGet').mockResolvedValue(null);
+    vi.spyOn(internals, 'cachePut').mockResolvedValue();
+    vi.spyOn(internals, 'restoreCacheIfGeneration').mockResolvedValue();
+    vi.spyOn(internals, 'fetchExternalAsset').mockResolvedValue({
+      kind: 'external', name: 'voice', url: 'https://example.com/new.mp3',
+      mimeType: 'audio/mpeg', data: new ArrayBuffer(0), cachedAt: 2, skinId: null
+    });
+
+    await extension.registerAsset({
+      RESOURCE_ID: 'https://example.com/new.mp3',
+      NAME: 'voice'
+    });
+
+    expect(pause).not.toHaveBeenCalled();
+    expect(internals.playingAudio.get(activeAudio)).toBe('voice');
+    expect(internals.externalAssets.get('voice')?.url).toBe('https://example.com/new.mp3');
+  });
+
   it('keeps the newest external registration when requests finish out of order', async () => {
     const extension = new AssetManagerExtension();
     const internals = extension as unknown as TestExtensionInternals;
     const slow = deferred<TestExternalAsset>();
     const fast = deferred<TestExternalAsset>();
-    vi.spyOn(internals, 'fetchAndCache').mockImplementation((url) =>
+    vi.spyOn(internals, 'cacheGet').mockResolvedValue(null);
+    const cachePut = vi.spyOn(internals, 'cachePut').mockResolvedValue();
+    vi.spyOn(internals, 'restoreCacheIfGeneration').mockResolvedValue();
+    vi.spyOn(internals, 'fetchExternalAsset').mockImplementation((url) =>
       url.includes('slow') ? slow.promise : fast.promise
     );
 
@@ -785,13 +987,21 @@ describe('project-local assets', () => {
     await slowRegistration;
 
     expect(internals.externalAssets.get('shared')?.url).toBe('https://example.com/fast.png');
+    expect(cachePut).toHaveBeenCalledOnce();
+    expect(cachePut).toHaveBeenCalledWith(expect.objectContaining({
+      url: 'https://example.com/fast.png',
+      generation: 2
+    }));
   });
 
   it('does not let an older registration failure overwrite newer Reporter state', async () => {
     const extension = new AssetManagerExtension();
     const internals = extension as unknown as TestExtensionInternals;
     const pending = deferred<TestExternalAsset>();
-    vi.spyOn(internals, 'fetchAndCache').mockReturnValue(pending.promise);
+    vi.spyOn(internals, 'cacheGet').mockResolvedValue(null);
+    vi.spyOn(internals, 'cachePut').mockResolvedValue();
+    vi.spyOn(internals, 'restoreCacheIfGeneration').mockResolvedValue();
+    vi.spyOn(internals, 'fetchExternalAsset').mockReturnValue(pending.promise);
 
     const olderRegistration = extension.registerAsset({
       RESOURCE_ID: 'https://example.com/older.png', NAME: 'older'
@@ -808,7 +1018,10 @@ describe('project-local assets', () => {
     const extension = new AssetManagerExtension();
     const internals = extension as unknown as TestExtensionInternals;
     const pending = deferred<TestExternalAsset>();
-    vi.spyOn(internals, 'fetchAndCache').mockReturnValue(pending.promise);
+    vi.spyOn(internals, 'cacheGet').mockResolvedValue(null);
+    vi.spyOn(internals, 'cachePut').mockResolvedValue();
+    vi.spyOn(internals, 'restoreCacheIfGeneration').mockResolvedValue();
+    vi.spyOn(internals, 'fetchExternalAsset').mockReturnValue(pending.promise);
 
     const registration = extension.registerAsset({
       RESOURCE_ID: 'https://example.com/pending.png', NAME: 'pending'
@@ -827,6 +1040,7 @@ describe('project-local assets', () => {
     const extension = new AssetManagerExtension();
     const internals = extension as unknown as TestExtensionInternals;
     const revokeObjectURL = vi.fn();
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     vi.stubGlobal('URL', {
       createObjectURL: vi.fn(() => 'blob:test-audio'),
       revokeObjectURL
@@ -851,6 +1065,13 @@ describe('project-local assets', () => {
     await extension.playSound({NAME: 'audio'});
     await Promise.resolve();
     expect(revokeObjectURL).toHaveBeenCalledWith('blob:test-audio');
+    expect(consoleError).toHaveBeenCalledOnce();
+    expect(consoleError).toHaveBeenCalledWith(expect.objectContaining({
+      code: 'PLAYBACK_FAILED',
+      operation: 'playSound',
+      assetName: 'audio'
+    }));
+    consoleError.mockRestore();
   });
 
   it('stops every playback of one external asset without stopping another', async () => {
@@ -929,8 +1150,9 @@ describe('project-local assets', () => {
   it('reports explicit type mismatches', async () => {
     const extension = new AssetManagerExtension();
     await extension.registerAsset({RESOURCE_ID: 'backdrop:forest', NAME: 'forest'});
-    await expect(extension.playSound({NAME: 'forest'})).rejects.toThrow('Asset is not audio');
-    expect(() => extension.stopSound({NAME: 'forest'})).toThrow('Asset is not audio');
-    expect(() => extension.stopSound({NAME: 'missing'})).toThrow('Asset is not loaded');
+    await expect(extension.playSound({NAME: 'forest'}))
+      .rejects.toThrow('[ASSET_TYPE_MISMATCH]');
+    expect(() => extension.stopSound({NAME: 'forest'})).toThrow('[ASSET_TYPE_MISMATCH]');
+    expect(() => extension.stopSound({NAME: 'missing'})).toThrow('[ASSET_NOT_REGISTERED]');
   });
 });

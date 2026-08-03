@@ -1,4 +1,11 @@
 import {AssetManagerExtension, normalizeName} from './extension.js';
+import {
+  AssetManagerError,
+  errorMessage,
+  suggestNames,
+  suggestionHint
+} from './asset-manager-error.js';
+import {FEATURE_FLAGS, type AssetManagerFeatureFlags} from './feature-flags.js';
 
 type BlockArgs = Record<string, unknown>;
 type AnimationMode = 'loop' | 'sequence';
@@ -49,8 +56,8 @@ export class AnimatedAssetManagerExtension extends AssetManagerExtension {
   private readonly actorAnimations = new Map<string, AnimationState>();
   private animationGeneration = 0;
 
-  constructor() {
-    super();
+  constructor(featureFlags: AssetManagerFeatureFlags = FEATURE_FLAGS) {
+    super(featureFlags);
     const stopAll = () => this.stopAllActorAnimations();
     const stopTarget = (target?: TurboWarpTarget) => {
       if (target) this.stopTarget(target);
@@ -120,7 +127,9 @@ export class AnimatedAssetManagerExtension extends AssetManagerExtension {
       this.stopActor(actor);
       if (!finalImage || !this.runtime.targets.includes(state.target)) continue;
       pending.push(this.resolveSkin(finalImage.assetName).then((skin) => {
-        if (this.runtime.targets.includes(state.target)) this.applySkinToTarget(state.target, skin);
+        if (this.runtime.targets.includes(state.target)) {
+          this.applyResolvedSkinToTarget(state.target, finalImage.assetName, skin);
+        }
       }));
     }
     await Promise.all(pending);
@@ -140,7 +149,13 @@ export class AnimatedAssetManagerExtension extends AssetManagerExtension {
 
   private requireActorName(value: unknown): string {
     const actor = normalizeName(value);
-    if (!actor) throw new Error('Actor name is empty.');
+    if (!actor) {
+      throw new AssetManagerError('SPRITE_NOT_FOUND', 'Actor name is empty.', {
+        operation: 'resolveActor',
+        actorName: actor,
+        hint: 'Provide the name of a project sprite or actor clone.'
+      });
+    }
     return actor;
   }
 
@@ -149,14 +164,35 @@ export class AnimatedAssetManagerExtension extends AssetManagerExtension {
       (target) => !target.isStage && target.sprite?.name === actor
     );
     if (matches.length > 1) {
-      throw new Error(`Actor name is not unique: ${actor}`);
+      throw new AssetManagerError(
+        'SPRITE_NAME_AMBIGUOUS',
+        `Actor name is not unique: ${actor}.`,
+        {
+          operation: 'resolveActor',
+          actorName: actor,
+          hint: 'Give every actor target a unique name.'
+        }
+      );
     }
     const invokingTarget = util?.target;
     if (invokingTarget && !invokingTarget.isStage && invokingTarget.sprite?.name === actor) {
       return invokingTarget;
     }
     const target = matches[0] ?? this.findTargetByName(actor);
-    if (!target) throw new Error(`Actor not found: ${actor}`);
+    if (!target) {
+      const candidates = suggestNames(
+        actor,
+        this.runtime.targets.flatMap((candidate) =>
+          !candidate.isStage && candidate.sprite?.name ? [candidate.sprite.name] : []
+        )
+      );
+      throw new AssetManagerError('SPRITE_NOT_FOUND', `Actor not found: ${actor}.`, {
+        operation: 'resolveActor',
+        actorName: actor,
+        candidates,
+        hint: suggestionHint(candidates)
+      });
+    }
     return target;
   }
 
@@ -225,12 +261,17 @@ export class AnimatedAssetManagerExtension extends AssetManagerExtension {
 
   private createAnimationAction(assetName: string): AnimationAction {
     if (!this.isLoaded({NAME: assetName})) {
-      throw new Error(`Asset is not registered: ${assetName}`);
+      throw this.assetNotRegistered('animate', assetName);
     }
     const mimeType = this.getAssetMimeType({NAME: assetName});
     if (mimeType.startsWith('image/')) return {assetName, kind: 'image'};
     if (mimeType.startsWith('audio/')) return {assetName, kind: 'audio'};
-    throw new Error(`Asset is neither image nor audio: ${assetName} (${mimeType || 'unknown MIME type'})`);
+    throw this.assetTypeMismatch(
+      'animate',
+      assetName,
+      'image or audio',
+      mimeType || 'unknown MIME type'
+    );
   }
 
   private async showCurrentStep(actor: string, state: AnimationState): Promise<void> {
@@ -271,17 +312,24 @@ export class AnimatedAssetManagerExtension extends AssetManagerExtension {
         if (action.kind === 'audio') {
           soundStarts.push(this.playResolvedSound(action.assetName, false));
         } else if (index === selectedImageIndex && selectedSkin) {
-          this.applySkinToTarget(target, selectedSkin);
+          this.applyResolvedSkinToTarget(target, action.assetName, selectedSkin);
         }
       }
       await Promise.all(soundStarts);
     } catch (error) {
       this.stopActor(actor);
       const assetNames = batch.actions.map((action) => action.assetName).join(', ');
-      console.error(
-        `Failed to run actor "${target.sprite?.name ?? target.id}" actions "${assetNames}".`,
-        error
-      );
+      console.error(new AssetManagerError(
+        'ANIMATION_FAILED',
+        `Failed to run actor "${target.sprite?.name ?? target.id}" actions ` +
+          `"${assetNames}": ${errorMessage(error)}`,
+        {
+          operation: 'animateActor',
+          actorName: target.sprite?.name ?? target.id,
+          hint: 'Check that every animation asset is still registered and usable.',
+          cause: error
+        }
+      ));
       return;
     }
 
