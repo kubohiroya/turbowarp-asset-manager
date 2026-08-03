@@ -1,0 +1,376 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="TurboWarp Asset Manager 拡張の図解入り利用者ガイド。">
+  <title>TurboWarp Asset Manager 利用ガイド</title>
+  <link rel="canonical" href="https://kubohiroya.github.io/turbowarp-asset-manager/ja/">
+  <link rel="alternate" hreflang="en" href="https://kubohiroya.github.io/turbowarp-asset-manager/">
+  <link rel="alternate" hreflang="ja" href="https://kubohiroya.github.io/turbowarp-asset-manager/ja/">
+  <link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">ガイド本文へ移動</a>
+  <header class="site-header">
+    <div class="header-inner">
+      <a class="brand" href="./" aria-label="Asset Manager 利用ガイドのトップ">
+        <span class="brand-mark" aria-hidden="true">A</span>
+        <span class="brand-text">Asset Manager</span>
+      </a>
+      <nav class="primary-nav" aria-label="ガイド内メニュー">
+        <a href="#quick-start">はじめに</a>
+        <a href="#how-it-works">仕組み</a>
+        <a href="#recipes">使用例</a>
+        <a href="#reference">ブロック一覧</a>
+      </nav>
+      <a class="github-link" href="https://github.com/kubohiroya/turbowarp-asset-manager" aria-label="GitHub でソースコードとリリースを見る">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path fill="currentColor" d="M12 .7A11.5 11.5 0 0 0 8.4 23c.6.1.8-.2.8-.5v-2c-3.3.7-4-1.4-4-1.4-.5-1.4-1.3-1.7-1.3-1.7-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1.1 1.8 2.8 1.3 3.5 1 .1-.8.4-1.3.8-1.6-2.7-.3-5.5-1.3-5.5-5.7 0-1.3.5-2.3 1.2-3.1-.1-.3-.5-1.6.1-3.1 0 0 1-.3 3.2 1.2a11 11 0 0 1 5.8 0c2.2-1.5 3.2-1.2 3.2-1.2.6 1.5.2 2.8.1 3.1.8.8 1.2 1.8 1.2 3.1 0 4.4-2.8 5.4-5.5 5.7.4.4.8 1.1.8 2.2v3.2c0 .3.2.6.8.5A11.5 11.5 0 0 0 12 .7Z"/>
+        </svg>
+        <span class="github-label">GitHub</span>
+      </a>
+      <nav class="language-switch" aria-label="言語">
+        <a href="../" lang="en">EN</a>
+        <a href="./" lang="ja" aria-current="page">日本語</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main" class="page-shell">
+    <section class="hero" aria-labelledby="hero-title">
+      <div>
+        <p class="eyebrow">TurboWarp カスタム拡張機能</p>
+        <h1 id="hero-title">すべての素材を、ひとつの名前で扱う。</h1>
+        <p class="hero-copy">
+          Asset Manager は、Web 上の画像・音声、プロジェクト内のコスチューム・背景・音、
+          そして動的なテキストを登録します。表示、再生、アニメーション、キャッシュを、
+          共通のブロックとアセット名で操作できます。
+        </p>
+        <div class="hero-actions">
+          <a class="button button-primary" href="#quick-start">3 ステップで始める</a>
+          <a class="button" href="#how-it-works">図解を見る</a>
+        </div>
+      </div>
+      <div class="hero-map" aria-label="リソースを名前付きアセットに登録し、表示または再生する流れ">
+        <div class="mini-flow">
+          <div class="mini-node">URL・プロジェクト内素材</div>
+          <div class="mini-arrow" aria-hidden="true">→</div>
+          <div class="mini-node mini-node-strong">名前付きアセット</div>
+        </div>
+        <div class="mini-flow">
+          <div class="mini-node">名前付きアセット</div>
+          <div class="mini-arrow" aria-hidden="true">→</div>
+          <div class="mini-node">スプライト・ステージ・音</div>
+        </div>
+      </div>
+    </section>
+
+    <section id="quick-start" class="section" aria-labelledby="quick-start-title">
+      <p class="eyebrow">クイックスタート</p>
+      <h2 id="quick-start-title">読み込む、登録する、使う。</h2>
+      <p class="section-intro">
+        Asset Manager は TurboWarp のレンダラー、音声機能、プロジェクト内リソースを利用するため、
+        サンドボックスを無効にして実行する必要があります。
+      </p>
+
+      <ol class="steps">
+        <li>
+          <h3>拡張機能を読み込む</h3>
+          <p>TurboWarp で <strong>拡張機能を追加 → カスタム拡張機能</strong>を選び、次の URL を貼り付けます。</p>
+          <pre><code>https://cdn.jsdelivr.net/npm/@kubohiroya/turbowarp-asset-manager@0.3.0/dist/asset-manager.js</code></pre>
+          <p><strong>サンドボックスなしで実行</strong>を有効にします。</p>
+        </li>
+        <li>
+          <h3>リソースを登録する</h3>
+          <p>プロジェクトのほかの場所で使う短い名前を付けます。</p>
+          <pre><code>リソース [https://example.com/hero.png] を
+  アセット [Hero] として登録する</code></pre>
+        </li>
+        <li>
+          <h3>名前でアセットを使う</h3>
+          <p>種類が合う表示・音声・アニメーションの各ブロックで同じ名前を使えます。</p>
+          <pre><code>このスプライトにアセット [Hero] を表示する</code></pre>
+        </li>
+      </ol>
+
+      <aside class="callout callout-warning">
+        <strong>外部ファイルはブラウザーから取得可能である必要があります。</strong>
+        画像・音声を置くサーバーでは、オリジンをまたぐ取得（CORS）を許可してください。
+        TurboWarp を HTTPS で開く場合は素材にも HTTPS を使います。
+      </aside>
+    </section>
+
+    <section id="how-it-works" class="section" aria-labelledby="how-title">
+      <p class="eyebrow">動作の仕組み</p>
+      <h2 id="how-title">ひとつの登録簿が、素材と出力先をつなぎます。</h2>
+      <p class="section-intro">
+        登録時に、選んだ名前と素材の種類・場所を記録します。その後のブロックは名前から種類を調べ、
+        画像、音声、テキストのうち適切な処理へ自動的に振り分けます。
+      </p>
+
+      <figure class="diagram" aria-describedby="registry-description">
+        <figcaption>リソース識別子から表示・再生までの流れ</figcaption>
+        <p id="registry-description" class="sr-only">
+          Web URL、プロジェクト内リソース、動的テキストを登録ブロックへ渡します。アセット登録簿が名前と
+          種類を記憶し、表示・再生・アニメーションのブロックがスプライト、ステージ、音声出力、
+          Animated Text のいずれかへ振り分けます。
+        </p>
+        <div class="hub-flow" aria-hidden="true">
+          <div class="node-stack">
+            <div class="diagram-node"><strong>Web URL</strong><span>PNG、SVG、MP3 など</span></div>
+            <div class="diagram-node"><strong>プロジェクト内素材</strong><span>コスチューム、背景、音</span></div>
+            <div class="diagram-node"><strong>動的テキスト</strong><span>本文とスタイル</span></div>
+          </div>
+          <div class="flow-arrow">→</div>
+          <div class="diagram-node diagram-node-primary">
+            <strong>アセットとして登録</strong>
+            <span>名前と種類を記憶</span>
+          </div>
+          <div class="flow-arrow">→</div>
+          <div class="node-stack">
+            <div class="diagram-node diagram-node-accent"><strong>スプライト／ステージ</strong><span>画像・テキスト</span></div>
+            <div class="diagram-node diagram-node-accent"><strong>スピーカー</strong><span>音声</span></div>
+            <div class="diagram-node diagram-node-accent"><strong>アクターの時間軸</strong><span>複数種類を混在</span></div>
+          </div>
+        </div>
+      </figure>
+
+      <h3>どのリソース識別子を使えばよいですか？</h3>
+      <div class="resource-table-wrap">
+        <table>
+          <thead>
+            <tr><th>素材</th><th>リソース識別子</th><th>登録されるもの</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Web 上の画像・音声</td>
+              <td><code>https://example.com/asset.png</code></td>
+              <td>ダウンロードしたデータをメモリーと IndexedDB に保存</td>
+            </tr>
+            <tr>
+              <td>スプライトのコスチューム</td>
+              <td><code>costume:Sprite1:costume1</code></td>
+              <td>プロジェクト内の既存コスチュームへの参照</td>
+            </tr>
+            <tr>
+              <td>ステージの背景</td>
+              <td><code>backdrop:backdrop1</code></td>
+              <td>プロジェクト内の既存背景への参照</td>
+            </tr>
+            <tr>
+              <td>スプライト／ステージの音</td>
+              <td><code>sound:Sprite1:sound1</code> または <code>sound:@stage:name</code></td>
+              <td>プロジェクト内の既存の音への参照</td>
+            </tr>
+            <tr>
+              <td>動的テキスト</td>
+              <td><code>text:Narration</code></td>
+              <td>実行時変数名。表示時に最新の値を読み取る</td>
+            </tr>
+            <tr>
+              <td>以前キャッシュした Web 素材</td>
+              <td><code>RESOURCE_ID</code> を空欄にする</td>
+              <td>アセット名に対応する IndexedDB のデータ</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3 id="cache-flow">Web 素材とキャッシュの仕組み</h3>
+      <p>
+        URL を指定すると必ず新しいデータを取得し、同名のキャッシュを更新します。
+        リソース識別子を空欄にすると通信せず、同じ名前のデータを IndexedDB から読み込みます。
+      </p>
+      <figure class="diagram" aria-describedby="cache-description">
+        <figcaption>メモリー上の登録簿を用意する 2 つの経路</figcaption>
+        <p id="cache-description" class="sr-only">
+          URL を指定した場合は、リソースの取得、メディア種別の正規化、同名の IndexedDB エントリーへの
+          保存を行い、メモリーへ登録します。空のリソース識別子を指定した場合は、通信せず同名の
+          IndexedDB エントリーを読み、メモリーへ登録します。
+        </p>
+        <div aria-hidden="true">
+          <div class="lane">
+            <span class="lane-label">URL を指定 — 更新</span>
+            <ol class="flow-list" style="--flow-columns: 4">
+              <li class="diagram-node"><strong>URL を取得</strong><span>ブラウザーの通信</span></li>
+              <li class="diagram-node"><strong>種類を判定</strong><span>MIME と拡張子</span></li>
+              <li class="diagram-node diagram-node-primary"><strong>キャッシュへ保存</strong><span>名前 → データ</span></li>
+              <li class="diagram-node diagram-node-accent"><strong>メモリーで利用可能</strong><span>すぐブロックで使える</span></li>
+            </ol>
+          </div>
+          <div class="lane">
+            <span class="lane-label">RESOURCE_ID が空 — 再利用</span>
+            <ol class="flow-list" style="--flow-columns: 3">
+              <li class="diagram-node"><strong>名前を検索</strong><span>IndexedDB</span></li>
+              <li class="diagram-node"><strong>データを読み出す</strong><span>通信なし</span></li>
+              <li class="diagram-node diagram-node-accent"><strong>メモリーで利用可能</strong><span>同じアセット名</span></li>
+            </ol>
+          </div>
+        </div>
+      </figure>
+
+      <h3 id="animation-flow">アクターのアニメーションが進む仕組み</h3>
+      <p>
+        <code>ASSETS</code> と <code>DURATIONS</code> が時間軸を表します。画像ならアクターの見た目を変え、
+        音声なら再生を開始します。長さが 0 のとき、次の素材も同じ時点で開始します。
+      </p>
+      <figure class="diagram" aria-describedby="animation-description">
+        <figcaption>例：<code>ASSETS = NoonSkin,Bell,NextSkin</code>、<code>DURATIONS = 0,1,2</code></figcaption>
+        <p id="animation-description" class="sr-only">
+          開始時に NoonSkin を表示します。区切りの長さが 0 なので Bell も同時に再生します。
+          1 秒後に NextSkin を表示します。ループならさらに 2 秒待って最初へ戻ります。
+        </p>
+        <ol class="timeline" aria-hidden="true">
+          <li><strong>NoonSkin</strong><span>0 秒：画像</span></li>
+          <li class="audio"><strong>Bell</strong><span>0 秒：音声</span></li>
+          <li><strong>待つ</strong><span>1 秒</span></li>
+          <li><strong>NextSkin</strong><span>1 秒：画像</span></li>
+          <li><strong>ループ待機</strong><span>2 秒</span></li>
+        </ol>
+        <div class="timeline-legend" aria-hidden="true">
+          <span class="legend-key">画像イベント</span>
+          <span class="legend-key legend-key-audio">音声イベント</span>
+        </div>
+      </figure>
+
+      <h3 id="text-flow">動的テキストがスプライトに届く仕組み</h3>
+      <p>
+        テキストアセットでは、サンドボックスなしの補助拡張機能を 2 つ使います。
+        Temporary Variables が本文とスタイルを保持し、Animated Text がスプライトやクローンに描画します。
+      </p>
+      <figure class="diagram" aria-describedby="text-description">
+        <figcaption>表示のたびに最新の本文とスタイルを読み直す</figcaption>
+        <p id="text-description" class="sr-only">
+          Narration テキストを登録し、本文と必要なスタイルを設定します。表示ブロックが実行されると、
+          Asset Manager は Temporary Variables の最新値を読み、すべてのスタイルを適用し直して、
+          Animated Text に対象スプライトへの表示を依頼します。表示中の本文を更新すると、そのアセットを
+          表示中のすべての対象が更新されます。
+        </p>
+        <ol class="flow-list" style="--flow-columns: 4" aria-hidden="true">
+          <li class="diagram-node"><strong>テキストを登録</strong><span>text:Narration</span></li>
+          <li class="diagram-node"><strong>本文・スタイルを設定</strong><span>Temporary Variables</span></li>
+          <li class="diagram-node diagram-node-primary"><strong>アセットを表示</strong><span>最新状態を読み取る</span></li>
+          <li class="diagram-node diagram-node-accent"><strong>Animated Text</strong><span>対象へ描画</span></li>
+        </ol>
+      </figure>
+    </section>
+
+    <section id="recipes" class="section" aria-labelledby="recipes-title">
+      <p class="eyebrow">実践的な使用例</p>
+      <h2 id="recipes-title">よく使う操作</h2>
+      <div class="card-grid">
+        <article class="card">
+          <h3>Web の画像を表示する</h3>
+          <pre><code>リソース [https://example.com/card.png] を
+  アセット [Card] として登録する
+このスプライトにアセット [Card] を表示する</code></pre>
+          <p>ダウンロードした画像は、ブラウザーのキャッシュにも <code>Card</code> という名前で保存されます。</p>
+        </article>
+        <article class="card">
+          <h3>プロジェクト内のコスチュームを使う</h3>
+          <pre><code>リソース [costume:Hero:running] を
+  アセット [HeroRunning] として登録する
+このスプライトにアセット [HeroRunning] を表示する</code></pre>
+          <p>画像は複製されず、プロジェクトが持つ既存コスチュームを参照します。</p>
+        </article>
+        <article class="card">
+          <h3>音を再生する</h3>
+          <pre><code>リソース [sound:@stage:opening] を
+  アセット [Opening] として登録する
+アセット [Opening] を終わるまで再生する</code></pre>
+          <p>再生直後に次の処理へ進めたい場合は、待たない再生ブロックを使います。</p>
+        </article>
+        <article class="card">
+          <h3>スタイル付き動的テキストを表示する</h3>
+          <pre><code>リソース [text:Narration] を
+  アセット [Narration] として登録する
+テキストアセット [Narration] を [むかしむかし…] にする
+[Narration] のスタイル [animation] を [typing] にする
+このスプライトにアセット [Narration] を表示する</code></pre>
+          <p>テキストを表示する前に Temporary Variables と Animated Text を読み込んでください。</p>
+        </article>
+      </div>
+
+      <aside class="callout">
+        <strong>メモリーとキャッシュは別々です。</strong>
+        メモリーから削除すると現在の登録は解除されますが、IndexedDB のデータは残ります。
+        保存済みの Web データも消すときは、キャッシュ削除ブロックを使います。
+      </aside>
+    </section>
+
+    <section id="reference" class="section" aria-labelledby="reference-title">
+      <p class="eyebrow">ブロックガイド</p>
+      <h2 id="reference-title">やりたいことからブロックを選ぶ</h2>
+      <div class="resource-table-wrap">
+        <table>
+          <thead>
+            <tr><th>やりたいこと</th><th>使うブロック</th><th>重要な動作</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>素材を登録する</td><td><code>register resource … as asset …</code></td><td>URL はキャッシュを更新し、空欄はキャッシュを読みます。</td></tr>
+            <tr><td>登録を確認する</td><td><code>asset … is loaded</code></td><td>どの種類の登録済みアセットにも使えます。</td></tr>
+            <tr><td>スプライト／クローンに表示する</td><td><code>show asset … on this sprite</code></td><td>画像とテキストを表示できます。</td></tr>
+            <tr><td>ステージを変える</td><td><code>set stage backdrop to asset …</code></td><td>外部画像、コスチューム、背景に使えます。</td></tr>
+            <tr><td>音声を再生する</td><td><code>play asset … as sound</code></td><td>スクリプトを待たせるときは「終わるまで」を使います。</td></tr>
+            <tr><td>アクターを動かす</td><td><code>loop actor …</code> / <code>play actor … once</code></td><td>画像と音声をひとつのリストに混在できます。</td></tr>
+            <tr><td>動的テキストを更新する</td><td><code>set text asset …</code></td><td>そのテキストを表示中の対象も更新されます。</td></tr>
+            <tr><td>登録を解放する</td><td><code>delete asset … from memory</code></td><td>プロジェクト所有のコスチュームや音は削除しません。</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="troubleshooting" class="section" aria-labelledby="troubleshooting-title">
+      <p class="eyebrow">トラブルシューティング</p>
+      <h2 id="troubleshooting-title">表示・再生されないとき</h2>
+      <details open>
+        <summary>外部 URL の読み込みに失敗する</summary>
+        <div>
+          URL が HTTP または HTTPS で、直接開けること、TurboWarp エディターのオリジンを許可する
+          CORS ヘッダーが返ることを確認します。Web 取得に失敗すると
+          <code>asset registration error type</code> は <code>external</code> を返します。
+        </div>
+      </details>
+      <details>
+        <summary>コスチューム、背景、音が見つからない</summary>
+        <div>
+          名前を正確に合わせてください。省略形が曖昧になる場合は <code>costume:Hero:running</code> の
+          ようにすべて指定します。<code>asset registration error type</code> と
+          <code>asset registration error label</code> で見つからなかった素材を確認できます。
+        </div>
+      </details>
+      <details>
+        <summary>テキストが空になる／依存拡張機能のエラーが出る</summary>
+        <div>
+          Temporary Variables と Animated Text の両方をサンドボックスなしで読み込み、表示前に本文を
+          設定します。登録済みでも本文が未設定のテキストアセットは、仕様どおり空文字列を表示します。
+        </div>
+      </details>
+      <details>
+        <summary>アニメーションの長さリストが拒否される</summary>
+        <div>
+          ループではアセットと同じ個数、1 回再生ではアセットより 1 個少ない長さを指定します。
+          すべて 0 以上である必要があり、ループには 1 個以上の正の長さが必要です。
+        </div>
+      </details>
+      <details>
+        <summary>キャッシュしたアセットを復元できない</summary>
+        <div>
+          キャッシュは登録時と完全に同じ名前で検索され、現在のブラウザーの IndexedDB に保存されます。
+          ブラウザーデータの消去、プライベートセッション、別のアプリプロファイルでは以前のデータを
+          利用できないことがあります。
+        </div>
+      </details>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <p>TurboWarp Asset Manager · MPL-2.0</p>
+      <p><a href="https://github.com/kubohiroya/turbowarp-asset-manager/issues">問題を報告</a></p>
+    </div>
+  </footer>
+</body>
+</html>
