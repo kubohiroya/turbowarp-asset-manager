@@ -182,21 +182,24 @@
       <p>
         Supplying a URL always fetches fresh data and refreshes the named cache entry. Supplying an
         empty resource identifier skips the network and reloads that same name from IndexedDB.
+        The per-name generation is checked before a fetched response may update IndexedDB or the
+        in-memory registry, so an older request that finishes late cannot overwrite the latest one.
       </p>
       <figure class="diagram" aria-describedby="cache-description">
         <figcaption>Two ways to fill the in-memory registry</figcaption>
         <p id="cache-description" class="sr-only">
-          With a URL, Asset Manager fetches the resource, normalizes its media type, writes the
-          named entry to IndexedDB, and registers it in memory. With an empty resource identifier,
-          Asset Manager reads the named entry from IndexedDB and registers it in memory without a
-          network request.
+          With a URL, Asset Manager fetches the resource, normalizes its media type, verifies that
+          the request is still the latest generation, writes the named entry to IndexedDB, and
+          registers it in memory. With an empty resource identifier, Asset Manager reads the named
+          entry from IndexedDB and registers it in memory without a network request.
         </p>
         <div aria-hidden="true">
           <div class="lane">
             <span class="lane-label">URL supplied — refresh</span>
-            <ol class="flow-list" style="--flow-columns: 4">
+            <ol class="flow-list" style="--flow-columns: 5">
               <li class="diagram-node"><strong>Fetch URL</strong><span>browser request</span></li>
               <li class="diagram-node"><strong>Detect type</strong><span>MIME + file extension</span></li>
+              <li class="diagram-node"><strong>Check generation</strong><span>latest request wins</span></li>
               <li class="diagram-node diagram-node-primary"><strong>Write cache</strong><span>name → bytes</span></li>
               <li class="diagram-node diagram-node-accent"><strong>Ready in memory</strong><span>use blocks now</span></li>
             </ol>
@@ -211,6 +214,80 @@
           </div>
         </div>
       </figure>
+
+      <h3 id="replacement-flow">How safe same-name replacement works</h3>
+      <p>
+        Replacement rollout is controlled by two startup-fixed flags. Both default to
+        <code>false</code>. Define them before loading the extension bundle when a project is ready
+        to opt in:
+      </p>
+      <pre><code>globalThis.__TW_ASSET_MANAGER_FEATURE_FLAGS__ = {
+  ENABLE_LIVE_ASSET_REPLACEMENT: true,
+  ENABLE_STRICT_ASSET_KIND_REPLACEMENT: true
+};</code></pre>
+      <figure class="diagram" aria-describedby="replacement-description">
+        <figcaption>A successful live replacement commits only after the new content is ready</figcaption>
+        <p id="replacement-description" class="sr-only">
+          Asset Manager first prepares the new content, then updates the registry, reapplies it to
+          only the targets still bound to that asset name and public kind, and finally releases the
+          old owned resource. If preparation or display reapply fails, the old registration, display,
+          and cache are restored.
+        </p>
+        <ol class="flow-list" style="--flow-columns: 4" aria-hidden="true">
+          <li class="diagram-node"><strong>Prepare new content</strong><span>load + validate</span></li>
+          <li class="diagram-node diagram-node-primary"><strong>Commit registry</strong><span>same name + kind</span></li>
+          <li class="diagram-node diagram-node-accent"><strong>Reapply displays</strong><span>bound targets only</span></li>
+          <li class="diagram-node"><strong>Release old resource</strong><span>after success</span></li>
+        </ol>
+      </figure>
+      <p>
+        Images and text refresh immediately. Text rereads its latest body and full style, and starts
+        a configured animation again from the beginning. Audio already playing continues; the next
+        playback uses the replacement. Same-name commits run serially, so an active commit finishes
+        atomically and the last-started successful registration remains afterward. A newer invalid
+        attempt does not cancel an earlier valid one. For images, Asset Manager also verifies the
+        renderer skin it applied before refreshing a target. A later costume or renderer change
+        releases that stale display binding instead of being overwritten. With strict-kind
+        replacement enabled, the public kinds
+        <code>external</code>, <code>costume</code>, <code>backdrop</code>, <code>sound</code>, and
+        <code>text</code> cannot replace one another. External image/audio changes are rejected too.
+        Delete the old registration first when a kind change is intentional.
+      </p>
+      <aside class="callout callout-warning">
+        <strong>Rollback is immediate.</strong>
+        Set either feature flag back to <code>false</code> and reload the extension. Diagnostic and
+        cache-generation fixes remain active because they restore existing intended behavior.
+      </aside>
+
+      <h3 id="diagnostic-errors">Diagnostic error codes</h3>
+      <p>
+        User-facing errors begin with <code>[Asset Manager][CODE]</code> and retain the operation,
+        relevant asset/resource/actor names, a correction hint, nearby candidates, and the original
+        cause. The registration error reporters expose the latest code and its most relevant label.
+        Synchronous failures are thrown without duplicate logging; background playback and animation
+        failures are sent to <code>console.error</code> once.
+      </p>
+      <div class="resource-table-wrap">
+        <table>
+          <thead><tr><th>Code</th><th>What to check</th></tr></thead>
+          <tbody>
+            <tr><td><code>INVALID_ASSET_NAME</code></td><td>Use a non-empty valid registration name.</td></tr>
+            <tr><td><code>ASSET_NOT_REGISTERED</code></td><td>Register the requested name; inspect suggested nearby names.</td></tr>
+            <tr><td><code>ASSET_TYPE_MISMATCH</code></td><td>Use the image, audio, or text kind required by the operation.</td></tr>
+            <tr><td><code>ASSET_TYPE_CHANGE</code></td><td>Delete first before intentionally changing a public or external media kind.</td></tr>
+            <tr><td><code>SPRITE_NOT_FOUND</code></td><td>Check the actor or target name and that its drawable still exists.</td></tr>
+            <tr><td><code>SPRITE_NAME_AMBIGUOUS</code></td><td>Give actor targets unique names.</td></tr>
+            <tr><td><code>SOURCE_ASSET_NOT_FOUND</code></td><td>Check the costume, backdrop, or sound name.</td></tr>
+            <tr><td><code>RESOURCE_ID_INVALID</code></td><td>Use HTTP(S) or a supported project-resource identifier.</td></tr>
+            <tr><td><code>DEPENDENCY_MISSING</code></td><td>Load the required TurboWarp extension or runtime service.</td></tr>
+            <tr><td><code>STYLE_PROPERTY_INVALID</code></td><td>Use a supported text style property.</td></tr>
+            <tr><td><code>STYLE_VALUE_INVALID</code></td><td>Correct the stored text style value.</td></tr>
+            <tr><td><code>PLAYBACK_FAILED</code></td><td>Check audio data and browser playback permission.</td></tr>
+            <tr><td><code>ANIMATION_FAILED</code></td><td>Check the actor, assets, and Animated Text dependency.</td></tr>
+            <tr><td><code>REPLACEMENT_FAILED</code></td><td>Check loading or display preparation; the old state is retained.</td></tr>
+          </tbody>
+        </table>
+      </div>
 
       <h3 id="animation-flow">How an actor animation is scheduled</h3>
       <p>
@@ -312,6 +389,7 @@ show asset [Narration] on this sprite</code></pre>
           </thead>
           <tbody>
             <tr><td>Register any source</td><td><code>register resource … as asset …</code></td><td>A URL refreshes the cache; an empty ID reads it.</td></tr>
+            <tr><td>Inspect registration failure</td><td><code>asset registration error type/label</code></td><td>Returns a stable diagnostic code and relevant name.</td></tr>
             <tr><td>Check registration</td><td><code>asset … is loaded</code></td><td>True for every registered asset type.</td></tr>
             <tr><td>Show on a sprite or clone</td><td><code>show asset … on this sprite</code></td><td>Accepts image and text assets.</td></tr>
             <tr><td>Change the stage</td><td><code>set stage backdrop to asset …</code></td><td>Accepts external images, costumes, and backdrops.</td></tr>
@@ -332,7 +410,7 @@ show asset [Narration] on this sprite</code></pre>
         <div>
           Confirm the URL uses HTTP or HTTPS, opens directly, and sends a CORS header that permits
           the TurboWarp editor's origin. The <code>asset registration error type</code> reporter
-          returns <code>external</code> for a failed web request.
+          returns <code>REPLACEMENT_FAILED</code> for a failed web request.
         </div>
       </details>
       <details>
@@ -341,6 +419,17 @@ show asset [Narration] on this sprite</code></pre>
           Match names exactly. Use the full form such as <code>costume:Hero:running</code> when a
           shorthand could be ambiguous. Check <code>asset registration error type</code> and
           <code>asset registration error label</code> to identify the missing project resource.
+          The code is <code>SOURCE_ASSET_NOT_FOUND</code>, or <code>SPRITE_NOT_FOUND</code> when the
+          source sprite itself is missing.
+        </div>
+      </details>
+      <details>
+        <summary>A same-name registration is rejected</summary>
+        <div>
+          <code>ASSET_TYPE_CHANGE</code> means strict replacement found a different public kind, or
+          an external image/audio change. Delete the existing in-memory registration first only when
+          that change is intentional. <code>REPLACEMENT_FAILED</code> means the old registration and
+          managed display were retained because the new content could not be prepared or reapplied.
         </div>
       </details>
       <details>

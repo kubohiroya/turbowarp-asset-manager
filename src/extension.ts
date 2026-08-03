@@ -1,5 +1,15 @@
 import definitions from './block-definitions.json' with {type: 'json'};
 import {
+  AssetManagerError,
+  errorMessage,
+  suggestNames,
+  suggestionHint
+} from './asset-manager-error.js';
+import {
+  FEATURE_FLAGS,
+  type AssetManagerFeatureFlags
+} from './feature-flags.js';
+import {
   DEFAULT_OUTLINE_COLOR,
   DEFAULT_OUTLINE_WIDTH,
   normalizeTextStyleProperty,
@@ -20,7 +30,8 @@ const STAGE_RESOURCE_NAME = '@stage';
 
 type BlockArgs = Record<string, unknown>;
 type BlockTypeName = 'COMMAND' | 'BOOLEAN' | 'REPORTER';
-type AssetKind = 'external' | 'costume' | 'sound' | 'text';
+export type AssetKind = 'external' | 'costume' | 'backdrop' | 'sound' | 'text';
+type ExternalMediaKind = 'image' | 'audio' | 'unknown';
 
 interface DefinitionArgument {
   type: 'STRING' | 'NUMBER';
@@ -42,6 +53,7 @@ interface AssetRecord {
   mimeType: string;
   data: ArrayBuffer;
   cachedAt: number;
+  generation?: number;
 }
 
 interface ExternalMemoryAsset extends AssetRecord {
@@ -50,7 +62,7 @@ interface ExternalMemoryAsset extends AssetRecord {
 }
 
 interface CostumeAssetReference {
-  kind: 'costume';
+  kind: 'costume' | 'backdrop';
   name: string;
   targetId: string;
   targetName: string;
@@ -78,6 +90,23 @@ interface TextAssetReference {
 interface ResolvedSkin {
   skinId: number;
   sourceSize: number | null;
+}
+
+type RegisteredAsset =
+  | ExternalMemoryAsset
+  | CostumeAssetReference
+  | SoundAssetReference
+  | TextAssetReference;
+
+interface DisplayBinding {
+  assetName: string;
+  assetKind: 'external' | 'costume' | 'backdrop' | 'text';
+  skinId: number | null;
+}
+
+interface RegistrationToken {
+  version: number;
+  cancellationVersion: number;
 }
 
 const blockDefinitions = definitions.blocks as DefinitionBlock[];
@@ -191,17 +220,6 @@ export type ProjectAssetAddressValidation =
       message: string;
     };
 
-class AssetRegistrationError extends Error {
-  constructor(
-    readonly assetErrorType: string,
-    readonly assetErrorLabel: string,
-    message: string
-  ) {
-    super(message);
-    this.name = 'AssetRegistrationError';
-  }
-}
-
 export function normalizeName(value: unknown): string {
   return String(value ?? '').trim();
 }
@@ -306,19 +324,25 @@ function parseLocalResourceName(payload: string, label: string): string {
   return name;
 }
 
-function requireAssetNameValue(value: unknown): string {
+function requireAssetNameValue(value: unknown, operation = 'registerAsset'): string {
   const name = normalizeName(value);
-  if (!name) throw new Error('Asset name is empty.');
+  if (!name) {
+    throw new AssetManagerError('INVALID_ASSET_NAME', 'Asset name is empty.', {
+      operation,
+      assetName: name,
+      hint: 'Provide a non-empty asset name.'
+    });
+  }
   return name;
 }
 
-function requireTextAssetNameValue(value: unknown): string {
-  const name = requireAssetNameValue(value);
+function requireTextAssetNameValue(value: unknown, operation = 'registerAsset'): string {
+  const name = requireAssetNameValue(value, operation);
   if (name.includes(':')) {
-    throw new AssetRegistrationError(
-      'asset-name',
-      name,
-      'Text asset name must not contain a colon.'
+    throw new AssetManagerError(
+      'INVALID_ASSET_NAME',
+      `Text asset name "${name}" must not contain a colon.`,
+      {operation, assetName: name, hint: 'Use a logical name without a colon.'}
     );
   }
   return name;
@@ -326,7 +350,13 @@ function requireTextAssetNameValue(value: unknown): string {
 
 function findStageTarget(runtime: TurboWarpRuntime): TurboWarpTarget {
   const stage = runtime.targets.find((target) => target.isStage);
-  if (!stage) throw new Error('Stage not found.');
+  if (!stage) {
+    throw new AssetManagerError('SPRITE_NOT_FOUND', 'Stage target was not found.', {
+      operation: 'resolveStage',
+      actorName: STAGE_RESOURCE_NAME,
+      hint: 'Load a project with a valid stage target.'
+    });
+  }
   return stage;
 }
 
@@ -371,7 +401,19 @@ function resolveCostumeAddress(
 ): {target: TurboWarpTarget; costume: TurboWarpCostume; costumeName: string} {
   const target = findProjectTargetByName(runtime, spriteName);
   if (!target) {
-    throw new AssetRegistrationError('sprite', spriteName, `Sprite not found: ${spriteName}`);
+    const candidates = suggestNames(
+      spriteName,
+      runtime.targets.flatMap((candidate) =>
+        !candidate.isStage && candidate.sprite?.name ? [candidate.sprite.name] : []
+      )
+    );
+    throw new AssetManagerError('SPRITE_NOT_FOUND', `Sprite not found: ${spriteName}.`, {
+      operation: 'registerAsset',
+      assetName: name,
+      actorName: spriteName,
+      candidates,
+      hint: suggestionHint(candidates)
+    });
   }
   const costumes = target.sprite?.costumes ?? [];
   const costume = costumeName === null
@@ -379,18 +421,35 @@ function resolveCostumeAddress(
       ?? (costumes.length === 1 ? costumes[0] : null)
     : findProjectCostume(target, costumeName, null);
   if (!costume && costumeName === null && costumes.length > 1) {
-    throw new AssetRegistrationError(
-      'costume',
-      name,
-      `Costume shorthand is ambiguous: ${spriteName} has multiple costumes and none is named ${name}.`
+    const candidates = suggestNames(name, costumes.map((candidate) => candidate.name));
+    throw new AssetManagerError(
+      'SOURCE_ASSET_NOT_FOUND',
+      `Costume shorthand is ambiguous: ${spriteName} has multiple costumes and none is named ${name}.`,
+      {
+        operation: 'registerAsset',
+        assetName: name,
+        actorName: spriteName,
+        candidates,
+        hint: suggestionHint(candidates) ?? 'Specify the costume name explicitly.'
+      }
     );
   }
   const resolvedCostumeName = costume?.name ?? costumeName ?? name;
   if (!costume) {
-    throw new AssetRegistrationError(
-      'costume',
+    const candidates = suggestNames(
       resolvedCostumeName,
-      `Costume not found: ${spriteName}/${resolvedCostumeName}`
+      costumes.map((candidate) => candidate.name)
+    );
+    throw new AssetManagerError(
+      'SOURCE_ASSET_NOT_FOUND',
+      `Costume not found: ${spriteName}/${resolvedCostumeName}.`,
+      {
+        operation: 'registerAsset',
+        assetName: name,
+        actorName: spriteName,
+        candidates,
+        hint: suggestionHint(candidates)
+      }
     );
   }
   return {target, costume, costumeName: resolvedCostumeName};
@@ -403,11 +462,17 @@ function resolveBackdropAddress(
   const target = findStageTarget(runtime);
   const costume = findProjectCostume(target, backdropName, null);
   if (!costume) {
-    throw new AssetRegistrationError(
-      'backdrop',
+    const candidates = suggestNames(
       backdropName,
-      `Backdrop not found: ${backdropName}`
+      (target.sprite?.costumes ?? []).map((candidate) => candidate.name)
     );
+    throw new AssetManagerError('SOURCE_ASSET_NOT_FOUND', `Backdrop not found: ${backdropName}.`, {
+      operation: 'registerAsset',
+      assetName: backdropName,
+      actorName: STAGE_RESOURCE_NAME,
+      candidates,
+      hint: suggestionHint(candidates)
+    });
   }
   return {target, costume};
 }
@@ -415,26 +480,39 @@ function resolveBackdropAddress(
 function resolveSoundAddress(
   runtime: TurboWarpRuntime,
   spriteName: string,
-  soundName: string
+  soundName: string,
+  assetName = soundName
 ): {target: TurboWarpTarget; sound: TurboWarpSound; isStage: boolean} {
   const isStage = spriteName.toLowerCase() === STAGE_RESOURCE_NAME;
   const target = isStage
     ? findStageTarget(runtime)
     : findProjectTargetByName(runtime, spriteName);
   if (!target) {
-    throw new AssetRegistrationError(
-      'sprite',
+    const candidates = suggestNames(
       spriteName,
-      `Sound source not found: ${spriteName}`
+      runtime.targets.flatMap((candidate) => candidate.sprite?.name ? [candidate.sprite.name] : [])
     );
+    throw new AssetManagerError('SPRITE_NOT_FOUND', `Sound source not found: ${spriteName}.`, {
+      operation: 'registerAsset',
+      assetName,
+      actorName: spriteName,
+      candidates,
+      hint: suggestionHint(candidates)
+    });
   }
   const sound = findProjectSound(target, soundName, null);
   if (!sound) {
-    throw new AssetRegistrationError(
-      'sound',
+    const candidates = suggestNames(
       soundName,
-      `Sound not found: ${spriteName}/${soundName}`
+      (target.sprite?.sounds ?? []).map((candidate) => candidate.name)
     );
+    throw new AssetManagerError('SOURCE_ASSET_NOT_FOUND', `Sound not found: ${spriteName}/${soundName}.`, {
+      operation: 'registerAsset',
+      assetName,
+      actorName: spriteName,
+      candidates,
+      hint: suggestionHint(candidates)
+    });
   }
   return {target, sound, isStage};
 }
@@ -463,7 +541,7 @@ export function validateProjectAssetAddress(
         resolveBackdropAddress(runtime, resource.backdropName);
         break;
       case 'sound':
-        resolveSoundAddress(runtime, resource.spriteName, resource.soundName);
+        resolveSoundAddress(runtime, resource.spriteName, resource.soundName, name);
         break;
       case 'text':
         requireTextAssetNameValue(name);
@@ -477,11 +555,15 @@ export function validateProjectAssetAddress(
   } catch (error) {
     return {
       ok: false,
-      type: error instanceof AssetRegistrationError
-        ? error.assetErrorType
-        : fallbackType,
-      label: error instanceof AssetRegistrationError
-        ? error.assetErrorLabel
+      type: error instanceof AssetManagerError
+        ? error.code
+        : fallbackType === 'asset-name' ? 'INVALID_ASSET_NAME' : 'RESOURCE_ID_INVALID',
+      label: error instanceof AssetManagerError
+        ? error.code === 'SPRITE_NOT_FOUND'
+          ? error.actorName ?? error.assetName ?? fallbackLabel
+          : error.code === 'RESOURCE_ID_INVALID'
+            ? error.resourceId ?? error.assetName ?? fallbackLabel
+            : error.assetName ?? error.actorName ?? error.resourceId ?? fallbackLabel
         : fallbackLabel,
       message: error instanceof Error ? error.message : String(error)
     };
@@ -496,9 +578,14 @@ export class AssetManagerExtension {
   private readonly soundAssets = new Map<string, SoundAssetReference>();
   private readonly textAssets = new Map<string, TextAssetReference>();
   private readonly assetRegistry = new Map<string, AssetKind>();
-  private readonly displayedAssets = new Map<string, string>();
+  private readonly displayedAssets = new Map<string, DisplayBinding>();
   private readonly playingAudio = new Map<HTMLAudioElement, string>();
   private readonly registrationVersions = new Map<string, number>();
+  private readonly successfulRegistrationVersions = new Map<string, number>();
+  private readonly registrationCancellationVersions = new Map<string, number>();
+  private readonly registrationCommits = new Map<string, Promise<void>>();
+  private readonly committedCacheRecords = new Map<string, AssetRecord | null>();
+  protected readonly featureFlags: AssetManagerFeatureFlags;
   private loadingBackdropName = '';
   declare private loadingCostumes?: string[];
   declare private loadingAssetCountValue?: number;
@@ -506,7 +593,8 @@ export class AssetManagerExtension {
   private lastAssetErrorLabel = '';
   private assetErrorVersion = 0;
 
-  constructor() {
+  constructor(featureFlags: AssetManagerFeatureFlags = FEATURE_FLAGS) {
+    this.featureFlags = Object.freeze({...featureFlags});
     this.runtime.on?.('STOP_FOR_TARGET', (target?: TurboWarpTarget) => {
       if (target && !this.runtime.targets.includes(target)) {
         this.displayedAssets.delete(target.id);
@@ -614,7 +702,18 @@ export class AssetManagerExtension {
       }
       fallbackType = 'resource-id';
       fallbackLabel = resourceId;
-      const resource = parseResourceIdentifier(args.RESOURCE_ID, name);
+      let resource: ParsedResourceIdentifier;
+      try {
+        resource = parseResourceIdentifier(args.RESOURCE_ID, name);
+      } catch (error) {
+        throw new AssetManagerError('RESOURCE_ID_INVALID', errorMessage(error), {
+          operation: 'registerAsset',
+          assetName: name,
+          resourceId,
+          hint: 'Use an HTTP(S) URL or a supported costume, backdrop, sound, or text resource ID.',
+          cause: error
+        });
+      }
       switch (resource.kind) {
         case 'cache':
           fallbackType = 'cache';
@@ -629,35 +728,48 @@ export class AssetManagerExtension {
         case 'costume':
           fallbackType = 'costume';
           fallbackLabel = resource.costumeName ?? name;
-          this.registerCostumeReference(name, resource.spriteName, resource.costumeName);
+          await this.registerCostumeReference(name, resource.spriteName, resource.costumeName);
           return;
         case 'backdrop':
           fallbackType = 'backdrop';
           fallbackLabel = resource.backdropName;
-          this.registerBackdropReference(name, resource.backdropName);
+          await this.registerBackdropReference(name, resource.backdropName);
           return;
         case 'sound':
           fallbackType = 'sound';
           fallbackLabel = resource.soundName;
-          this.registerSoundReference(name, resource.spriteName, resource.soundName);
+          await this.registerSoundReference(name, resource.spriteName, resource.soundName);
           return;
         case 'text':
           fallbackType = 'text';
           fallbackLabel = resource.runtimeVariableName;
-          this.registerTextReference(name, resource.runtimeVariableName);
+          await this.registerTextReference(name, resource.runtimeVariableName);
           return;
       }
     } catch (error) {
+      const diagnostic = error instanceof AssetManagerError
+        ? error
+        : new AssetManagerError('REPLACEMENT_FAILED', errorMessage(error), {
+            operation: 'registerAsset',
+            assetName: fallbackType === 'asset-name'
+              ? fallbackLabel
+              : normalizeName(args.NAME),
+            resourceId: normalizeName(args.RESOURCE_ID),
+            hint: 'The previous registration and display were kept. Check the resource and try again.',
+            cause: error
+          });
       if (this.assetErrorVersion === errorVersion) {
-        if (error instanceof AssetRegistrationError) {
-          this.lastAssetErrorType = error.assetErrorType;
-          this.lastAssetErrorLabel = error.assetErrorLabel;
-        } else {
-          this.lastAssetErrorType = fallbackType;
-          this.lastAssetErrorLabel = fallbackLabel;
+        if (diagnostic instanceof AssetManagerError) {
+          this.lastAssetErrorType = diagnostic.code;
+          this.lastAssetErrorLabel =
+            diagnostic.code === 'SPRITE_NOT_FOUND'
+              ? diagnostic.actorName ?? diagnostic.assetName ?? fallbackLabel
+              : diagnostic.code === 'RESOURCE_ID_INVALID'
+                ? diagnostic.resourceId ?? diagnostic.assetName ?? fallbackLabel
+                : diagnostic.assetName ?? diagnostic.actorName ?? diagnostic.resourceId ?? fallbackLabel;
         }
       }
-      throw error;
+      throw diagnostic;
     }
   }
 
@@ -671,8 +783,20 @@ export class AssetManagerExtension {
 
   /** Legacy opcode retained for existing projects. */
   async loadAsset(args: BlockArgs): Promise<void> {
-    const name = this.requireAssetName(args.NAME);
-    await this.registerExternalAsset(normalizeName(args.URL), name);
+    const name = this.requireAssetName(args.NAME, 'loadAsset');
+    const resourceId = normalizeName(args.URL);
+    try {
+      await this.registerExternalAsset(resourceId, name);
+    } catch (error) {
+      if (error instanceof AssetManagerError) throw error;
+      throw new AssetManagerError('REPLACEMENT_FAILED', errorMessage(error), {
+        operation: 'loadAsset',
+        assetName: name,
+        resourceId,
+        hint: 'The previous registration and display were kept. Check the URL or cache.',
+        cause: error
+      });
+    }
   }
 
   deleteMemoryAsset(args: BlockArgs): void {
@@ -681,7 +805,7 @@ export class AssetManagerExtension {
 
   deleteAllMemoryAssets(): void {
     for (const name of this.registrationVersions.keys()) {
-      this.registrationVersions.set(name, (this.registrationVersions.get(name) ?? 0) + 1);
+      this.cancelRegistrations(name);
     }
     for (const asset of this.externalAssets.values()) this.deleteOwnedSkinIfExists(asset);
     this.externalAssets.clear();
@@ -695,11 +819,14 @@ export class AssetManagerExtension {
   }
 
   async deleteCachedAsset(args: BlockArgs): Promise<void> {
-    await this.cacheDelete(normalizeName(args.NAME));
+    const name = normalizeName(args.NAME);
+    await this.cacheDelete(name);
+    this.committedCacheRecords.set(name, null);
   }
 
   async deleteAllCachedAssets(): Promise<void> {
     await this.cacheClear();
+    this.committedCacheRecords.clear();
   }
 
   isLoaded(args: BlockArgs): boolean {
@@ -707,20 +834,38 @@ export class AssetManagerExtension {
   }
 
   async setThisSpriteSkin(args: BlockArgs, util: ScratchBlockUtility): Promise<void> {
-    if (!util.target || util.target.isStage) throw new Error('This block must be used on a sprite or its clone.');
+    if (!util.target || util.target.isStage) {
+      throw new AssetManagerError(
+        'SPRITE_NOT_FOUND',
+        'This block must be used on a sprite or its clone.',
+        {operation: 'setThisSpriteSkin', hint: 'Run this block from a sprite target.'}
+      );
+    }
     await this.applyAssetToTarget(util.target, args.NAME, util);
   }
 
   async setSpriteSkin(args: BlockArgs, util?: ScratchBlockUtility): Promise<void> {
     const name = normalizeName(args.SPRITE);
     const target = this.findTargetByName(name);
-    if (!target) throw new Error(`Sprite not found: ${name}`);
+    if (!target) {
+      const candidates = suggestNames(
+        name,
+        this.runtime.targets.flatMap((candidate) =>
+          !candidate.isStage && candidate.sprite?.name ? [candidate.sprite.name] : []
+        )
+      );
+      throw new AssetManagerError('SPRITE_NOT_FOUND', `Sprite not found: ${name}.`, {
+        operation: 'setSpriteSkin',
+        actorName: name,
+        candidates,
+        hint: suggestionHint(candidates)
+      });
+    }
     await this.applyAssetToTarget(target, args.NAME, util);
   }
 
   async setStageSkin(args: BlockArgs): Promise<void> {
-    const stage = this.getStageTarget();
-    this.applySkinToTarget(stage, await this.resolveSkin(args.NAME));
+    await this.applyAssetToTarget(this.getStageTarget(), args.NAME);
   }
 
   async playSound(args: BlockArgs): Promise<void> {
@@ -734,13 +879,13 @@ export class AssetManagerExtension {
   stopSound(args: BlockArgs): void {
     const name = normalizeName(args.NAME);
     const kind = this.assetRegistry.get(name);
-    if (!kind) throw new Error(`Asset is not loaded: ${name}`);
+    if (!kind) throw this.assetNotRegistered('stopSound', name);
     if (kind === 'external') {
       const asset = this.externalAssets.get(name);
-      if (!asset) throw new Error(`External asset is not loaded: ${name}`);
+      if (!asset) throw this.assetNotRegistered('stopSound', name);
       asset.mimeType = normalizeMimeType(asset.mimeType, asset.url || name);
       if (!asset.mimeType.startsWith('audio/')) {
-        throw new Error(`Asset is not audio: ${name} (${asset.mimeType})`);
+        throw this.assetTypeMismatch('stopSound', name, 'audio', `external/${this.externalMediaKind(asset)}`);
       }
       for (const [audio, assetName] of [...this.playingAudio]) {
         if (assetName === name) this.stopExternalAudio(audio);
@@ -752,7 +897,7 @@ export class AssetManagerExtension {
       target.sprite!.soundBank!.stop(target, sound.soundId as string);
       return;
     }
-    throw new Error(`Asset is not audio: ${name}`);
+    throw this.assetTypeMismatch('stopSound', name, 'audio', kind);
   }
 
   stopAllSounds(): void {
@@ -772,7 +917,8 @@ export class AssetManagerExtension {
         const asset = this.externalAssets.get(name);
         return asset ? normalizeMimeType(asset.mimeType, asset.url || name) : '';
       }
-      case 'costume': {
+      case 'costume':
+      case 'backdrop': {
         const {costume} = this.resolveCostumeReference(name);
         return this.projectAssetMimeType(costume.dataFormat, 'image');
       }
@@ -791,10 +937,10 @@ export class AssetManagerExtension {
   }
 
   async setTextValue(args: BlockArgs): Promise<void> {
-    const name = this.requireTextAssetName(args.NAME);
+    const name = this.requireTextAssetName(args.NAME, 'setTextValue');
     const kind = this.assetRegistry.get(name);
     if (kind !== undefined && kind !== 'text') {
-      throw new Error(`Asset is not text: ${name}`);
+      throw this.assetTypeMismatch('setTextValue', name, 'text', kind);
     }
     const reference = this.textAssets.get(name);
     this.setRuntimeVariable(
@@ -802,25 +948,78 @@ export class AssetManagerExtension {
       String(args.VALUE ?? '')
     );
     const targets = this.runtime.targets.filter(
-      (target) => this.displayedAssets.get(target.id) === name
+      (target) => this.displayedAssets.get(target.id)?.assetName === name
     );
     await Promise.all(
-      targets.map((target) => this.applyTextToTarget(target, name, {
-        runtime: this.runtime,
-        target
-      }))
+      targets.map(async (target) => {
+        await this.applyTextToTarget(target, name, {runtime: this.runtime, target});
+        this.setDisplayBinding(target, name, 'text');
+      })
     );
   }
 
   setTextStyle(args: BlockArgs): void {
-    const name = this.requireTextAssetName(args.NAME);
+    const name = this.requireTextAssetName(args.NAME, 'setTextStyle');
     const kind = this.assetRegistry.get(name);
     if (kind !== undefined && kind !== 'text') {
-      throw new Error(`Asset is not text: ${name}`);
+      throw this.assetTypeMismatch('setTextStyle', name, 'text', kind);
     }
-    const property = normalizeTextStyleProperty(args.PROPERTY);
-    const value = normalizeTextStyleValue(property, args.VALUE);
+    let property;
+    try {
+      property = normalizeTextStyleProperty(args.PROPERTY);
+    } catch (error) {
+      throw new AssetManagerError('STYLE_PROPERTY_INVALID', errorMessage(error), {
+        operation: 'setTextStyle',
+        assetName: name,
+        hint: 'Use animation, font, color, width, or align.',
+        cause: error
+      });
+    }
+    let value;
+    try {
+      value = normalizeTextStyleValue(property, args.VALUE);
+    } catch (error) {
+      throw new AssetManagerError('STYLE_VALUE_INVALID', errorMessage(error), {
+        operation: 'setTextStyle',
+        assetName: name,
+        hint: `Provide a valid ${property} value.`,
+        cause: error
+      });
+    }
     this.setRuntimeVariable(textStyleRuntimeVariableName(name, property), value);
+  }
+
+  protected assetNotRegistered(operation: string, name: string): AssetManagerError {
+    const candidates = suggestNames(name, this.assetRegistry.keys());
+    return new AssetManagerError(
+      'ASSET_NOT_REGISTERED',
+      `Cannot ${operation} asset "${name}": no registered asset has that name.`,
+      {
+        operation,
+        assetName: name,
+        candidates,
+        hint: suggestionHint(candidates) ?? 'Register the asset before using it.'
+      }
+    );
+  }
+
+  protected assetTypeMismatch(
+    operation: string,
+    name: string,
+    expectedKind: string,
+    actualKind: string
+  ): AssetManagerError {
+    return new AssetManagerError(
+      'ASSET_TYPE_MISMATCH',
+      `Cannot ${operation} asset "${name}": expected ${expectedKind}, but it is ${actualKind}.`,
+      {
+        operation,
+        assetName: name,
+        expectedKind,
+        actualKind,
+        hint: `Use an asset registered as ${expectedKind}.`
+      }
+    );
   }
 
   private toScratchBlock(block: DefinitionBlock): Record<string, unknown> {
@@ -845,12 +1044,12 @@ export class AssetManagerExtension {
     };
   }
 
-  private requireAssetName(value: unknown): string {
-    return requireAssetNameValue(value);
+  private requireAssetName(value: unknown, operation = 'registerAsset'): string {
+    return requireAssetNameValue(value, operation);
   }
 
-  private requireTextAssetName(value: unknown): string {
-    return requireTextAssetNameValue(value);
+  private requireTextAssetName(value: unknown, operation = 'registerAsset'): string {
+    return requireTextAssetNameValue(value, operation);
   }
 
   private clearAssetError(): void {
@@ -858,38 +1057,67 @@ export class AssetManagerExtension {
     this.lastAssetErrorLabel = '';
   }
 
-  private nextRegistrationVersion(name: string): number {
+  private beginRegistration(name: string): RegistrationToken {
     const version = (this.registrationVersions.get(name) ?? 0) + 1;
     this.registrationVersions.set(name, version);
-    return version;
+    return {
+      version,
+      cancellationVersion: this.registrationCancellationVersions.get(name) ?? 0
+    };
+  }
+
+  private cancelRegistrations(name: string): void {
+    const cancellationVersion = (this.registrationCancellationVersions.get(name) ?? 0) + 1;
+    this.registrationCancellationVersions.set(name, cancellationVersion);
+  }
+
+  private isRegistrationCancellationCurrent(
+    name: string,
+    token: RegistrationToken
+  ): boolean {
+    return (this.registrationCancellationVersions.get(name) ?? 0) === token.cancellationVersion;
   }
 
   private async registerExternalAsset(url: string, name: string): Promise<void> {
-    const version = this.nextRegistrationVersion(name);
+    const token = this.beginRegistration(name);
     const record = url
-      ? await this.fetchAndCache(url, name)
+      ? await this.fetchExternalAsset(url, name)
+      : this.committedCacheRecords.has(name)
+      ? this.committedCacheRecords.get(name) ?? null
       : await this.cacheGet(name);
-    if (this.registrationVersions.get(name) !== version) return;
-    if (!record) throw new Error(`Asset is not cached and URL is empty: ${name}`);
-    this.unregisterAsset(name);
-    this.externalAssets.set(name, {
+    if (!this.isRegistrationCancellationCurrent(name, token)) return;
+    if (!record) {
+      const candidates = suggestNames(name, this.assetRegistry.keys());
+      throw new AssetManagerError(
+        'ASSET_NOT_REGISTERED',
+        `Asset "${name}" is not cached and no URL was provided.`,
+        {
+          operation: 'registerAsset',
+          assetName: name,
+          candidates,
+          hint: suggestionHint(candidates) ?? 'Register an HTTP(S) URL before loading from cache.'
+        }
+      );
+    }
+    const prepared: ExternalMemoryAsset = {
       ...record,
       kind: 'external',
       mimeType: normalizeMimeType(record.mimeType, record.url || name),
       skinId: null
-    });
-    this.assetRegistry.set(name, 'external');
+    };
+    await this.commitPreparedAsset(name, 'external', prepared, token, url ? record : undefined);
   }
 
-  private registerCostumeReference(
+  private async registerCostumeReference(
     name: string,
     spriteName: string,
     costumeName: string | null
-  ): void {
+  ): Promise<void> {
+    const token = this.beginRegistration(name);
     const {target, costume, costumeName: resolvedCostumeName} =
       resolveCostumeAddress(this.runtime, name, spriteName, costumeName);
-    this.unregisterAsset(name);
-    this.costumeAssets.set(name, {
+    if (!this.isRegistrationCancellationCurrent(name, token)) return;
+    await this.commitPreparedAsset(name, 'costume', {
       kind: 'costume',
       name,
       targetId: target.id,
@@ -897,33 +1125,38 @@ export class AssetManagerExtension {
       isStage: false,
       costumeName: resolvedCostumeName,
       assetId: costume.assetId ?? null
-    });
-    this.assetRegistry.set(name, 'costume');
+    }, token);
   }
 
-  private registerBackdropReference(name: string, backdropName: string): void {
+  private async registerBackdropReference(name: string, backdropName: string): Promise<void> {
+    const token = this.beginRegistration(name);
     const {target: stage, costume} = resolveBackdropAddress(this.runtime, backdropName);
-    this.unregisterAsset(name);
-    this.costumeAssets.set(name, {
-      kind: 'costume',
+    if (!this.isRegistrationCancellationCurrent(name, token)) return;
+    await this.commitPreparedAsset(name, 'backdrop', {
+      kind: 'backdrop',
       name,
       targetId: stage.id,
       targetName: STAGE_RESOURCE_NAME,
       isStage: true,
       costumeName: backdropName,
       assetId: costume.assetId ?? null
-    });
-    this.assetRegistry.set(name, 'costume');
+    }, token);
   }
 
-  private registerSoundReference(name: string, spriteName: string, soundName: string): void {
+  private async registerSoundReference(
+    name: string,
+    spriteName: string,
+    soundName: string
+  ): Promise<void> {
+    const token = this.beginRegistration(name);
     const {target, sound, isStage} = resolveSoundAddress(
       this.runtime,
       spriteName,
-      soundName
+      soundName,
+      name
     );
-    this.unregisterAsset(name);
-    this.soundAssets.set(name, {
+    if (!this.isRegistrationCancellationCurrent(name, token)) return;
+    await this.commitPreparedAsset(name, 'sound', {
       kind: 'sound',
       name,
       targetId: target.id,
@@ -931,39 +1164,308 @@ export class AssetManagerExtension {
       isStage,
       soundName,
       assetId: sound.assetId ?? null
-    });
-    this.assetRegistry.set(name, 'sound');
+    }, token);
   }
 
-  private registerTextReference(name: string, runtimeVariableName: string): void {
+  private async registerTextReference(name: string, runtimeVariableName: string): Promise<void> {
+    const token = this.beginRegistration(name);
     this.requireTextAssetName(name);
-    this.unregisterAsset(name);
-    this.textAssets.set(name, {
+    if (!this.isRegistrationCancellationCurrent(name, token)) return;
+    await this.commitPreparedAsset(name, 'text', {
       kind: 'text',
       name,
       runtimeVariableName
-    });
-    this.assetRegistry.set(name, 'text');
+    }, token);
   }
 
   private unregisterAsset(name: string): void {
-    this.nextRegistrationVersion(name);
+    this.cancelRegistrations(name);
     const kind = this.assetRegistry.get(name);
     if (!kind) return;
-    if (kind === 'external') {
-      this.deleteOwnedSkinIfExists(this.externalAssets.get(name));
-      this.externalAssets.delete(name);
-    } else if (kind === 'costume') {
-      this.costumeAssets.delete(name);
-    } else if (kind === 'sound') {
-      this.soundAssets.delete(name);
-    } else if (kind === 'text') {
-      this.textAssets.delete(name);
-    }
+    const asset = this.getRegisteredAsset(name, kind);
+    this.removeRegisteredAsset(name, kind);
+    this.disposeRegisteredAsset(asset);
     this.assetRegistry.delete(name);
-    for (const [targetId, displayedName] of this.displayedAssets) {
-      if (displayedName === name) this.displayedAssets.delete(targetId);
+    for (const [targetId, binding] of this.displayedAssets) {
+      if (binding.assetName === name) this.displayedAssets.delete(targetId);
     }
+  }
+
+  private async commitPreparedAsset(
+    name: string,
+    kind: AssetKind,
+    prepared: RegisteredAsset,
+    token: RegistrationToken,
+    cacheRecord?: AssetRecord
+  ): Promise<void> {
+    const previousCommit = this.registrationCommits.get(name) ?? Promise.resolve();
+    const commit = previousCommit.catch(() => undefined).then(async () => {
+      if (!this.isRegistrationCancellationCurrent(name, token) ||
+          token.version < (this.successfulRegistrationVersions.get(name) ?? 0)) {
+        this.disposeRegisteredAsset(prepared);
+        return;
+      }
+
+      const currentKind = this.assetRegistry.get(name);
+      const current = currentKind ? this.getRegisteredAsset(name, currentKind) : undefined;
+      this.assertReplacementKind(name, currentKind, current, kind, prepared);
+
+      let previousCached: AssetRecord | null | undefined;
+      let nextCached: AssetRecord | undefined;
+      if (cacheRecord) {
+        previousCached = this.committedCacheRecords.has(name)
+          ? this.committedCacheRecords.get(name) ?? null
+          : await this.cacheGet(name);
+        if (!this.isRegistrationCancellationCurrent(name, token)) {
+          this.disposeRegisteredAsset(prepared);
+          return;
+        }
+        nextCached = {...cacheRecord, generation: token.version};
+        await this.cachePut(nextCached);
+        if (!this.isRegistrationCancellationCurrent(name, token)) {
+          await this.restoreCacheIfGeneration(name, token.version, previousCached);
+          this.disposeRegisteredAsset(prepared);
+          return;
+        }
+      }
+
+      try {
+        await this.commitPreparedAssetNow(name, kind, prepared, token);
+      } catch (error) {
+        if (cacheRecord) {
+          await this.restoreCacheIfGeneration(name, token.version, previousCached ?? null);
+        }
+        throw error;
+      }
+      if (!this.isRegistrationCancellationCurrent(name, token)) {
+        if (cacheRecord) {
+          await this.restoreCacheIfGeneration(name, token.version, previousCached ?? null);
+        }
+        return;
+      }
+      this.successfulRegistrationVersions.set(name, token.version);
+      if (nextCached) this.committedCacheRecords.set(name, nextCached);
+    });
+    this.registrationCommits.set(name, commit);
+    try {
+      await commit;
+    } finally {
+      if (this.registrationCommits.get(name) === commit) this.registrationCommits.delete(name);
+    }
+  }
+
+  private async commitPreparedAssetNow(
+    name: string,
+    kind: AssetKind,
+    prepared: RegisteredAsset,
+    token: RegistrationToken
+  ): Promise<void> {
+    const currentKind = this.assetRegistry.get(name);
+    const current = currentKind ? this.getRegisteredAsset(name, currentKind) : undefined;
+    this.assertReplacementKind(name, currentKind, current, kind, prepared);
+
+    if (currentKind === kind && current &&
+        this.featureFlags.ENABLE_LIVE_ASSET_REPLACEMENT) {
+      await this.replaceRegisteredAsset(name, kind, current, prepared, token);
+      return;
+    }
+
+    if (currentKind) this.removeRegisteredAsset(name, currentKind);
+    this.installRegisteredAsset(name, kind, prepared);
+    this.disposeRegisteredAsset(current);
+    for (const [targetId, binding] of this.displayedAssets) {
+      if (binding.assetName === name) this.displayedAssets.delete(targetId);
+    }
+  }
+
+  private assertReplacementKind(
+    name: string,
+    currentKind: AssetKind | undefined,
+    current: RegisteredAsset | undefined,
+    nextKind: AssetKind,
+    next: RegisteredAsset
+  ): void {
+    if (!currentKind || !this.featureFlags.ENABLE_STRICT_ASSET_KIND_REPLACEMENT) return;
+    let expectedKind: string = currentKind;
+    let actualKind: string = nextKind;
+    if (currentKind === 'external' && nextKind === 'external' &&
+        current?.kind === 'external' && next.kind === 'external') {
+      const currentMedia = this.externalMediaKind(current);
+      const nextMedia = this.externalMediaKind(next);
+      if (currentMedia === nextMedia || currentMedia === 'unknown' || nextMedia === 'unknown') return;
+      expectedKind = `external/${currentMedia}`;
+      actualKind = `external/${nextMedia}`;
+    } else if (currentKind === nextKind) {
+      return;
+    }
+    throw new AssetManagerError(
+      'ASSET_TYPE_CHANGE',
+      `Cannot replace asset "${name}": it is currently registered as ${expectedKind}, ` +
+        `but the new resource is ${actualKind}.`,
+      {
+        operation: 'registerAsset',
+        assetName: name,
+        expectedKind,
+        actualKind,
+        hint: 'Delete the existing asset first if this type change is intentional.'
+      }
+    );
+  }
+
+  private async replaceRegisteredAsset(
+    name: string,
+    kind: AssetKind,
+    current: RegisteredAsset,
+    prepared: RegisteredAsset,
+    token: RegistrationToken
+  ): Promise<void> {
+    const managedDisplays = [...this.displayedAssets]
+      .filter(([, binding]) =>
+        binding.assetName === name && binding.assetKind === kind
+      )
+      .flatMap(([targetId, binding]) => {
+        const target = this.runtime.targets.find((candidate) => candidate.id === targetId);
+        if (target && this.isDisplayBindingCurrent(target, binding)) {
+          return [{target, binding}];
+        }
+        this.displayedAssets.delete(targetId);
+        return [];
+      });
+    let preparedDisplays: Array<{
+      target: TurboWarpTarget;
+      binding: DisplayBinding;
+      skin: ResolvedSkin | null;
+    }>;
+    try {
+      const skin = kind === 'text' || managedDisplays.length === 0
+        ? null
+        : await this.resolveSkinFromAsset(name, kind, prepared);
+      preparedDisplays = managedDisplays.map(({target, binding}) => ({target, binding, skin}));
+    } catch (error) {
+      this.disposeRegisteredAsset(prepared);
+      throw new AssetManagerError(
+        'REPLACEMENT_FAILED',
+        `Cannot prepare replacement asset "${name}": ${errorMessage(error)}`,
+        {
+          operation: 'registerAsset',
+          assetName: name,
+          hint: 'The old registration and display were kept.',
+          cause: error
+        }
+      );
+    }
+
+    if (!this.isRegistrationCancellationCurrent(name, token)) {
+      this.disposeRegisteredAsset(prepared);
+      return;
+    }
+
+    this.installRegisteredAsset(name, kind, prepared);
+    const attemptedTargets: TurboWarpTarget[] = [];
+    try {
+      for (const display of preparedDisplays) {
+        if (!this.isRegistrationCancellationCurrent(name, token)) break;
+        if (!this.runtime.targets.includes(display.target)) {
+          this.displayedAssets.delete(display.target.id);
+          continue;
+        }
+        if (this.displayedAssets.get(display.target.id) !== display.binding) continue;
+        if (!this.isDisplayBindingCurrent(display.target, display.binding)) {
+          this.displayedAssets.delete(display.target.id);
+          continue;
+        }
+        attemptedTargets.push(display.target);
+        if (kind === 'text') {
+          await this.applyTextReferenceToTarget(
+            display.target,
+            name,
+            prepared as TextAssetReference,
+            {runtime: this.runtime, target: display.target}
+          );
+        } else if (display.skin) {
+          this.applySkinToTarget(display.target, display.skin);
+        }
+        if (this.isRegistrationCancellationCurrent(name, token)) {
+          this.setDisplayBinding(display.target, name, kind, display.skin?.skinId);
+        }
+      }
+    } catch (error) {
+      if (!this.isRegistrationCancellationCurrent(name, token)) {
+        this.disposeRegisteredAsset(current);
+        return;
+      }
+      this.installRegisteredAsset(name, kind, current);
+      let rollbackError: unknown;
+      for (const target of attemptedTargets) {
+        if (!this.runtime.targets.includes(target)) continue;
+        try {
+          if (kind === 'text') {
+            await this.applyTextReferenceToTarget(
+              target,
+              name,
+              current as TextAssetReference,
+              {runtime: this.runtime, target}
+            );
+          } else {
+            const currentSkin = await this.resolveSkinFromAsset(name, kind, current);
+            this.applySkinToTarget(target, currentSkin);
+            this.setDisplayBinding(target, name, kind, currentSkin.skinId);
+            continue;
+          }
+          this.setDisplayBinding(target, name, kind);
+        } catch (rollbackFailure) {
+          rollbackError ??= rollbackFailure;
+        }
+      }
+      this.disposeRegisteredAsset(prepared);
+      throw new AssetManagerError(
+        'REPLACEMENT_FAILED',
+        `Cannot replace asset "${name}": ${errorMessage(error)}`,
+        {
+          operation: 'registerAsset',
+          assetName: name,
+          hint: rollbackError
+            ? `The old registration was restored, but its display could not be reapplied: ${errorMessage(rollbackError)}`
+            : 'The old registration and display were restored.',
+          cause: error
+        }
+      );
+    }
+    this.disposeRegisteredAsset(current);
+  }
+
+  private getRegisteredAsset(name: string, kind: AssetKind): RegisteredAsset | undefined {
+    if (kind === 'external') return this.externalAssets.get(name);
+    if (kind === 'costume' || kind === 'backdrop') return this.costumeAssets.get(name);
+    if (kind === 'sound') return this.soundAssets.get(name);
+    return this.textAssets.get(name);
+  }
+
+  private installRegisteredAsset(name: string, kind: AssetKind, asset: RegisteredAsset): void {
+    if (kind === 'external') this.externalAssets.set(name, asset as ExternalMemoryAsset);
+    else if (kind === 'costume' || kind === 'backdrop') {
+      this.costumeAssets.set(name, asset as CostumeAssetReference);
+    } else if (kind === 'sound') this.soundAssets.set(name, asset as SoundAssetReference);
+    else this.textAssets.set(name, asset as TextAssetReference);
+    this.assetRegistry.set(name, kind);
+  }
+
+  private removeRegisteredAsset(name: string, kind: AssetKind): void {
+    if (kind === 'external') this.externalAssets.delete(name);
+    else if (kind === 'costume' || kind === 'backdrop') this.costumeAssets.delete(name);
+    else if (kind === 'sound') this.soundAssets.delete(name);
+    else this.textAssets.delete(name);
+  }
+
+  private disposeRegisteredAsset(asset: RegisteredAsset | undefined): void {
+    if (asset?.kind === 'external') this.deleteOwnedSkinIfExists(asset);
+  }
+
+  private externalMediaKind(asset: ExternalMemoryAsset): ExternalMediaKind {
+    const mimeType = normalizeMimeType(asset.mimeType, asset.url || asset.name);
+    if (mimeType.startsWith('image/')) return 'image';
+    if (mimeType.startsWith('audio/')) return 'audio';
+    return 'unknown';
   }
 
   private openDatabase(): Promise<IDBDatabase> {
@@ -1007,19 +1509,40 @@ export class AssetManagerExtension {
     await this.transaction('readwrite', (store) => store.clear());
   }
 
-  private async fetchAndCache(url: string, name: string): Promise<AssetRecord> {
+  private async restoreCacheIfGeneration(
+    name: string,
+    generation: number,
+    previous: AssetRecord | null
+  ): Promise<void> {
+    const database = await this.openDatabase();
+    await new Promise<void>((resolve, reject) => {
+      const transaction = database.transaction(STORE_NAME, 'readwrite');
+      const store = transaction.objectStore(STORE_NAME);
+      const request = store.get(name);
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => {
+        const current = request.result as AssetRecord | undefined;
+        if (current?.generation !== generation) return;
+        if (previous) store.put(previous);
+        else store.delete(name);
+      };
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error);
+      transaction.onabort = () => reject(transaction.error);
+    });
+  }
+
+  private async fetchExternalAsset(url: string, name: string): Promise<AssetRecord> {
     const response = await fetch(url);
     if (!response.ok) throw new Error(`Failed to fetch asset "${name}": ${response.status} ${response.statusText}`);
     const blob = await response.blob();
-    const record = {
+    return {
       name,
       url,
       mimeType: normalizeMimeType(blob.type || response.headers.get('Content-Type'), url),
       data: await blob.arrayBuffer(),
       cachedAt: Date.now()
     };
-    await this.cachePut(record);
-    return record;
   }
 
   private getStageTarget(): TurboWarpTarget {
@@ -1039,7 +1562,22 @@ export class AssetManagerExtension {
     if (byId) return byId;
     if (isStage) return this.getStageTarget();
     const byName = this.findTargetByName(targetName);
-    if (!byName) throw new Error(`Asset source target no longer exists: ${targetName}`);
+    if (!byName) {
+      const candidates = suggestNames(
+        targetName,
+        this.runtime.targets.flatMap((target) => target.sprite?.name ? [target.sprite.name] : [])
+      );
+      throw new AssetManagerError(
+        'SPRITE_NOT_FOUND',
+        `Asset source target no longer exists: ${targetName}.`,
+        {
+          operation: 'resolveAsset',
+          actorName: targetName,
+          candidates,
+          hint: suggestionHint(candidates)
+        }
+      );
+    }
     return byName;
   }
 
@@ -1062,18 +1600,10 @@ export class AssetManagerExtension {
   protected async resolveSkin(value: unknown): Promise<ResolvedSkin> {
     const name = normalizeName(value);
     const kind = this.assetRegistry.get(name);
-    if (!kind) throw new Error(`Asset is not loaded: ${name}`);
-    if (kind === 'external') {
-      return {skinId: await this.ensureExternalSkin(name), sourceSize: null};
-    }
-    if (kind === 'costume') {
-      const {target, costume} = this.resolveCostumeReference(name);
-      return {
-        skinId: costume.skinId as number,
-        sourceSize: target.isStage || !Number.isFinite(target.size) ? null : target.size
-      };
-    }
-    throw new Error(`Asset is not an image: ${name}`);
+    if (!kind) throw this.assetNotRegistered('show', name);
+    const asset = this.getRegisteredAsset(name, kind);
+    if (!asset) throw this.assetNotRegistered('show', name);
+    return this.resolveSkinFromAsset(name, kind, asset);
   }
 
   protected async applyAssetToTarget(
@@ -1083,17 +1613,60 @@ export class AssetManagerExtension {
   ): Promise<void> {
     const name = normalizeName(value);
     const kind = this.assetRegistry.get(name);
-    if (!kind) throw new Error(`Asset is not loaded: ${name}`);
+    let skinId: number | undefined;
+    if (!kind) throw this.assetNotRegistered('show', name);
     if (!this.runtime.targets.includes(target)) return;
     if (kind === 'text') {
       await this.applyTextToTarget(target, name, util);
-    } else {
+    } else if (kind === 'external' || kind === 'costume' || kind === 'backdrop') {
       const skin = await this.resolveSkin(name);
       if (!this.runtime.targets.includes(target)) return;
       this.applySkinToTarget(target, skin);
+      skinId = skin.skinId;
+    } else {
+      throw this.assetTypeMismatch('show', name, 'image or text', kind);
     }
     if (!this.runtime.targets.includes(target)) return;
-    this.displayedAssets.set(target.id, name);
+    this.setDisplayBinding(target, name, kind, skinId);
+  }
+
+  protected setDisplayBinding(
+    target: TurboWarpTarget,
+    name: string,
+    kind: AssetKind,
+    skinId?: number
+  ): void {
+    if (kind === 'sound') {
+      this.displayedAssets.delete(target.id);
+      return;
+    }
+    this.displayedAssets.set(target.id, {
+      assetName: name,
+      assetKind: kind,
+      skinId: skinId ?? null
+    });
+  }
+
+  private isDisplayBindingCurrent(target: TurboWarpTarget, binding: DisplayBinding): boolean {
+    if (binding.assetKind === 'text') return true;
+    if (binding.skinId === null || target.drawableID === undefined || target.drawableID === null) {
+      return false;
+    }
+    return this.renderer._allDrawables?.[target.drawableID]?.skin?.id === binding.skinId;
+  }
+
+  protected applyResolvedSkinToTarget(
+    target: TurboWarpTarget,
+    name: string,
+    skin: ResolvedSkin
+  ): void {
+    const kind = this.assetRegistry.get(name);
+    if (!kind) throw this.assetNotRegistered('show', name);
+    if (kind !== 'external' && kind !== 'costume' && kind !== 'backdrop') {
+      throw this.assetTypeMismatch('show', name, 'image', kind);
+    }
+    this.applySkinToTarget(target, skin);
+    this.setDisplayBinding(target, name, kind, skin.skinId);
   }
 
   private async applyTextToTarget(
@@ -1101,21 +1674,42 @@ export class AssetManagerExtension {
     name: string,
     util?: ScratchBlockUtility
   ): Promise<void> {
-    if (target.isStage) throw new Error(`Text asset can only be shown on a sprite: ${name}`);
+    if (target.isStage) throw this.assetTypeMismatch('show on stage', name, 'image', 'text');
     const reference = this.textAssets.get(name);
-    if (!reference) throw new Error(`Text asset is not registered: ${name}`);
+    if (!reference) throw this.assetNotRegistered('show', name);
+    await this.applyTextReferenceToTarget(target, name, reference, util);
+  }
 
-    const temporaryVariables = this.requireTemporaryVariables();
+  private async applyTextReferenceToTarget(
+    target: TurboWarpTarget,
+    name: string,
+    reference: TextAssetReference,
+    util?: ScratchBlockUtility
+  ): Promise<void> {
+    if (target.isStage) throw this.assetTypeMismatch('show on stage', name, 'image', 'text');
+
+    const temporaryVariables = this.requireTemporaryVariables('show', name);
     const getRuntimeVariable = (variableName: string): unknown =>
       temporaryVariables.getRuntimeVariable({VAR: variableName});
-    const style = resolveTextStyle(name, this.runtime.stageWidth, getRuntimeVariable);
-    const setFont = this.requireAnimatedTextOpcode('text_setFont');
-    const setColor = this.requireAnimatedTextOpcode('text_setColor');
-    const setWidth = this.requireAnimatedTextOpcode('text_setWidth');
+    let style;
+    try {
+      style = resolveTextStyle(name, this.runtime.stageWidth, getRuntimeVariable);
+    } catch (error) {
+      throw new AssetManagerError('STYLE_VALUE_INVALID', errorMessage(error), {
+        operation: 'show',
+        assetName: name,
+        hint: 'Correct the stored text style value before showing this asset.',
+        cause: error
+      });
+    }
+    const setFont = this.requireAnimatedTextOpcode('text_setFont', name);
+    const setColor = this.requireAnimatedTextOpcode('text_setColor', name);
+    const setWidth = this.requireAnimatedTextOpcode('text_setWidth', name);
     const setOutlineWidth = this.runtime.getOpcodeFunction?.('text_setOutlineWidth');
     const setOutlineColor = this.runtime.getOpcodeFunction?.('text_setOutlineColor');
     const displayText = this.requireAnimatedTextOpcode(
-      style.animation === 'none' ? 'text_setText' : 'text_animateText'
+      style.animation === 'none' ? 'text_setText' : 'text_animateText',
+      name
     );
     const blockUtility = {...util, target, runtime: util?.runtime ?? this.runtime};
     const text = getRuntimeVariable(reference.runtimeVariableName);
@@ -1139,40 +1733,83 @@ export class AssetManagerExtension {
       await Promise.resolve(displayResult);
     } else {
       void Promise.resolve(displayResult).catch((error) => {
-        console.warn(`Animated Text failed for asset "${name}"`, error);
+        console.error(new AssetManagerError(
+          'ANIMATION_FAILED',
+          `Animated Text failed for asset "${name}": ${errorMessage(error)}`,
+          {
+            operation: 'animateText',
+            assetName: name,
+            hint: 'Check the Animated Text extension and animation value.',
+            cause: error
+          }
+        ));
       });
     }
   }
 
-  private requireTemporaryVariables(): TurboWarpTemporaryVariablesExtension {
+  private requireTemporaryVariables(
+    operation = 'setTextValue',
+    assetName?: string
+  ): TurboWarpTemporaryVariablesExtension {
     const temporaryVariables = this.runtime.ext_lmsTempVars2;
     if (!temporaryVariables?.getRuntimeVariable) {
-      throw new Error('Temporary Variables extension is not loaded.');
+      throw new AssetManagerError(
+        'DEPENDENCY_MISSING',
+        'Temporary Variables extension is not loaded.',
+        {
+          operation,
+          assetName,
+          hint: 'Load the lmsTempVars2 extension before using runtime text assets.'
+        }
+      );
     }
     return temporaryVariables;
   }
 
   private setRuntimeVariable(name: string, value: string): void {
-    const temporaryVariables = this.requireTemporaryVariables();
+    const assetName = name.split(':')[1];
+    const temporaryVariables = this.requireTemporaryVariables('setRuntimeVariable', assetName);
     if (!temporaryVariables.setRuntimeVariable) {
-      throw new Error('Temporary Variables extension does not support setting runtime variables.');
+      throw new AssetManagerError(
+        'DEPENDENCY_MISSING',
+        'Temporary Variables extension does not support setting runtime variables.',
+        {
+          operation: 'setRuntimeVariable',
+          assetName,
+          hint: 'Load a Temporary Variables version that provides setRuntimeVariable.'
+        }
+      );
     }
     temporaryVariables.setRuntimeVariable({VAR: name, STRING: value});
   }
 
-  private requireAnimatedTextOpcode(opcode: string): TurboWarpOpcodeFunction {
+  private requireAnimatedTextOpcode(opcode: string, assetName: string): TurboWarpOpcodeFunction {
     const implementation = this.runtime.getOpcodeFunction?.(opcode);
     if (!implementation) {
-      throw new Error(`Animated Text extension is not loaded or does not provide ${opcode}.`);
+      throw new AssetManagerError(
+        'DEPENDENCY_MISSING',
+        `Animated Text extension is not loaded or does not provide ${opcode}.`,
+        {
+          operation: 'show',
+          assetName,
+          hint: 'Load a compatible Animated Text extension before showing text assets.'
+        }
+      );
     }
     return implementation;
   }
 
   private async ensureExternalSkin(name: string): Promise<number> {
     const asset = this.externalAssets.get(name);
-    if (!asset) throw new Error(`External asset is not loaded: ${name}`);
+    if (!asset) throw this.assetNotRegistered('show', name);
+    return this.ensureExternalAssetSkin(asset, name);
+  }
+
+  private async ensureExternalAssetSkin(asset: ExternalMemoryAsset, name: string): Promise<number> {
     asset.mimeType = normalizeMimeType(asset.mimeType, asset.url || name);
-    if (!asset.mimeType.startsWith('image/')) throw new Error(`Asset is not an image: ${name} (${asset.mimeType})`);
+    if (!asset.mimeType.startsWith('image/')) {
+      throw this.assetTypeMismatch('show', name, 'image', `external/${this.externalMediaKind(asset)}`);
+    }
     if (asset.skinId !== null) return asset.skinId;
     const blob = new Blob([asset.data], {type: asset.mimeType});
     asset.skinId = asset.mimeType === 'image/svg+xml'
@@ -1181,17 +1818,68 @@ export class AssetManagerExtension {
     return asset.skinId;
   }
 
+  private async resolveSkinFromAsset(
+    name: string,
+    kind: AssetKind,
+    asset: RegisteredAsset
+  ): Promise<ResolvedSkin> {
+    if (kind === 'external' && asset.kind === 'external') {
+      return {skinId: await this.ensureExternalAssetSkin(asset, name), sourceSize: null};
+    }
+    if ((kind === 'costume' || kind === 'backdrop') &&
+        (asset.kind === 'costume' || asset.kind === 'backdrop')) {
+      const {target, costume} = this.resolveCostumeAssetReference(name, asset);
+      return {
+        skinId: costume.skinId as number,
+        sourceSize: target.isStage || !Number.isFinite(target.size) ? null : target.size
+      };
+    }
+    throw this.assetTypeMismatch('show', name, 'image', kind);
+  }
+
   private resolveCostumeReference(name: string): {
     target: TurboWarpTarget;
     costume: TurboWarpCostume;
   } {
     const reference = this.costumeAssets.get(name);
-    if (!reference) throw new Error(`Costume asset is not registered: ${name}`);
+    if (!reference) throw this.assetNotRegistered('show', name);
+    return this.resolveCostumeAssetReference(name, reference);
+  }
+
+  private resolveCostumeAssetReference(
+    name: string,
+    reference: CostumeAssetReference
+  ): {target: TurboWarpTarget; costume: TurboWarpCostume} {
     const target = this.resolveReferencedTarget(reference.targetId, reference.targetName, reference.isStage);
     const costume = this.findCostume(target, reference.costumeName, reference.assetId);
-    if (!costume) throw new Error(`Costume no longer exists: ${reference.targetName}/${reference.costumeName}`);
+    if (!costume) {
+      const candidates = suggestNames(
+        reference.costumeName,
+        (target.sprite?.costumes ?? []).map((candidate) => candidate.name)
+      );
+      throw new AssetManagerError(
+        'SOURCE_ASSET_NOT_FOUND',
+        `Costume no longer exists: ${reference.targetName}/${reference.costumeName}.`,
+        {
+          operation: 'show',
+          assetName: name,
+          actorName: reference.targetName,
+          candidates,
+          hint: suggestionHint(candidates)
+        }
+      );
+    }
     if (typeof costume.skinId !== 'number') {
-      throw new Error(`Costume skin is not available: ${reference.targetName}/${reference.costumeName}`);
+      throw new AssetManagerError(
+        'SOURCE_ASSET_NOT_FOUND',
+        `Costume skin is not available: ${reference.targetName}/${reference.costumeName}.`,
+        {
+          operation: 'show',
+          assetName: name,
+          actorName: reference.targetName,
+          hint: 'Wait for the project costume to finish loading and try again.'
+        }
+      );
     }
     return {target, costume};
   }
@@ -1201,12 +1889,50 @@ export class AssetManagerExtension {
     sound: TurboWarpSound;
   } {
     const reference = this.soundAssets.get(name);
-    if (!reference) throw new Error(`Sound asset is not registered: ${name}`);
+    if (!reference) throw this.assetNotRegistered('playSound', name);
     const target = this.resolveReferencedTarget(reference.targetId, reference.targetName, reference.isStage);
     const sound = this.findSound(target, reference.soundName, reference.assetId);
-    if (!sound) throw new Error(`Sound no longer exists: ${reference.targetName}/${reference.soundName}`);
-    if (!sound.soundId) throw new Error(`Sound ID is not available: ${reference.targetName}/${reference.soundName}`);
-    if (!target.sprite?.soundBank) throw new Error(`Sound bank is not available: ${reference.targetName}`);
+    if (!sound) {
+      const candidates = suggestNames(
+        reference.soundName,
+        (target.sprite?.sounds ?? []).map((candidate) => candidate.name)
+      );
+      throw new AssetManagerError(
+        'SOURCE_ASSET_NOT_FOUND',
+        `Sound no longer exists: ${reference.targetName}/${reference.soundName}.`,
+        {
+          operation: 'playSound',
+          assetName: name,
+          actorName: reference.targetName,
+          candidates,
+          hint: suggestionHint(candidates)
+        }
+      );
+    }
+    if (!sound.soundId) {
+      throw new AssetManagerError(
+        'SOURCE_ASSET_NOT_FOUND',
+        `Sound ID is not available: ${reference.targetName}/${reference.soundName}.`,
+        {
+          operation: 'playSound',
+          assetName: name,
+          actorName: reference.targetName,
+          hint: 'Wait for the project sound to finish loading and try again.'
+        }
+      );
+    }
+    if (!target.sprite?.soundBank) {
+      throw new AssetManagerError(
+        'DEPENDENCY_MISSING',
+        `Sound bank is not available: ${reference.targetName}.`,
+        {
+          operation: 'playSound',
+          assetName: name,
+          actorName: reference.targetName,
+          hint: 'Use a TurboWarp runtime with sound support.'
+        }
+      );
+    }
     return {target, sound};
   }
 
@@ -1218,7 +1944,15 @@ export class AssetManagerExtension {
 
   protected applySkinToTarget(target: TurboWarpTarget, skin: ResolvedSkin): void {
     if (target.drawableID === undefined || target.drawableID === null) {
-      throw new Error(`Target drawable not found: ${target.sprite?.name ?? 'unknown'}`);
+      throw new AssetManagerError(
+        'SPRITE_NOT_FOUND',
+        `Target drawable not found: ${target.sprite?.name ?? 'unknown'}.`,
+        {
+          operation: 'show',
+          actorName: target.sprite?.name ?? target.id,
+          hint: 'Use a live target with an initialized renderer drawable.'
+        }
+      );
     }
     this.renderer.updateDrawableSkinId(target.drawableID, skin.skinId);
     if (!target.isStage && skin.sourceSize !== null && target.size !== skin.sourceSize) {
@@ -1231,7 +1965,7 @@ export class AssetManagerExtension {
   protected async playResolvedSound(value: unknown, waitUntilDone: boolean): Promise<void> {
     const name = normalizeName(value);
     const kind = this.assetRegistry.get(name);
-    if (!kind) throw new Error(`Asset is not loaded: ${name}`);
+    if (!kind) throw this.assetNotRegistered('playSound', name);
     if (kind === 'external') {
       await this.playExternalSound(name, waitUntilDone);
       return;
@@ -1240,14 +1974,21 @@ export class AssetManagerExtension {
       await this.playProjectSound(name, waitUntilDone);
       return;
     }
-    throw new Error(`Asset is not audio: ${name}`);
+    throw this.assetTypeMismatch('playSound', name, 'audio', kind);
   }
 
   private async playExternalSound(name: string, waitUntilDone: boolean): Promise<void> {
     const asset = this.externalAssets.get(name);
-    if (!asset) throw new Error(`External asset is not loaded: ${name}`);
+    if (!asset) throw this.assetNotRegistered('playSound', name);
     asset.mimeType = normalizeMimeType(asset.mimeType, asset.url || name);
-    if (!asset.mimeType.startsWith('audio/')) throw new Error(`Asset is not audio: ${name} (${asset.mimeType})`);
+    if (!asset.mimeType.startsWith('audio/')) {
+      throw this.assetTypeMismatch(
+        'playSound',
+        name,
+        'audio',
+        `external/${this.externalMediaKind(asset)}`
+      );
+    }
     const objectUrl = URL.createObjectURL(new Blob([asset.data], {type: asset.mimeType}));
     const audio = new Audio(objectUrl);
     this.playingAudio.set(audio, name);
@@ -1265,8 +2006,8 @@ export class AssetManagerExtension {
     const playPromise = audio.play();
     if (!waitUntilDone) {
       void playPromise.catch((error) => {
-        console.warn(`Failed to play audio asset "${name}"`, error);
         cleanup();
+        console.error(this.playbackError(name, error));
       });
       return;
     }
@@ -1274,7 +2015,7 @@ export class AssetManagerExtension {
       await playPromise;
     } catch (error) {
       cleanup();
-      throw error;
+      throw this.playbackError(name, error);
     }
     await playbackFinished;
   }
@@ -1296,10 +2037,27 @@ export class AssetManagerExtension {
     const playResult = target.sprite?.soundBank?.playSound(target, sound.soundId as string);
     const playPromise = Promise.resolve(playResult);
     if (!waitUntilDone) {
-      void playPromise.catch((error) => console.warn(`Failed to play project sound asset "${name}"`, error));
+      void playPromise.catch((error) => console.error(this.playbackError(name, error)));
       return;
     }
-    await playPromise;
+    try {
+      await playPromise;
+    } catch (error) {
+      throw this.playbackError(name, error);
+    }
+  }
+
+  private playbackError(name: string, cause: unknown): AssetManagerError {
+    return new AssetManagerError(
+      'PLAYBACK_FAILED',
+      `Failed to play audio asset "${name}": ${errorMessage(cause)}`,
+      {
+        operation: 'playSound',
+        assetName: name,
+        hint: 'Check browser audio permissions and the registered audio resource.',
+        cause
+      }
+    );
   }
 
   private projectAssetMimeType(dataFormat: string | undefined, kind: 'image' | 'audio'): string {
