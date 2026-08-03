@@ -6,6 +6,14 @@ interface TestAnimationInternals {
   displayedAssets: Map<string, string>;
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return {promise, resolve};
+}
+
 describe('actor costume animation', () => {
   const updateDrawableSkinId = vi.fn();
   const playSound = vi.fn(() => Promise.resolve());
@@ -524,6 +532,25 @@ describe('actor costume animation', () => {
       emitRuntime('STOP_FOR_TARGET', temporaryClone);
       expect(internals.displayedAssets.size).toBe(1);
     }
+  });
+
+  it('does not restore display tracking when an asynchronous text apply outlives its target', async () => {
+    const extension = await createExtension();
+    await extension.registerAsset({RESOURCE_ID: 'text', NAME: 'Narration'});
+    runtimeVariables.set('text:Narration', 'Once upon a time');
+    const textApply = deferred<void>();
+    setAnimatedText.mockReturnValueOnce(textApply.promise);
+    const pendingApply = extension.setThisSpriteSkin({NAME: 'Narration'}, {target: clone});
+    await vi.waitFor(() => expect(setAnimatedText).toHaveBeenCalledOnce());
+
+    Scratch.vm.runtime.targets.splice(Scratch.vm.runtime.targets.indexOf(clone), 1);
+    emitRuntime('STOP_FOR_TARGET', clone);
+    const internals = extension as unknown as TestAnimationInternals;
+    expect(internals.displayedAssets.has(clone.id)).toBe(false);
+
+    textApply.resolve();
+    await pendingApply;
+    expect(internals.displayedAssets.has(clone.id)).toBe(false);
   });
 
   it('rejects duplicate ACTOR names as a project invariant violation', async () => {
