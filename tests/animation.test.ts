@@ -81,8 +81,10 @@ describe('actor costume animation', () => {
     drawableID: 8,
     size: 100,
     setSize: setCloneSize,
+    lookupVariableByNameAndType: (name, type) =>
+      name === 'actorName' && type === '' ? {value: 'FishClone'} : null,
     sprite: {
-      name: 'FishClone',
+      name: 'Actor',
       costumes: sprite.sprite!.costumes,
       sounds: []
     }
@@ -460,8 +462,51 @@ describe('actor costume animation', () => {
     await vi.advanceTimersByTimeAsync(1000);
     expect(updateDrawableSkinId).toHaveBeenCalledTimes(2);
     expect(updateDrawableSkinId).toHaveBeenLastCalledWith(8, 13);
-    expect(setCloneSize).toHaveBeenLastCalledWith(160);
-    expect(setCloneSize).toHaveBeenCalledTimes(1);
+    expect(setCloneSize).not.toHaveBeenCalled();
+    expect(clone.size).toBe(100);
+  });
+
+  it('resolves a clone by its local actorName without the invoking target', async () => {
+    const extension = await createExtension();
+    extension.startActorLoop({
+      ACTOR: 'FishClone', COSTUMES: 'Fish1,Fish2', DURATIONS: '0.1,0.1'
+    });
+    await flushFrame();
+
+    expect(updateDrawableSkinId).toHaveBeenLastCalledWith(8, 11);
+    expect(setCloneSize).not.toHaveBeenCalled();
+  });
+
+  it('prefers the invoking clone when actorName is duplicated', async () => {
+    const extension = await createExtension();
+    const duplicate: TurboWarpTarget = {
+      ...clone,
+      id: 'duplicate-actor-name-id',
+      drawableID: 10
+    };
+    Scratch.vm.runtime.targets.push(duplicate);
+
+    extension.startActorLoop(
+      {ACTOR: 'FishClone', COSTUMES: 'Fish1,Fish2', DURATIONS: '0.1,0.1'},
+      {target: clone}
+    );
+    await flushFrame();
+
+    expect(updateDrawableSkinId).toHaveBeenLastCalledWith(8, 11);
+  });
+
+  it('rejects duplicate actorName values without an invoking clone', async () => {
+    const extension = await createExtension();
+    const duplicate: TurboWarpTarget = {
+      ...clone,
+      id: 'duplicate-actor-name-id',
+      drawableID: 10
+    };
+    Scratch.vm.runtime.targets.push(duplicate);
+
+    expect(() => extension.startActorLoop({
+      ACTOR: 'FishClone', COSTUMES: 'Fish1', DURATIONS: '0.1'
+    })).toThrow('Actor name is not unique: FishClone');
   });
 
   it('lets the DSL show path replace an actor animation with current runtime text', async () => {

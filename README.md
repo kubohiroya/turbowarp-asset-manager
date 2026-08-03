@@ -11,14 +11,14 @@ The built JavaScript file is committed to this repository so that users do not n
 The versioned npm package contains the same reviewed build:
 
 ```bash
-pnpm add --save-exact @kubohiroya/turbowarp-asset-manager@0.4.0
+pnpm add --save-exact @kubohiroya/turbowarp-asset-manager@0.4.1
 ```
 
 Load `node_modules/@kubohiroya/turbowarp-asset-manager/dist/asset-manager.js`, or use the
 version-pinned CDN URL:
 
 ```text
-https://cdn.jsdelivr.net/npm/@kubohiroya/turbowarp-asset-manager@0.4.0/dist/asset-manager.js
+https://cdn.jsdelivr.net/npm/@kubohiroya/turbowarp-asset-manager@0.4.1/dist/asset-manager.js
 ```
 
 ## Extension ID compatibility
@@ -219,7 +219,7 @@ action=Fish:setSkin:Fish3
 
 stops the animation for `Fish` before applying `Fish3`.
 
-Animation state is keyed by the unique ACTOR name. In tmpose-kamishibai, each Actor sprite clone receives its own ACTOR name, so an ACTOR name maps to exactly one VM target; duplicate ACTOR names are rejected as a project invariant violation. The resolved target is retained in the state only as the drawing destination and for deletion cleanup. Starting a new animation replaces that ACTOR's previous animation. ACTOR deletion, green flag, project stop, runtime disposal, and deleting all in-memory assets cancel the relevant timers.
+Animation state is keyed by the unique ACTOR name. A sprite or clone may define that identity in a local `actorName` variable. The invoking target is preferred when its `actorName` or sprite name matches; otherwise Asset Manager searches `actorName` values before falling back to sprite names. Duplicate matches without an invoking target are rejected as a project invariant violation. Applying a project costume preserves a clone's current size while original sprites still adopt the source sprite size. The resolved target is retained in the state only as the drawing destination and for deletion cleanup. Starting a new animation replaces that ACTOR's previous animation. ACTOR deletion, green flag, project stop, runtime disposal, and deleting all in-memory assets cancel the relevant timers.
 
 ## Loading indicator compatibility
 

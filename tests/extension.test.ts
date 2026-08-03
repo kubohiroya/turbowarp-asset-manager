@@ -361,7 +361,7 @@ describe('project-local assets', () => {
     expect(extension.getInfo().docsURI).toBe(EXTENSION_DOCS_URI);
     expect(EXTENSION_DOCS_URI).toBe('https://kubohiroya.github.io/turbowarp-asset-manager/');
     expect(extension.getVersion()).toBe(EXTENSION_VERSION);
-    expect(EXTENSION_VERSION).toBe('0.4.0');
+    expect(EXTENSION_VERSION).toBe('0.4.1');
   });
 
   it('validates project asset addresses without registration side effects', () => {
@@ -500,6 +500,27 @@ describe('project-local assets', () => {
     await extension.setSpriteSkin({SPRITE: 'Hero', NAME: 'turtle'});
     expect(updateDrawableSkinId).toHaveBeenLastCalledWith(7, 43);
     expect(setSpriteSize).toHaveBeenLastCalledWith(175);
+  });
+
+  it('keeps a clone size when applying a project costume', async () => {
+    const extension = new AssetManagerExtension();
+    const setCloneSize = vi.fn();
+    const clone: TurboWarpTarget = {
+      ...sprite,
+      id: 'hero-clone-id',
+      isOriginal: false,
+      drawableID: 12,
+      size: 45,
+      setSize: setCloneSize
+    };
+    Scratch.vm.runtime.targets.push(clone);
+    await extension.registerAsset({RESOURCE_ID: 'costume:Hero:normal', NAME: 'hero'});
+
+    await extension.setThisSpriteSkin({NAME: 'hero'}, {target: clone});
+
+    expect(updateDrawableSkinId).toHaveBeenLastCalledWith(12, 42);
+    expect(setCloneSize).not.toHaveBeenCalled();
+    expect(clone.size).toBe(45);
   });
 
   it('leaves the target size unchanged for external images', async () => {
