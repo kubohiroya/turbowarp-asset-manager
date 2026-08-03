@@ -10,7 +10,7 @@ import {
 } from './text-style.js';
 
 export const EXTENSION_ID = 'kubohiroyaassetmanager';
-export const EXTENSION_VERSION = '2026-08-03-project-asset-validation-v1';
+export const EXTENSION_VERSION = '0.3.0';
 export const EXTENSION_DOCS_URI = 'https://kubohiroya.github.io/turbowarp-asset-manager/';
 
 const DB_NAME = 'tw-asset-manager';
