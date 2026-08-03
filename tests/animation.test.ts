@@ -3,6 +3,7 @@ import {AnimatedAssetManagerExtension} from '../src/animation.js';
 
 interface TestAnimationInternals {
   actorAnimations: Map<string, {target: TurboWarpTarget}>;
+  displayedAssets: Map<string, string>;
 }
 
 describe('actor costume animation', () => {
@@ -497,6 +498,32 @@ describe('actor costume animation', () => {
     await vi.advanceTimersByTimeAsync(1000);
     expect(updateDrawableSkinId).toHaveBeenCalledTimes(1);
     expect(internals.actorAnimations.has('FishClone')).toBe(false);
+  });
+
+  it('releases display tracking only after a target is removed from the runtime', async () => {
+    const extension = await createExtension();
+    await extension.setThisSpriteSkin({NAME: 'Fish1'}, {target: clone});
+    await extension.setThisSpriteSkin({NAME: 'Fish2'}, {target: sprite});
+    const internals = extension as unknown as TestAnimationInternals;
+
+    emitRuntime('STOP_FOR_TARGET', clone);
+    expect(internals.displayedAssets.get(clone.id)).toBe('Fish1');
+
+    Scratch.vm.runtime.targets.splice(Scratch.vm.runtime.targets.indexOf(clone), 1);
+    emitRuntime('STOP_FOR_TARGET', clone);
+    expect(internals.displayedAssets.has(clone.id)).toBe(false);
+    expect(internals.displayedAssets.get(sprite.id)).toBe('Fish2');
+
+    for (let index = 0; index < 3; index += 1) {
+      const temporaryClone: TurboWarpTarget = {...clone, id: `temporary-clone-${index}`};
+      Scratch.vm.runtime.targets.push(temporaryClone);
+      await extension.setThisSpriteSkin({NAME: 'Fish1'}, {target: temporaryClone});
+      expect(internals.displayedAssets.size).toBe(2);
+
+      Scratch.vm.runtime.targets.splice(Scratch.vm.runtime.targets.indexOf(temporaryClone), 1);
+      emitRuntime('STOP_FOR_TARGET', temporaryClone);
+      expect(internals.displayedAssets.size).toBe(1);
+    }
   });
 
   it('rejects duplicate ACTOR names as a project invariant violation', async () => {
