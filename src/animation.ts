@@ -45,7 +45,8 @@ interface AnimationAssetsInput {
 /**
  * Asset Manager with actor-level background asset animation.
  *
- * ACTOR is resolved using the existing named-sprite behaviour of setSpriteSkin.
+ * ACTOR is resolved from a clone-local actorName variable before falling back
+ * to the existing named-sprite behaviour of setSpriteSkin.
  * ASSETS and DURATIONS are comma-separated strings. ASSETS contains registered
  * image or audio asset names. Each duration is the interval before the next
  * action, and a zero groups those adjacent actions. Loop has one interval per
@@ -159,10 +160,28 @@ export class AnimatedAssetManagerExtension extends AssetManagerExtension {
     return actor;
   }
 
+  private actorNameOf(target: TurboWarpTarget): string {
+    return normalizeName(target.lookupVariableByNameAndType?.('actorName', '')?.value);
+  }
+
   private resolveActorTarget(actor: string, util?: ScratchBlockUtility): TurboWarpTarget {
-    const matches = this.runtime.targets.filter(
-      (target) => !target.isStage && target.sprite?.name === actor
+    const invokingTarget = util?.target;
+    if (
+      invokingTarget &&
+      !invokingTarget.isStage &&
+      (this.actorNameOf(invokingTarget) === actor || invokingTarget.sprite?.name === actor)
+    ) {
+      return invokingTarget;
+    }
+    const actorNameMatches = this.runtime.targets.filter(
+      (target) => !target.isStage && this.actorNameOf(target) === actor
     );
+    const matches =
+      actorNameMatches.length > 0
+        ? actorNameMatches
+        : this.runtime.targets.filter(
+            (target) => !target.isStage && target.sprite?.name === actor
+          );
     if (matches.length > 1) {
       throw new AssetManagerError(
         'SPRITE_NAME_AMBIGUOUS',
@@ -174,17 +193,18 @@ export class AnimatedAssetManagerExtension extends AssetManagerExtension {
         }
       );
     }
-    const invokingTarget = util?.target;
-    if (invokingTarget && !invokingTarget.isStage && invokingTarget.sprite?.name === actor) {
-      return invokingTarget;
-    }
     const target = matches[0] ?? this.findTargetByName(actor);
     if (!target) {
       const candidates = suggestNames(
         actor,
-        this.runtime.targets.flatMap((candidate) =>
-          !candidate.isStage && candidate.sprite?.name ? [candidate.sprite.name] : []
-        )
+        [
+          ...new Set(
+            this.runtime.targets.flatMap((candidate) => {
+              if (candidate.isStage) return [];
+              return [this.actorNameOf(candidate), candidate.sprite?.name ?? ''].filter(Boolean);
+            })
+          )
+        ]
       );
       throw new AssetManagerError('SPRITE_NOT_FOUND', `Actor not found: ${actor}.`, {
         operation: 'resolveActor',

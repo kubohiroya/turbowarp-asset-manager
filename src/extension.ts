@@ -20,7 +20,7 @@ import {
 } from './text-style.js';
 
 export const EXTENSION_ID = 'kubohiroyaassetmanager';
-export const EXTENSION_VERSION = '0.4.0';
+export const EXTENSION_VERSION = '0.4.1';
 export const EXTENSION_DOCS_URI = 'https://kubohiroya.github.io/turbowarp-asset-manager/';
 
 const DB_NAME = 'tw-asset-manager';
@@ -1955,7 +1955,12 @@ export class AssetManagerExtension {
       );
     }
     this.renderer.updateDrawableSkinId(target.drawableID, skin.skinId);
-    if (!target.isStage && skin.sourceSize !== null && target.size !== skin.sourceSize) {
+    if (
+      !target.isStage &&
+      target.isOriginal &&
+      skin.sourceSize !== null &&
+      target.size !== skin.sourceSize
+    ) {
       target.setSize(skin.sourceSize);
     }
     target.emitVisualChange?.();
