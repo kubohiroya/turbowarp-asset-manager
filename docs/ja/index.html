@@ -79,7 +79,7 @@
         <li>
           <h3>拡張機能を読み込む</h3>
           <p>TurboWarp で <strong>拡張機能を追加 → カスタム拡張機能</strong>を選び、次の URL を貼り付けます。</p>
-          <pre><code>https://cdn.jsdelivr.net/npm/@kubohiroya/turbowarp-asset-manager@0.3.0/dist/asset-manager.js</code></pre>
+          <pre><code>https://cdn.jsdelivr.net/npm/@kubohiroya/turbowarp-asset-manager@0.4.0/dist/asset-manager.js</code></pre>
           <p><strong>サンドボックスなしで実行</strong>を有効にします。</p>
         </li>
         <li>
@@ -255,6 +255,11 @@
       </aside>
 
       <h3 id="diagnostic-errors">診断エラーコード</h3>
+      <p class="callout">
+        <strong>0.3.0から更新する場合:</strong> 従来の小文字種別トークンと
+        <code>asset registration error type</code>を比較しているスクリプトを更新してください。
+        0.4.0では、以下の大文字診断コードを返します。
+      </p>
       <p>
         利用者向けエラーは <code>[Asset Manager][CODE]</code> で始まり、操作名、asset/resource/actor 名、
         修正ヒント、近い候補、元の例外を保持します。登録エラーの Reporter は最新のコードと関連名を返します。
