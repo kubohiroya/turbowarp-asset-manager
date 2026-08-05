@@ -1,5 +1,28 @@
 import {AssetManagerExtension, normalizeName} from './extension.js';
 import {type AssetManagerFeatureFlags} from './feature-flags.js';
+import {
+  createVerifiedRemoteBinaryCache,
+  type VerifiedRemoteBinaryCache,
+  type VerifiedRemoteBinaryCacheOptions,
+  type VerifiedRemoteBinaryInput,
+  type VerifiedRemoteBinaryResolveOptions,
+  type VerifiedRemoteBinaryResult,
+  type VerifiedRemoteCachePruneResult,
+  type VerifiedRemoteCacheStats
+} from './verified-remote-cache.js';
+
+export {
+  createVerifiedRemoteBinaryCache,
+  type NormalizedVerifiedRemoteBinaryInput,
+  type VerifiedRemoteBinaryCache,
+  type VerifiedRemoteBinaryCacheOptions,
+  type VerifiedRemoteBinaryInput,
+  type VerifiedRemoteBinaryLoadResult,
+  type VerifiedRemoteBinaryResolveOptions,
+  type VerifiedRemoteBinaryResult,
+  type VerifiedRemoteCachePruneResult,
+  type VerifiedRemoteCacheStats
+} from './verified-remote-cache.js';
 
 export interface EmbeddedAssetBytesInput {
   name: unknown;
@@ -23,6 +46,10 @@ export interface AssetManagerCompositionTarget {
   readonly isStage: boolean;
 }
 
+export interface AssetManagerCompositionOptions {
+  readonly verifiedRemoteCache?: VerifiedRemoteBinaryCacheOptions;
+}
+
 export interface AssetManagerComposition {
   registerProjectAsset(input: ProjectAssetRegistrationInput): Promise<EmbeddedAssetRegistration>;
   registerEmbeddedAsset(input: EmbeddedAssetBytesInput): Promise<EmbeddedAssetRegistration>;
@@ -35,15 +62,32 @@ export interface AssetManagerComposition {
   playSound(name: unknown, options?: Readonly<{untilDone?: boolean}>): Promise<void>;
   stopSound(name: unknown): void;
   stopAllSounds(): void;
+  resolveVerifiedRemoteBinary(
+    input: VerifiedRemoteBinaryInput,
+    options: VerifiedRemoteBinaryResolveOptions
+  ): Promise<VerifiedRemoteBinaryResult>;
+  getVerifiedRemoteCacheStats(): Promise<VerifiedRemoteCacheStats>;
+  pruneVerifiedRemoteCache(): Promise<VerifiedRemoteCachePruneResult>;
+  clearVerifiedRemoteCache(): Promise<VerifiedRemoteCachePruneResult>;
 }
 
 export function createAssetManagerComposition(
-  featureFlags?: AssetManagerFeatureFlags
+  featureFlags?: AssetManagerFeatureFlags,
+  options: AssetManagerCompositionOptions = {}
 ): AssetManagerComposition {
+  if (!options || typeof options !== 'object' || Array.isArray(options)) {
+    throw new TypeError('Asset Manager composition options must be an object.');
+  }
   const extension = featureFlags
     ? new AssetManagerExtension(featureFlags)
     : new AssetManagerExtension();
   const ownedNames = new Set<string>();
+  let verifiedRemoteCache: VerifiedRemoteBinaryCache | null = null;
+
+  function remoteCache(): VerifiedRemoteBinaryCache {
+    verifiedRemoteCache ??= createVerifiedRemoteBinaryCache(options.verifiedRemoteCache);
+    return verifiedRemoteCache;
+  }
 
   function cancelledRegistration(name: string): Error {
     const error = new Error(`Asset registration was cancelled: ${name}`);
@@ -142,6 +186,18 @@ export function createAssetManagerComposition(
     },
     stopAllSounds() {
       extension.stopAllSounds();
+    },
+    resolveVerifiedRemoteBinary(input, resolveOptions) {
+      return remoteCache().resolve(input, resolveOptions);
+    },
+    getVerifiedRemoteCacheStats() {
+      return remoteCache().getStats();
+    },
+    pruneVerifiedRemoteCache() {
+      return remoteCache().prune();
+    },
+    clearVerifiedRemoteCache() {
+      return remoteCache().clear();
     }
   };
   return Object.freeze(composition);

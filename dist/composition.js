@@ -1868,9 +1868,687 @@ class AssetManagerExtension {
     return kind === "image" ? "image/x-scratch-costume" : "audio/x-scratch-sound";
   }
 }
-function createAssetManagerComposition(featureFlags) {
+const DATABASE_NAME = "tw-asset-manager-verified-binary-v1";
+const DATABASE_VERSION = 1;
+const ENTRY_STORE = "entries";
+const METADATA_STORE = "metadata";
+const CACHE_FORMAT_VERSION = 1;
+const DEFAULT_MAX_CACHE_BYTES = 256 * 1024 * 1024;
+const DEFAULT_QUOTA_FRACTION = 0.2;
+const DEFAULT_LOW_WATER_RATIO = 0.8;
+const DEFAULT_TTL_MS = 30 * 24 * 60 * 60 * 1e3;
+const DEFAULT_TOUCH_INTERVAL_MS = 60 * 60 * 1e3;
+const DEFAULT_CLEANUP_BATCH_SIZE = 64;
+function cacheError(code, message, cause) {
+  const error = new Error(message, cause === void 0 ? void 0 : { cause });
+  Object.defineProperty(error, "code", { value: code });
+  return error;
+}
+function abortError() {
+  const error = new Error("Verified remote binary resolution was cancelled.");
+  error.name = "AbortError";
+  return error;
+}
+function assertNotAborted(signal) {
+  if (signal?.aborted) throw abortError();
+}
+function positiveSafeInteger(value, name) {
+  if (!Number.isSafeInteger(value) || Number(value) <= 0) {
+    throw cacheError("ASSET_CACHE_INPUT_INVALID", `${name} must be a positive safe integer.`);
+  }
+  return Number(value);
+}
+function finiteRatio(value, name) {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0 || value > 1) {
+    throw new TypeError(`${name} must be greater than 0 and at most 1.`);
+  }
+  return value;
+}
+function normalizeContentType(value) {
+  if (typeof value !== "string") return "";
+  return value.split(";", 1)[0].trim().toLowerCase();
+}
+function normalizeInput(input) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw cacheError("ASSET_CACHE_INPUT_INVALID", "Remote binary input must be an object.");
+  }
+  if (typeof input.url !== "string") {
+    throw cacheError("ASSET_CACHE_INPUT_INVALID", "Remote binary URL must be a string.");
+  }
+  let url;
+  try {
+    url = new URL(input.url);
+  } catch (error) {
+    throw cacheError("ASSET_CACHE_INPUT_INVALID", "Remote binary URL is invalid.", error);
+  }
+  if (url.protocol !== "https:" || !url.hostname || url.username || url.password || url.hash) {
+    throw cacheError(
+      "ASSET_CACHE_INPUT_INVALID",
+      "Remote binary URL must be an absolute HTTPS URL without credentials or a fragment."
+    );
+  }
+  if (typeof input.integrity !== "string" || !/^sha256-[0-9a-f]{64}$/u.test(input.integrity)) {
+    throw cacheError(
+      "ASSET_CACHE_INPUT_INVALID",
+      "Remote binary integrity must be sha256- followed by 64 lowercase hexadecimal digits."
+    );
+  }
+  const contentType = normalizeContentType(input.contentType);
+  if (!contentType || !/^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/u.test(contentType)) {
+    throw cacheError("ASSET_CACHE_INPUT_INVALID", "Remote binary Content-Type is invalid.");
+  }
+  return Object.freeze({
+    url: url.href,
+    integrity: input.integrity,
+    size: positiveSafeInteger(input.size, "Remote binary size"),
+    contentType
+  });
+}
+function copyBytes(value) {
+  if (value instanceof ArrayBuffer) return Uint8Array.from(new Uint8Array(value));
+  if (value instanceof Uint8Array) return Uint8Array.from(value);
+  throw cacheError(
+    "ASSET_CACHE_LOAD_INVALID",
+    "Remote binary loader must return an ArrayBuffer or Uint8Array."
+  );
+}
+function requestResult(request) {
+  return new Promise((resolve, reject) => {
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error ?? new Error("IndexedDB request failed."));
+  });
+}
+function transactionComplete(transaction) {
+  return new Promise((resolve, reject) => {
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error ?? new Error("IndexedDB transaction failed."));
+    transaction.onabort = () => reject(transaction.error ?? new Error("IndexedDB transaction was aborted."));
+  });
+}
+class IndexedDBVerifiedRemoteStore {
+  #indexedDB;
+  constructor(indexedDB2) {
+    this.#indexedDB = indexedDB2;
+  }
+  async #open() {
+    if (!this.#indexedDB || typeof this.#indexedDB.open !== "function") {
+      throw cacheError("ASSET_CACHE_INDEXEDDB_UNAVAILABLE", "IndexedDB is not available.");
+    }
+    let request;
+    try {
+      request = this.#indexedDB.open(DATABASE_NAME, DATABASE_VERSION);
+    } catch (error) {
+      throw cacheError("ASSET_CACHE_INDEXEDDB_UNAVAILABLE", "IndexedDB could not be opened.", error);
+    }
+    return new Promise((resolve, reject) => {
+      request.onupgradeneeded = () => {
+        const database = request.result;
+        if (!database.objectStoreNames.contains(ENTRY_STORE)) {
+          database.createObjectStore(ENTRY_STORE, { keyPath: "key" });
+        }
+        if (!database.objectStoreNames.contains(METADATA_STORE)) {
+          const metadata = database.createObjectStore(METADATA_STORE, { keyPath: "key" });
+          metadata.createIndex("lastAccessedAt", "lastAccessedAt");
+        }
+      };
+      request.onsuccess = () => {
+        const database = request.result;
+        database.onversionchange = () => database.close();
+        resolve(database);
+      };
+      request.onerror = () => reject(
+        cacheError(
+          "ASSET_CACHE_INDEXEDDB_UNAVAILABLE",
+          "IndexedDB open request failed.",
+          request.error
+        )
+      );
+      request.onblocked = () => reject(cacheError("ASSET_CACHE_INDEXEDDB_BLOCKED", "IndexedDB upgrade was blocked."));
+    });
+  }
+  async get(key) {
+    const database = await this.#open();
+    try {
+      const transaction = database.transaction([ENTRY_STORE, METADATA_STORE], "readonly");
+      const entryRequest = transaction.objectStore(ENTRY_STORE).get(key);
+      const metadataRequest = transaction.objectStore(METADATA_STORE).get(key);
+      const completion = transactionComplete(transaction);
+      const [entry, metadata] = await Promise.all([
+        requestResult(entryRequest),
+        requestResult(metadataRequest)
+      ]);
+      await completion;
+      return entry && metadata ? { entry, metadata } : null;
+    } finally {
+      database.close();
+    }
+  }
+  async put(record, signal) {
+    assertNotAborted(signal);
+    const database = await this.#open();
+    let transaction = null;
+    let completed = false;
+    const abortTransaction = () => {
+      if (completed || !transaction) return;
+      try {
+        transaction.abort();
+      } catch {
+      }
+    };
+    try {
+      assertNotAborted(signal);
+      transaction = database.transaction([ENTRY_STORE, METADATA_STORE], "readwrite");
+      signal?.addEventListener("abort", abortTransaction, { once: true });
+      transaction.objectStore(ENTRY_STORE).put(record.entry);
+      transaction.objectStore(METADATA_STORE).put(record.metadata);
+      try {
+        await transactionComplete(transaction);
+        completed = true;
+      } catch (error) {
+        if (signal?.aborted) throw abortError();
+        throw error;
+      }
+    } finally {
+      signal?.removeEventListener("abort", abortTransaction);
+      database.close();
+    }
+  }
+  async deleteIfWriteToken(key, writeToken) {
+    const database = await this.#open();
+    try {
+      const transaction = database.transaction([ENTRY_STORE, METADATA_STORE], "readwrite");
+      const entries = transaction.objectStore(ENTRY_STORE);
+      const metadata = transaction.objectStore(METADATA_STORE);
+      const request = metadata.get(key);
+      request.onsuccess = () => {
+        if (request.result?.writeToken !== writeToken) return;
+        entries.delete(key);
+        metadata.delete(key);
+      };
+      await transactionComplete(transaction);
+    } finally {
+      database.close();
+    }
+  }
+  async touch(key, accessedAt, validatedAt) {
+    const database = await this.#open();
+    try {
+      const transaction = database.transaction(METADATA_STORE, "readwrite");
+      const store = transaction.objectStore(METADATA_STORE);
+      const request = store.get(key);
+      request.onsuccess = () => {
+        const current = request.result;
+        if (!current) return;
+        store.put({ ...current, lastAccessedAt: accessedAt, lastValidatedAt: validatedAt });
+      };
+      await transactionComplete(transaction);
+    } finally {
+      database.close();
+    }
+  }
+  async delete(key) {
+    const database = await this.#open();
+    try {
+      const transaction = database.transaction([ENTRY_STORE, METADATA_STORE], "readwrite");
+      transaction.objectStore(ENTRY_STORE).delete(key);
+      transaction.objectStore(METADATA_STORE).delete(key);
+      await transactionComplete(transaction);
+    } finally {
+      database.close();
+    }
+  }
+  async metadata() {
+    const database = await this.#open();
+    try {
+      const transaction = database.transaction(METADATA_STORE, "readonly");
+      const request = transaction.objectStore(METADATA_STORE).getAll();
+      const completion = transactionComplete(transaction);
+      const result = await requestResult(request);
+      await completion;
+      return result;
+    } finally {
+      database.close();
+    }
+  }
+  async entryKeys() {
+    const database = await this.#open();
+    try {
+      const transaction = database.transaction(ENTRY_STORE, "readonly");
+      const request = transaction.objectStore(ENTRY_STORE).getAllKeys();
+      const completion = transactionComplete(transaction);
+      const result = await requestResult(request);
+      await completion;
+      return result;
+    } finally {
+      database.close();
+    }
+  }
+  async deleteBatch(candidates) {
+    if (candidates.length === 0) return { entries: 0, bytes: 0 };
+    const database = await this.#open();
+    let removedEntries = 0;
+    let removedBytes = 0;
+    try {
+      const transaction = database.transaction([ENTRY_STORE, METADATA_STORE], "readwrite");
+      const entries = transaction.objectStore(ENTRY_STORE);
+      const metadata = transaction.objectStore(METADATA_STORE);
+      for (const candidate of candidates) {
+        const metadataRequest = metadata.get(candidate.key);
+        const entryRequest = entries.get(candidate.key);
+        let metadataDone = false;
+        let entryDone = false;
+        const deleteIfStillCandidate = () => {
+          if (!metadataDone || !entryDone) return;
+          const current = metadataRequest.result;
+          const currentEntry = entryRequest.result;
+          if (!current) {
+            if (!candidate.deleteOrphanEntry || !currentEntry) return;
+            entries.delete(candidate.key);
+            removedEntries += 1;
+            if (typeof currentEntry === "object" && !Array.isArray(currentEntry) && currentEntry.data instanceof ArrayBuffer) {
+              removedBytes += currentEntry.data.byteLength;
+            }
+            return;
+          }
+          if (typeof current !== "object" || Array.isArray(current)) return;
+          const currentMetadata = current;
+          const candidateStillMatches = candidate.writeToken === null ? !metadataIsStructurallyValid(current) : currentMetadata.writeToken === candidate.writeToken && currentMetadata.lastAccessedAt === candidate.lastAccessedAt;
+          if (!candidateStillMatches) return;
+          entries.delete(candidate.key);
+          metadata.delete(candidate.key);
+          removedEntries += 1;
+          removedBytes += Number.isSafeInteger(currentMetadata.size) ? Number(currentMetadata.size) : 0;
+        };
+        metadataRequest.onsuccess = () => {
+          metadataDone = true;
+          deleteIfStillCandidate();
+        };
+        entryRequest.onsuccess = () => {
+          entryDone = true;
+          deleteIfStillCandidate();
+        };
+      }
+      await transactionComplete(transaction);
+      return { entries: removedEntries, bytes: removedBytes };
+    } finally {
+      database.close();
+    }
+  }
+  async clear() {
+    const database = await this.#open();
+    try {
+      const transaction = database.transaction([ENTRY_STORE, METADATA_STORE], "readwrite");
+      transaction.objectStore(ENTRY_STORE).clear();
+      transaction.objectStore(METADATA_STORE).clear();
+      await transactionComplete(transaction);
+    } finally {
+      database.close();
+    }
+  }
+}
+function isQuotaExceeded(error) {
+  return error instanceof DOMException ? error.name === "QuotaExceededError" : Boolean(
+    error && typeof error === "object" && "name" in error && error.name === "QuotaExceededError"
+  );
+}
+function isAbortError(error) {
+  return Boolean(error && typeof error === "object" && "name" in error && error.name === "AbortError");
+}
+function metadataIsStructurallyValid(metadata) {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return false;
+  const candidate = metadata;
+  return candidate.formatVersion === CACHE_FORMAT_VERSION && typeof candidate.key === "string" && typeof candidate.integrity === "string" && candidate.key === `${CACHE_FORMAT_VERSION}:${candidate.integrity}` && /^sha256-[0-9a-f]{64}$/u.test(candidate.integrity) && Number.isSafeInteger(candidate.size) && Number(candidate.size) > 0 && typeof candidate.contentType === "string" && normalizeContentType(candidate.contentType) === candidate.contentType && Number.isFinite(candidate.createdAt) && Number.isFinite(candidate.lastAccessedAt) && Number.isFinite(candidate.lastValidatedAt) && typeof candidate.writeToken === "string" && candidate.writeToken.length > 0;
+}
+async function sha256Hex(bytes, subtleCrypto) {
+  const digest = new Uint8Array(
+    await subtleCrypto.digest("SHA-256", Uint8Array.from(bytes).buffer)
+  );
+  return [...digest].map((value) => value.toString(16).padStart(2, "0")).join("");
+}
+function createVerifiedRemoteBinaryCache(options = {}) {
+  const indexedDB2 = options.indexedDB ?? globalThis.indexedDB;
+  const subtleCrypto = options.subtleCrypto ?? globalThis.crypto?.subtle;
+  if (!subtleCrypto || typeof subtleCrypto.digest !== "function") {
+    throw cacheError("ASSET_CACHE_CRYPTO_UNAVAILABLE", "Web Crypto SHA-256 is not available.");
+  }
+  const now = options.now ?? Date.now;
+  if (typeof now !== "function") throw new TypeError("now must be a function.");
+  const maxCacheBytes = positiveSafeInteger(
+    options.maxCacheBytes ?? DEFAULT_MAX_CACHE_BYTES,
+    "maxCacheBytes"
+  );
+  const quotaFraction = finiteRatio(
+    options.quotaFraction ?? DEFAULT_QUOTA_FRACTION,
+    "quotaFraction"
+  );
+  const lowWaterRatio = finiteRatio(
+    options.lowWaterRatio ?? DEFAULT_LOW_WATER_RATIO,
+    "lowWaterRatio"
+  );
+  const ttlMs = positiveSafeInteger(options.ttlMs ?? DEFAULT_TTL_MS, "ttlMs");
+  const touchIntervalMs = positiveSafeInteger(
+    options.touchIntervalMs ?? DEFAULT_TOUCH_INTERVAL_MS,
+    "touchIntervalMs"
+  );
+  const cleanupBatchSize = positiveSafeInteger(
+    options.cleanupBatchSize ?? DEFAULT_CLEANUP_BATCH_SIZE,
+    "cleanupBatchSize"
+  );
+  const estimateStorage = options.estimateStorage ?? (typeof globalThis.navigator?.storage?.estimate === "function" ? () => globalThis.navigator.storage.estimate() : async () => ({}));
+  if (typeof estimateStorage !== "function") {
+    throw new TypeError("estimateStorage must be a function.");
+  }
+  const store = new IndexedDBVerifiedRemoteStore(indexedDB2);
+  let initialPrune = null;
+  let writeSequence = 0;
+  async function waterMarks() {
+    let quotaBudget = maxCacheBytes;
+    try {
+      const estimate = await estimateStorage();
+      if (Number.isFinite(estimate.quota) && Number(estimate.quota) > 0) {
+        quotaBudget = Math.max(1, Math.floor(Number(estimate.quota) * quotaFraction));
+      }
+    } catch {
+    }
+    const high = Math.min(maxCacheBytes, quotaBudget);
+    return { high, low: Math.max(0, Math.floor(high * lowWaterRatio)) };
+  }
+  async function statsFrom(metadata) {
+    const valid = metadata.filter(metadataIsStructurallyValid);
+    const accessed = valid.map(({ lastAccessedAt }) => lastAccessedAt);
+    const { high, low } = await waterMarks();
+    return Object.freeze({
+      entries: valid.length,
+      bytes: valid.reduce((total, entry) => total + entry.size, 0),
+      oldestAccessedAt: accessed.length > 0 ? Math.min(...accessed) : null,
+      newestAccessedAt: accessed.length > 0 ? Math.max(...accessed) : null,
+      highWaterBytes: high,
+      lowWaterBytes: low
+    });
+  }
+  async function pruneFor(incomingBytes = 0, pinnedKey = null, force = false) {
+    const currentTime = now();
+    const metadata = await store.metadata();
+    const entryKeys = new Set(
+      (await store.entryKeys()).filter((key) => typeof key === "string")
+    );
+    const metadataKeys = new Set(
+      metadata.flatMap((entry) => {
+        if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
+        const key = entry.key;
+        return typeof key === "string" ? [key] : [];
+      })
+    );
+    const { high, low } = await waterMarks();
+    const valid = metadata.filter(
+      (entry) => metadataIsStructurallyValid(entry) && entryKeys.has(entry.key) && currentTime - entry.lastAccessedAt <= ttlMs
+    );
+    const invalid = metadata.filter(
+      (entry) => !metadataIsStructurallyValid(entry) || !entryKeys.has(entry.key) || currentTime - entry.lastAccessedAt > ttlMs
+    );
+    let remainingBytes = valid.reduce((total, entry) => total + entry.size, 0);
+    const candidates = /* @__PURE__ */ new Map();
+    for (const entry of invalid) {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+      const candidate = entry;
+      if (typeof candidate.key !== "string" || candidate.key === pinnedKey) continue;
+      candidates.set(
+        candidate.key,
+        metadataIsStructurallyValid(entry) ? {
+          key: entry.key,
+          lastAccessedAt: entry.lastAccessedAt,
+          writeToken: entry.writeToken,
+          deleteOrphanEntry: false
+        } : {
+          key: candidate.key,
+          lastAccessedAt: null,
+          writeToken: null,
+          deleteOrphanEntry: false
+        }
+      );
+    }
+    for (const key of entryKeys) {
+      if (key === pinnedKey || metadataKeys.has(key)) continue;
+      candidates.set(key, {
+        key,
+        lastAccessedAt: null,
+        writeToken: null,
+        deleteOrphanEntry: true
+      });
+    }
+    const target = Math.max(0, Math.min(low, high - incomingBytes));
+    if (force || remainingBytes + incomingBytes > high) {
+      for (const entry of [...valid].sort(
+        (left, right) => left.lastAccessedAt - right.lastAccessedAt || left.key.localeCompare(right.key)
+      )) {
+        if (remainingBytes <= target) break;
+        if (entry.key === pinnedKey) continue;
+        candidates.set(entry.key, {
+          key: entry.key,
+          lastAccessedAt: entry.lastAccessedAt,
+          writeToken: entry.writeToken,
+          deleteOrphanEntry: false
+        });
+        remainingBytes -= entry.size;
+      }
+    }
+    let removedEntries = 0;
+    let removedBytes = 0;
+    const selected = [...candidates.values()];
+    for (let index = 0; index < selected.length; index += cleanupBatchSize) {
+      const removed = await store.deleteBatch(selected.slice(index, index + cleanupBatchSize));
+      removedEntries += removed.entries;
+      removedBytes += removed.bytes;
+      await Promise.resolve();
+    }
+    const after = await statsFrom(await store.metadata());
+    return Object.freeze({
+      removedEntries,
+      removedBytes,
+      remainingEntries: after.entries,
+      remainingBytes: after.bytes,
+      highWaterBytes: after.highWaterBytes,
+      lowWaterBytes: after.lowWaterBytes
+    });
+  }
+  function ensureInitialPrune() {
+    initialPrune ??= pruneFor().catch((error) => {
+      initialPrune = null;
+      throw error;
+    });
+    return initialPrune;
+  }
+  async function verifyBytes(bytes, input, actualContentType) {
+    if (bytes.byteLength !== input.size) {
+      throw cacheError(
+        "ASSET_CACHE_SIZE_MISMATCH",
+        `Remote binary size mismatch: expected ${input.size}, received ${bytes.byteLength}.`
+      );
+    }
+    if (normalizeContentType(actualContentType) !== input.contentType) {
+      throw cacheError(
+        "ASSET_CACHE_CONTENT_TYPE_MISMATCH",
+        `Remote binary Content-Type mismatch: expected ${input.contentType}.`
+      );
+    }
+    const actualIntegrity = `sha256-${await sha256Hex(bytes, subtleCrypto)}`;
+    if (actualIntegrity !== input.integrity) {
+      throw cacheError("ASSET_CACHE_INTEGRITY_MISMATCH", "Remote binary integrity mismatch.");
+    }
+  }
+  async function readCached(input) {
+    const key = `${CACHE_FORMAT_VERSION}:${input.integrity}`;
+    const record = await store.get(key);
+    if (!record) return { status: "miss" };
+    const currentTime = now();
+    const { entry, metadata } = record;
+    const entryIsValid = entry && typeof entry === "object" && entry.key === key && entry.data instanceof ArrayBuffer;
+    if (!entryIsValid) {
+      await store.delete(key);
+      return { status: "invalid" };
+    }
+    const bytes = new Uint8Array(entry.data);
+    const metadataMatches = metadataIsStructurallyValid(metadata) && metadata.integrity === input.integrity && metadata.size === input.size && metadata.contentType === input.contentType && currentTime - metadata.lastAccessedAt <= ttlMs && entry.key === key;
+    if (!metadataMatches) {
+      await store.delete(key);
+      return { status: "invalid" };
+    }
+    try {
+      await verifyBytes(bytes, input, metadata.contentType);
+    } catch {
+      await store.delete(key);
+      return { status: "invalid" };
+    }
+    if (currentTime - metadata.lastAccessedAt >= touchIntervalMs) {
+      await store.touch(key, currentTime, currentTime).catch(() => {
+      });
+    }
+    return { status: "hit", bytes: Uint8Array.from(bytes) };
+  }
+  async function writeCached(input, bytes, signal) {
+    const key = `${CACHE_FORMAT_VERSION}:${input.integrity}`;
+    const { high } = await waterMarks();
+    if (bytes.byteLength > high) return { status: "skipped" };
+    const writeToken = `${now()}:${++writeSequence}`;
+    const write = async () => {
+      assertNotAborted(signal);
+      const timestamp = now();
+      await store.put(
+        {
+          entry: { key, data: Uint8Array.from(bytes).buffer },
+          metadata: {
+            formatVersion: CACHE_FORMAT_VERSION,
+            key,
+            integrity: input.integrity,
+            size: input.size,
+            contentType: input.contentType,
+            createdAt: timestamp,
+            lastAccessedAt: timestamp,
+            lastValidatedAt: timestamp,
+            writeToken
+          }
+        },
+        signal
+      );
+      if (signal?.aborted) {
+        await store.deleteIfWriteToken(key, writeToken).catch(() => {
+        });
+        throw abortError();
+      }
+    };
+    try {
+      await pruneFor(bytes.byteLength, key);
+      await write();
+      await pruneFor(0, key).catch(() => {
+      });
+      return Object.freeze({ status: "stored", key, writeToken });
+    } catch (error) {
+      if (isAbortError(error)) throw error;
+      if (!isQuotaExceeded(error)) return { status: "failed" };
+      try {
+        await pruneFor(bytes.byteLength, key, true);
+        await write();
+        await pruneFor(0, key).catch(() => {
+        });
+        return Object.freeze({ status: "stored", key, writeToken });
+      } catch (retryError) {
+        if (isAbortError(retryError)) throw retryError;
+        return { status: "failed" };
+      }
+    }
+  }
+  const cache = {
+    async resolve(input, resolveOptions) {
+      if (!resolveOptions || typeof resolveOptions !== "object" || Array.isArray(resolveOptions)) {
+        throw new TypeError("Verified remote binary resolve options must be an object.");
+      }
+      if (typeof resolveOptions.load !== "function") {
+        throw new TypeError("Verified remote binary resolve options must provide load.");
+      }
+      const normalized = normalizeInput(input);
+      assertNotAborted(resolveOptions.signal);
+      let cacheRead = "miss";
+      try {
+        await ensureInitialPrune();
+        const cached = await readCached(normalized);
+        cacheRead = cached.status;
+        if (cached.status === "hit" && cached.bytes) {
+          return Object.freeze({
+            bytes: cached.bytes,
+            contentType: normalized.contentType,
+            integrity: normalized.integrity,
+            source: "indexeddb",
+            cacheRead,
+            cacheWrite: "not-needed"
+          });
+        }
+      } catch {
+        cacheRead = "failed";
+      }
+      assertNotAborted(resolveOptions.signal);
+      const loaded = await resolveOptions.load(
+        normalized,
+        Object.freeze(
+          resolveOptions.signal === void 0 ? {} : { signal: resolveOptions.signal }
+        )
+      );
+      assertNotAborted(resolveOptions.signal);
+      if (!loaded || typeof loaded !== "object" || Array.isArray(loaded)) {
+        throw cacheError("ASSET_CACHE_LOAD_INVALID", "Remote binary loader returned no result.");
+      }
+      const bytes = copyBytes(loaded.bytes);
+      await verifyBytes(bytes, normalized, loaded.contentType);
+      assertNotAborted(resolveOptions.signal);
+      const writeResult = await writeCached(normalized, bytes, resolveOptions.signal);
+      if (resolveOptions.signal?.aborted) {
+        if (writeResult.status === "stored") {
+          await store.deleteIfWriteToken(writeResult.key, writeResult.writeToken).catch(() => {
+          });
+        }
+        throw abortError();
+      }
+      return Object.freeze({
+        bytes: Uint8Array.from(bytes),
+        contentType: normalized.contentType,
+        integrity: normalized.integrity,
+        source: "network",
+        cacheRead,
+        cacheWrite: writeResult.status
+      });
+    },
+    async getStats() {
+      return statsFrom(await store.metadata());
+    },
+    prune() {
+      return pruneFor();
+    },
+    async clear() {
+      const before = await statsFrom(await store.metadata());
+      await store.clear();
+      const { high, low } = await waterMarks();
+      return Object.freeze({
+        removedEntries: before.entries,
+        removedBytes: before.bytes,
+        remainingEntries: 0,
+        remainingBytes: 0,
+        highWaterBytes: high,
+        lowWaterBytes: low
+      });
+    }
+  };
+  return Object.freeze(cache);
+}
+function createAssetManagerComposition(featureFlags, options = {}) {
+  if (!options || typeof options !== "object" || Array.isArray(options)) {
+    throw new TypeError("Asset Manager composition options must be an object.");
+  }
   const extension = featureFlags ? new AssetManagerExtension(featureFlags) : new AssetManagerExtension();
   const ownedNames = /* @__PURE__ */ new Set();
+  let verifiedRemoteCache = null;
+  function remoteCache() {
+    verifiedRemoteCache ??= createVerifiedRemoteBinaryCache(options.verifiedRemoteCache);
+    return verifiedRemoteCache;
+  }
   function cancelledRegistration(name) {
     const error = new Error(`Asset registration was cancelled: ${name}`);
     error.name = "AbortError";
@@ -1949,18 +2627,31 @@ function createAssetManagerComposition(featureFlags) {
         { target, runtime: Scratch.vm.runtime }
       );
     },
-    playSound(name, options = {}) {
-      return options.untilDone ? extension.playSoundUntilDone({ NAME: name }) : extension.playSound({ NAME: name });
+    playSound(name, options2 = {}) {
+      return options2.untilDone ? extension.playSoundUntilDone({ NAME: name }) : extension.playSound({ NAME: name });
     },
     stopSound(name) {
       extension.stopSound({ NAME: name });
     },
     stopAllSounds() {
       extension.stopAllSounds();
+    },
+    resolveVerifiedRemoteBinary(input, resolveOptions) {
+      return remoteCache().resolve(input, resolveOptions);
+    },
+    getVerifiedRemoteCacheStats() {
+      return remoteCache().getStats();
+    },
+    pruneVerifiedRemoteCache() {
+      return remoteCache().prune();
+    },
+    clearVerifiedRemoteCache() {
+      return remoteCache().clear();
     }
   };
   return Object.freeze(composition);
 }
 export {
-  createAssetManagerComposition
+  createAssetManagerComposition,
+  createVerifiedRemoteBinaryCache
 };

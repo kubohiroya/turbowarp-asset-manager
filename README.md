@@ -45,6 +45,75 @@ and audio MIME types are accepted. Project-local costume, backdrop, and sound id
 registered with `registerProjectAsset`. Importing the module does not register a Standalone
 extension or add blocks to a palette.
 
+### Verified remote binary cache
+
+Composition hosts can opt into a cache-first remote-binary path without adding blocks to the
+Asset Manager palette. The host remains responsible for network policy and supplies the loader;
+Asset Manager validates the declared size, normalized Content-Type, and SHA-256 before it stores or
+returns network bytes.
+
+```js
+const model = {
+  url: 'https://cdn.example/model.bin',
+  integrity: 'sha256-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+  size: 123456,
+  contentType: 'application/octet-stream'
+};
+
+const result = await assets.resolveVerifiedRemoteBinary(model, {
+  signal: abortController.signal,
+  load: async ({url}, {signal}) => {
+    const response = await fetch(url, {signal});
+    return {
+      bytes: await response.arrayBuffer(),
+      contentType: response.headers.get('content-type')
+    };
+  }
+});
+```
+
+A valid content-addressed IndexedDB hit is revalidated and returned without calling the loader, so
+previously verified content remains available offline. A read failure falls back to the loader. If
+verification succeeds but the cache write fails, the result is still returned for memory-only use;
+`cacheRead` and `cacheWrite` report the cache outcome. Cancellation prevents that resolution's
+write from remaining in the cache.
+
+The verified cache uses the isolated `tw-asset-manager-verified-binary-v1` database and does not
+alter the legacy name-keyed `tw-asset-manager` database. Records contain the integrity, size,
+Content-Type, timestamps, and bytes; source URLs and credentials are not persisted. The default
+high-water mark is the smaller of 256 MiB and 20% of the browser-reported origin quota. Before a
+write exceeds that mark, least-recently-used records are removed to the 80% low-water mark. Records
+unused for 30 days, corrupt metadata, and unknown formats are pruned; access timestamp writes are
+throttled to once per hour. A record larger than the current budget is used in memory but not
+cached. `QuotaExceededError` triggers cleanup and one write retry.
+
+Hosts can override `maxCacheBytes`, `quotaFraction`, `lowWaterRatio`, `ttlMs`,
+`touchIntervalMs`, and `cleanupBatchSize` through the second argument to
+`createAssetManagerComposition`. They can expose storage controls using
+`getVerifiedRemoteCacheStats`, `pruneVerifiedRemoteCache`, and
+`clearVerifiedRemoteCache`. Cleanup deletes metadata and binary records in bounded batches;
+clearing this cache does not delete legacy Standalone assets. IndexedDB is an auxiliary cache, not
+a secrecy boundary: deployed applications should avoid remote assets containing credentials or
+private material and should offer users a cache-clear control where appropriate.
+
+Persistent cache lifetime and materialized memory lifetime are separate. The verified cache does
+not keep a second JavaScript heap copy after `resolveVerifiedRemoteBinary` returns; the caller owns
+the returned copy. Registering those bytes as an image or sound creates a separate in-memory
+resource, which the composition host releases with `releaseAsset` or `releaseAll`. A scene-based
+DSL can therefore implement the following policy without deleting the offline cache:
+
+```yaml
+loading: lazy
+retention: scene # release the materialized resource after the last adjacent scene that needs it
+```
+
+With `retention: story`, the host keeps the materialized resource until story stop, restart, or
+session disposal. These values are host-level lifecycle policy; Asset Manager neither parses the
+YAML nor treats them as IndexedDB TTL. Releasing an in-memory registration does not delete verified
+bytes from IndexedDB, and clearing IndexedDB does not invalidate a resource that is already
+materialized in memory. JavaScript references are dropped so bytes and platform resources can be
+garbage-collected, but immediate physical memory erasure is not guaranteed.
+
 ## Extension ID compatibility
 
 This migration release uses the standards-compliant ID `kubohiroyaassetmanager`. Existing projects
