@@ -11,15 +11,39 @@ The built JavaScript file is committed to this repository so that users do not n
 The versioned npm package contains the same reviewed build:
 
 ```bash
-pnpm add --save-exact @kubohiroya/turbowarp-asset-manager@0.4.1
+pnpm add --save-exact @kubohiroya/turbowarp-asset-manager@0.5.0
 ```
 
 Load `node_modules/@kubohiroya/turbowarp-asset-manager/dist/asset-manager.js`, or use the
 version-pinned CDN URL:
 
 ```text
-https://cdn.jsdelivr.net/npm/@kubohiroya/turbowarp-asset-manager@0.4.1/dist/asset-manager.js
+https://cdn.jsdelivr.net/npm/@kubohiroya/turbowarp-asset-manager@0.5.0/dist/asset-manager.js
 ```
+
+## Composition API
+
+Composite extensions can import the block-free API and keep its registry private to one runtime
+component:
+
+```js
+import {createAssetManagerComposition} from '@kubohiroya/turbowarp-asset-manager/composition';
+
+const assets = createAssetManagerComposition();
+await assets.registerEmbeddedAsset({
+  name: 'Opening',
+  sourceName: 'opening.svg',
+  mimeType: 'image/svg+xml',
+  bytes: new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg"/>')
+});
+await assets.applyToStage('Opening');
+assets.releaseAll();
+```
+
+Embedded bytes are copied into memory and are not fetched or persisted in IndexedDB. Only image
+and audio MIME types are accepted. Project-local costume, backdrop, and sound identifiers can be
+registered with `registerProjectAsset`. Importing the module does not register a Standalone
+extension or add blocks to a palette.
 
 ## Extension ID compatibility
 

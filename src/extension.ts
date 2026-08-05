@@ -20,7 +20,7 @@ import {
 } from './text-style.js';
 
 export const EXTENSION_ID = 'kubohiroyaassetmanager';
-export const EXTENSION_VERSION = '0.4.1';
+export const EXTENSION_VERSION = '0.5.0';
 export const EXTENSION_DOCS_URI = 'https://kubohiroya.github.io/turbowarp-asset-manager/';
 
 const DB_NAME = 'tw-asset-manager';
@@ -54,6 +54,18 @@ interface AssetRecord {
   data: ArrayBuffer;
   cachedAt: number;
   generation?: number;
+}
+
+export interface EmbeddedAssetBytesInput {
+  name: unknown;
+  bytes: ArrayBuffer | Uint8Array;
+  mimeType: unknown;
+  sourceName?: unknown;
+}
+
+export interface EmbeddedAssetRegistration {
+  readonly name: string;
+  readonly mimeType: string;
 }
 
 interface ExternalMemoryAsset extends AssetRecord {
@@ -346,6 +358,37 @@ function requireTextAssetNameValue(value: unknown, operation = 'registerAsset'):
     );
   }
   return name;
+}
+
+function copyEmbeddedBytes(value: unknown, assetName: string): ArrayBuffer {
+  let bytes: Uint8Array;
+  if (value instanceof ArrayBuffer) {
+    bytes = new Uint8Array(value);
+  } else if (value instanceof Uint8Array) {
+    bytes = value;
+  } else {
+    throw new AssetManagerError(
+      'RESOURCE_ID_INVALID',
+      `Embedded asset "${assetName}" must provide an ArrayBuffer or Uint8Array.`,
+      {
+        operation: 'registerEmbeddedAsset',
+        assetName,
+        hint: 'Pass validated binary image or audio bytes.'
+      }
+    );
+  }
+  if (bytes.byteLength === 0) {
+    throw new AssetManagerError(
+      'RESOURCE_ID_INVALID',
+      `Embedded asset "${assetName}" is empty.`,
+      {
+        operation: 'registerEmbeddedAsset',
+        assetName,
+        hint: 'Pass at least one byte.'
+      }
+    );
+  }
+  return Uint8Array.from(bytes).buffer;
 }
 
 function findStageTarget(runtime: TurboWarpRuntime): TurboWarpTarget {
@@ -771,6 +814,45 @@ export class AssetManagerExtension {
       }
       throw diagnostic;
     }
+  }
+
+  async registerEmbeddedAsset(
+    input: EmbeddedAssetBytesInput
+  ): Promise<EmbeddedAssetRegistration> {
+    const name = this.requireAssetName(input.name, 'registerEmbeddedAsset');
+    const sourceName = normalizeName(input.sourceName) || name;
+    const mimeType = normalizeMimeType(input.mimeType, sourceName);
+    const mediaKind = mimeType.startsWith('image/')
+      ? 'image'
+      : mimeType.startsWith('audio/')
+        ? 'audio'
+        : 'unknown';
+    if (mediaKind === 'unknown') {
+      throw new AssetManagerError(
+        'ASSET_TYPE_MISMATCH',
+        `Embedded asset "${name}" has unsupported MIME type ${mimeType}.`,
+        {
+          operation: 'registerEmbeddedAsset',
+          assetName: name,
+          expectedKind: 'image or audio',
+          actualKind: mimeType,
+          hint: 'Use an image/* or audio/* MIME type.'
+        }
+      );
+    }
+    const data = copyEmbeddedBytes(input.bytes, name);
+    const token = this.beginRegistration(name);
+    const prepared: ExternalMemoryAsset = {
+      kind: 'external',
+      name,
+      url: sourceName,
+      mimeType,
+      data,
+      cachedAt: Date.now(),
+      skinId: null
+    };
+    await this.commitPreparedAsset(name, 'external', prepared, token);
+    return Object.freeze({name, mimeType});
   }
 
   assetErrorType(): string {
