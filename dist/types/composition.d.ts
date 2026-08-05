@@ -1,4 +1,6 @@
 import { type AssetManagerFeatureFlags } from './feature-flags.js';
+import { type VerifiedRemoteBinaryCacheOptions, type VerifiedRemoteBinaryInput, type VerifiedRemoteBinaryResolveOptions, type VerifiedRemoteBinaryResult, type VerifiedRemoteCachePruneResult, type VerifiedRemoteCacheStats, type VerifiedRemoteStoryCacheDeleteResult, type VerifiedRemoteStoryCacheInfo, type VerifiedRemoteStoryCachePruneResult } from './verified-remote-cache.js';
+export { createVerifiedRemoteBinaryCache, createVerifiedRemoteCacheDatabaseName, type NormalizedVerifiedRemoteBinaryInput, type VerifiedRemoteBinaryCache, type VerifiedRemoteBinaryCacheOptions, type VerifiedRemoteBinaryInput, type VerifiedRemoteBinaryLoadResult, type VerifiedRemoteBinaryResolveOptions, type VerifiedRemoteBinaryResult, type VerifiedRemoteCacheWarning, type VerifiedRemoteCacheIdentity, type VerifiedRemoteCacheIdentityInput, type VerifiedRemoteCachePruneResult, type VerifiedRemoteCacheStats, type VerifiedRemoteStoryCacheDeleteResult, type VerifiedRemoteStoryCacheInfo, type VerifiedRemoteStoryCachePruneResult } from './verified-remote-cache.js';
 export interface EmbeddedAssetBytesInput {
     name: unknown;
     bytes: ArrayBuffer | Uint8Array;
@@ -17,6 +19,9 @@ export interface AssetManagerCompositionTarget {
     readonly id: string;
     readonly isStage: boolean;
 }
+export interface AssetManagerCompositionOptions {
+    readonly verifiedRemoteCache?: VerifiedRemoteBinaryCacheOptions;
+}
 export interface AssetManagerComposition {
     registerProjectAsset(input: ProjectAssetRegistrationInput): Promise<EmbeddedAssetRegistration>;
     registerEmbeddedAsset(input: EmbeddedAssetBytesInput): Promise<EmbeddedAssetRegistration>;
@@ -31,5 +36,14 @@ export interface AssetManagerComposition {
     }>): Promise<void>;
     stopSound(name: unknown): void;
     stopAllSounds(): void;
+    resolveVerifiedRemoteBinary(input: VerifiedRemoteBinaryInput, options: VerifiedRemoteBinaryResolveOptions): Promise<VerifiedRemoteBinaryResult>;
+    getVerifiedRemoteCacheStats(): Promise<VerifiedRemoteCacheStats>;
+    pruneVerifiedRemoteCache(): Promise<VerifiedRemoteCachePruneResult>;
+    clearVerifiedRemoteCache(): Promise<VerifiedRemoteCachePruneResult>;
+    listVerifiedRemoteStoryCaches(): Promise<ReadonlyArray<VerifiedRemoteStoryCacheInfo>>;
+    pruneVerifiedRemoteStoryCaches(): Promise<VerifiedRemoteStoryCachePruneResult>;
+    deleteVerifiedRemoteStoryCache(databaseName: unknown): Promise<VerifiedRemoteStoryCacheDeleteResult>;
+    renewVerifiedRemoteStoryCacheLease(): Promise<void>;
+    releaseVerifiedRemoteStoryCacheLease(): Promise<void>;
 }
-export declare function createAssetManagerComposition(featureFlags?: AssetManagerFeatureFlags): AssetManagerComposition;
+export declare function createAssetManagerComposition(featureFlags?: AssetManagerFeatureFlags, options?: AssetManagerCompositionOptions): AssetManagerComposition;
