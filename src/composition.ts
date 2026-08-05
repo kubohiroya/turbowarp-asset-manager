@@ -1,10 +1,17 @@
-import {
-  AssetManagerExtension,
-  type EmbeddedAssetBytesInput,
-  type EmbeddedAssetRegistration,
-  normalizeName
-} from './extension.js';
+import {AssetManagerExtension, normalizeName} from './extension.js';
 import {type AssetManagerFeatureFlags} from './feature-flags.js';
+
+export interface EmbeddedAssetBytesInput {
+  name: unknown;
+  bytes: ArrayBuffer | Uint8Array;
+  mimeType: unknown;
+  sourceName?: unknown;
+}
+
+export interface EmbeddedAssetRegistration {
+  readonly name: string;
+  readonly mimeType: string;
+}
 
 export interface ProjectAssetRegistrationInput {
   name: unknown;
