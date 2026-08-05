@@ -1,10 +1,12 @@
 import {
   createAssetManagerComposition,
+  createVerifiedRemoteCacheDatabaseName,
   type AssetManagerComposition,
   type EmbeddedAssetBytesInput,
   type EmbeddedAssetRegistration,
   type VerifiedRemoteBinaryInput,
-  type VerifiedRemoteBinaryResult
+  type VerifiedRemoteBinaryResult,
+  type VerifiedRemoteCacheWarning
 } from '@kubohiroya/turbowarp-asset-manager/composition';
 
 const input: EmbeddedAssetBytesInput = {
@@ -14,6 +16,10 @@ const input: EmbeddedAssetBytesInput = {
   bytes: new Uint8Array([60, 115, 118, 103, 47, 62])
 };
 const composition: AssetManagerComposition = createAssetManagerComposition();
+const databaseName: string = createVerifiedRemoteCacheDatabaseName({
+  id: 'story-0001',
+  label: 'opening.kamishibai.yaml'
+});
 const registration: Promise<EmbeddedAssetRegistration> = composition.registerEmbeddedAsset(input);
 const remoteInput: VerifiedRemoteBinaryInput = {
   url: 'https://example.com/model.bin',
@@ -30,6 +36,12 @@ const remote: Promise<VerifiedRemoteBinaryResult> = composition.resolveVerifiedR
     })
   }
 );
+const warning: VerifiedRemoteCacheWarning = {
+  operation: 'cleanup',
+  code: 'ASSET_CACHE_CLEANUP_FAILED'
+};
 
 void registration;
 void remote;
+void warning;
+void databaseName;

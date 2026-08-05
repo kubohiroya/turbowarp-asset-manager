@@ -1,6 +1,6 @@
 import { type AssetManagerFeatureFlags } from './feature-flags.js';
 import { type VerifiedRemoteBinaryCacheOptions, type VerifiedRemoteBinaryInput, type VerifiedRemoteBinaryResolveOptions, type VerifiedRemoteBinaryResult, type VerifiedRemoteCachePruneResult, type VerifiedRemoteCacheStats } from './verified-remote-cache.js';
-export { createVerifiedRemoteBinaryCache, type NormalizedVerifiedRemoteBinaryInput, type VerifiedRemoteBinaryCache, type VerifiedRemoteBinaryCacheOptions, type VerifiedRemoteBinaryInput, type VerifiedRemoteBinaryLoadResult, type VerifiedRemoteBinaryResolveOptions, type VerifiedRemoteBinaryResult, type VerifiedRemoteCachePruneResult, type VerifiedRemoteCacheStats } from './verified-remote-cache.js';
+export { createVerifiedRemoteBinaryCache, createVerifiedRemoteCacheDatabaseName, type NormalizedVerifiedRemoteBinaryInput, type VerifiedRemoteBinaryCache, type VerifiedRemoteBinaryCacheOptions, type VerifiedRemoteBinaryInput, type VerifiedRemoteBinaryLoadResult, type VerifiedRemoteBinaryResolveOptions, type VerifiedRemoteBinaryResult, type VerifiedRemoteCacheWarning, type VerifiedRemoteCacheIdentity, type VerifiedRemoteCacheIdentityInput, type VerifiedRemoteCachePruneResult, type VerifiedRemoteCacheStats } from './verified-remote-cache.js';
 export interface EmbeddedAssetBytesInput {
     name: unknown;
     bytes: ArrayBuffer | Uint8Array;

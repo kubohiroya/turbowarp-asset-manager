@@ -1869,10 +1869,12 @@ class AssetManagerExtension {
   }
 }
 const DATABASE_NAME = "tw-asset-manager-verified-binary-v1";
-const DATABASE_VERSION = 1;
+const DATABASE_VERSION = 2;
 const ENTRY_STORE = "entries";
 const METADATA_STORE = "metadata";
+const INFO_STORE = "info";
 const CACHE_FORMAT_VERSION = 1;
+const STORY_DATABASE_PREFIX = "tw-kamishibai-assets-v1--";
 const DEFAULT_MAX_CACHE_BYTES = 256 * 1024 * 1024;
 const DEFAULT_QUOTA_FRACTION = 0.2;
 const DEFAULT_LOW_WATER_RATIO = 0.8;
@@ -1891,6 +1893,24 @@ function abortError() {
 }
 function assertNotAborted(signal) {
   if (signal?.aborted) throw abortError();
+}
+function isAbortError(error) {
+  return Boolean(error && typeof error === "object" && "name" in error && error.name === "AbortError");
+}
+function isQuotaExceeded(error) {
+  return error instanceof DOMException ? error.name === "QuotaExceededError" : Boolean(
+    error && typeof error === "object" && "name" in error && error.name === "QuotaExceededError"
+  );
+}
+function diagnosticCode(error, fallback) {
+  if (error && typeof error === "object") {
+    if ("code" in error && typeof error.code === "string" && error.code) return error.code;
+    if ("name" in error && error.name === "QuotaExceededError") {
+      return "ASSET_CACHE_QUOTA_EXCEEDED";
+    }
+    if ("name" in error && error.name === "AbortError") return "ASSET_CACHE_ABORTED";
+  }
+  return fallback;
 }
 function positiveSafeInteger(value, name) {
   if (!Number.isSafeInteger(value) || Number(value) <= 0) {
@@ -1934,7 +1954,7 @@ function normalizeInput(input) {
     );
   }
   const contentType = normalizeContentType(input.contentType);
-  if (!contentType || !/^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/u.test(contentType)) {
+  if (!contentType || !/^[a-z0-9!#$%&'*+.^_`|~-]+\/[a-z0-9!#$%&'*+.^_`|~-]+$/u.test(contentType)) {
     throw cacheError("ASSET_CACHE_INPUT_INVALID", "Remote binary Content-Type is invalid.");
   }
   return Object.freeze({
@@ -1944,9 +1964,75 @@ function normalizeInput(input) {
     contentType
   });
 }
-function copyBytes(value) {
-  if (value instanceof ArrayBuffer) return Uint8Array.from(new Uint8Array(value));
-  if (value instanceof Uint8Array) return Uint8Array.from(value);
+function normalizeCacheIdentityId(value) {
+  if (typeof value !== "string") {
+    throw cacheError("ASSET_CACHE_IDENTITY_INVALID", "Cache identity id must be a string.");
+  }
+  const id = value.trim().toLowerCase();
+  if (!/^[a-z0-9][a-z0-9_-]{7,63}$/u.test(id)) {
+    throw cacheError(
+      "ASSET_CACHE_IDENTITY_INVALID",
+      "Cache identity id must contain 8 to 64 lowercase ASCII letters, digits, underscores, or hyphens."
+    );
+  }
+  return id;
+}
+function normalizeCacheIdentityLabel(value) {
+  if (typeof value !== "string") {
+    throw cacheError("ASSET_CACHE_IDENTITY_INVALID", "Cache identity label must be a string.");
+  }
+  const basename = value.normalize("NFKC").replaceAll("\\", "/").split("/").at(-1).trim();
+  if (!basename || basename.length > 256 || /[\u0000-\u001f\u007f]/u.test(basename)) {
+    throw cacheError("ASSET_CACHE_IDENTITY_INVALID", "Cache identity label is invalid.");
+  }
+  return basename;
+}
+function cacheLabelSlug(label) {
+  const withoutExtension = label.replace(/(?:\.kamishibai)?\.ya?ml$/iu, "");
+  const slug = withoutExtension.toLocaleLowerCase("en-US").replace(/[^\p{Letter}\p{Number}._-]+/gu, "-").replace(/^[._-]+|[._-]+$/gu, "");
+  return [...slug || "story"].slice(0, 48).join("");
+}
+function createVerifiedRemoteCacheDatabaseName(input) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw cacheError("ASSET_CACHE_IDENTITY_INVALID", "Cache identity must be an object.");
+  }
+  const id = normalizeCacheIdentityId(input.id);
+  const label = normalizeCacheIdentityLabel(input.label);
+  return `${STORY_DATABASE_PREFIX}${cacheLabelSlug(label)}--${id}`;
+}
+function normalizeCacheIdentity(input) {
+  if (input === void 0) return null;
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw cacheError("ASSET_CACHE_IDENTITY_INVALID", "Cache identity must be an object.");
+  }
+  const id = normalizeCacheIdentityId(input.id);
+  const label = normalizeCacheIdentityLabel(input.label);
+  const generated = createVerifiedRemoteCacheDatabaseName({ id, label });
+  if (input.databaseName === void 0) {
+    return Object.freeze({ id, label, databaseName: generated });
+  }
+  if (typeof input.databaseName !== "string") {
+    throw cacheError("ASSET_CACHE_IDENTITY_INVALID", "Cache database name must be a string.");
+  }
+  const databaseName = input.databaseName.normalize("NFKC");
+  if (databaseName.length > 160 || !databaseName.startsWith(STORY_DATABASE_PREFIX) || !databaseName.endsWith(`--${id}`) || !/^[\p{Letter}\p{Number}._-]+$/u.test(databaseName)) {
+    throw cacheError(
+      "ASSET_CACHE_IDENTITY_INVALID",
+      "Cache database name must be a generated Kamishibai story database name for the same id."
+    );
+  }
+  return Object.freeze({ id, label, databaseName });
+}
+function takeBytes(value, transferOwnership) {
+  if (value instanceof ArrayBuffer) {
+    return transferOwnership ? new Uint8Array(value) : Uint8Array.from(new Uint8Array(value));
+  }
+  if (value instanceof Uint8Array) {
+    if (transferOwnership && value.buffer instanceof ArrayBuffer && value.byteOffset === 0 && value.byteLength === value.buffer.byteLength) {
+      return value;
+    }
+    return Uint8Array.from(value);
+  }
   throw cacheError(
     "ASSET_CACHE_LOAD_INVALID",
     "Remote binary loader must return an ArrayBuffer or Uint8Array."
@@ -1965,10 +2051,66 @@ function transactionComplete(transaction) {
     transaction.onabort = () => reject(transaction.error ?? new Error("IndexedDB transaction was aborted."));
   });
 }
+function metadataIsStructurallyValid(metadata) {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return false;
+  const candidate = metadata;
+  return candidate.formatVersion === CACHE_FORMAT_VERSION && typeof candidate.key === "string" && typeof candidate.integrity === "string" && candidate.key === `${CACHE_FORMAT_VERSION}:${candidate.integrity}` && /^sha256-[0-9a-f]{64}$/u.test(candidate.integrity) && Number.isSafeInteger(candidate.size) && Number(candidate.size) > 0 && typeof candidate.contentType === "string" && normalizeContentType(candidate.contentType) === candidate.contentType && Number.isFinite(candidate.createdAt) && Number(candidate.createdAt) >= 0 && Number.isFinite(candidate.lastAccessedAt) && Number(candidate.lastAccessedAt) >= Number(candidate.createdAt) && Number.isFinite(candidate.lastValidatedAt) && Number(candidate.lastValidatedAt) >= Number(candidate.createdAt) && typeof candidate.writeToken === "string" && candidate.writeToken.length >= 16;
+}
+function entryBytes(entry, key) {
+  if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
+  const candidate = entry;
+  if (candidate.key !== key || !(candidate.data instanceof ArrayBuffer)) return null;
+  return new Uint8Array(candidate.data);
+}
+function recordIsUsable(record, currentTime, ttlMs) {
+  if (!metadataIsStructurallyValid(record.metadata)) return false;
+  const bytes = entryBytes(record.entry, record.key);
+  return Boolean(
+    bytes && bytes.byteLength === record.metadata.size && currentTime >= record.metadata.createdAt && currentTime >= record.metadata.lastAccessedAt && currentTime - record.metadata.lastAccessedAt <= ttlMs
+  );
+}
+function candidateFor(record) {
+  if (metadataIsStructurallyValid(record.metadata)) {
+    return {
+      key: record.key,
+      expectedWriteToken: record.metadata.writeToken,
+      deleteIfMetadataInvalid: false,
+      deleteIfMetadataMissing: false
+    };
+  }
+  return {
+    key: record.key,
+    expectedWriteToken: null,
+    deleteIfMetadataInvalid: record.metadata !== void 0,
+    deleteIfMetadataMissing: record.metadata === void 0
+  };
+}
+function createInstanceToken(now) {
+  const random = new Uint8Array(16);
+  if (typeof globalThis.crypto?.getRandomValues === "function") {
+    globalThis.crypto.getRandomValues(random);
+    return [...random].map((value) => value.toString(16).padStart(2, "0")).join("");
+  }
+  throw cacheError(
+    "ASSET_CACHE_CRYPTO_UNAVAILABLE",
+    `Secure random values are not available at ${now()}.`
+  );
+}
+async function sha256Hex(bytes, subtleCrypto) {
+  const digest = new Uint8Array(await subtleCrypto.digest("SHA-256", bytes));
+  return [...digest].map((value) => value.toString(16).padStart(2, "0")).join("");
+}
 class IndexedDBVerifiedRemoteStore {
   #indexedDB;
-  constructor(indexedDB2) {
+  #databaseName;
+  #cacheIdentity;
+  #now;
+  #identityStored = false;
+  constructor(indexedDB2, databaseName, cacheIdentity, now) {
     this.#indexedDB = indexedDB2;
+    this.#databaseName = databaseName;
+    this.#cacheIdentity = cacheIdentity;
+    this.#now = now;
   }
   async #open() {
     if (!this.#indexedDB || typeof this.#indexedDB.open !== "function") {
@@ -1976,34 +2118,89 @@ class IndexedDBVerifiedRemoteStore {
     }
     let request;
     try {
-      request = this.#indexedDB.open(DATABASE_NAME, DATABASE_VERSION);
+      request = this.#indexedDB.open(this.#databaseName, DATABASE_VERSION);
     } catch (error) {
       throw cacheError("ASSET_CACHE_INDEXEDDB_UNAVAILABLE", "IndexedDB could not be opened.", error);
     }
     return new Promise((resolve, reject) => {
+      let settled = false;
+      const rejectOnce = (error) => {
+        if (settled) return;
+        settled = true;
+        reject(error);
+      };
       request.onupgradeneeded = () => {
         const database = request.result;
         if (!database.objectStoreNames.contains(ENTRY_STORE)) {
           database.createObjectStore(ENTRY_STORE, { keyPath: "key" });
         }
+        let metadata;
         if (!database.objectStoreNames.contains(METADATA_STORE)) {
-          const metadata = database.createObjectStore(METADATA_STORE, { keyPath: "key" });
+          metadata = database.createObjectStore(METADATA_STORE, { keyPath: "key" });
+        } else {
+          metadata = request.transaction.objectStore(METADATA_STORE);
+        }
+        if (!metadata.indexNames.contains("lastAccessedAt")) {
           metadata.createIndex("lastAccessedAt", "lastAccessedAt");
+        }
+        if (!database.objectStoreNames.contains(INFO_STORE)) {
+          database.createObjectStore(INFO_STORE, { keyPath: "key" });
         }
       };
       request.onsuccess = () => {
         const database = request.result;
+        if (settled) {
+          database.close();
+          return;
+        }
+        settled = true;
         database.onversionchange = () => database.close();
-        resolve(database);
+        if (!this.#cacheIdentity || this.#identityStored) {
+          resolve(database);
+          return;
+        }
+        let transaction;
+        try {
+          transaction = database.transaction(INFO_STORE, "readwrite");
+          const record = {
+            key: "identity",
+            formatVersion: CACHE_FORMAT_VERSION,
+            id: this.#cacheIdentity.id,
+            label: this.#cacheIdentity.label,
+            databaseName: this.#cacheIdentity.databaseName,
+            lastOpenedAt: this.#now()
+          };
+          transaction.objectStore(INFO_STORE).put(record);
+        } catch (error) {
+          database.close();
+          reject(
+            cacheError(
+              "ASSET_CACHE_IDENTITY_WRITE_FAILED",
+              "Cache identity metadata could not be written.",
+              error
+            )
+          );
+          return;
+        }
+        transactionComplete(transaction).then(
+          () => {
+            this.#identityStored = true;
+            resolve(database);
+          },
+          (error) => {
+            database.close();
+            reject(error);
+          }
+        );
       };
-      request.onerror = () => reject(
+      request.onerror = () => rejectOnce(
         cacheError(
           "ASSET_CACHE_INDEXEDDB_UNAVAILABLE",
           "IndexedDB open request failed.",
           request.error
         )
       );
-      request.onblocked = () => reject(cacheError("ASSET_CACHE_INDEXEDDB_BLOCKED", "IndexedDB upgrade was blocked."));
+      request.onblocked = () => rejectOnce(cacheError("ASSET_CACHE_INDEXEDDB_BLOCKED", "IndexedDB upgrade was blocked."));
     });
   }
   async get(key) {
@@ -2012,22 +2209,23 @@ class IndexedDBVerifiedRemoteStore {
       const transaction = database.transaction([ENTRY_STORE, METADATA_STORE], "readonly");
       const entryRequest = transaction.objectStore(ENTRY_STORE).get(key);
       const metadataRequest = transaction.objectStore(METADATA_STORE).get(key);
-      const completion = transactionComplete(transaction);
       const [entry, metadata] = await Promise.all([
         requestResult(entryRequest),
-        requestResult(metadataRequest)
+        requestResult(metadataRequest),
+        transactionComplete(transaction)
       ]);
-      await completion;
-      return entry && metadata ? { entry, metadata } : null;
+      return entry === void 0 && metadata === void 0 ? null : { key, entry, metadata };
     } finally {
       database.close();
     }
   }
-  async put(record, signal) {
+  async putIfAbsentValid(record, signal) {
     assertNotAborted(signal);
     const database = await this.#open();
     let transaction = null;
     let completed = false;
+    let written = false;
+    let synchronousError;
     const abortTransaction = () => {
       if (completed || !transaction) return;
       try {
@@ -2039,34 +2237,50 @@ class IndexedDBVerifiedRemoteStore {
       assertNotAborted(signal);
       transaction = database.transaction([ENTRY_STORE, METADATA_STORE], "readwrite");
       signal?.addEventListener("abort", abortTransaction, { once: true });
-      transaction.objectStore(ENTRY_STORE).put(record.entry);
-      transaction.objectStore(METADATA_STORE).put(record.metadata);
+      const entries = transaction.objectStore(ENTRY_STORE);
+      const metadata = transaction.objectStore(METADATA_STORE);
+      const entryRequest = entries.get(record.entry.key);
+      const metadataRequest = metadata.get(record.metadata.key);
+      let entryDone = false;
+      let metadataDone = false;
+      const decide = () => {
+        if (!entryDone || !metadataDone || synchronousError) return;
+        if (signal?.aborted) {
+          abortTransaction();
+          return;
+        }
+        const existingBytes = entryBytes(entryRequest.result, record.entry.key);
+        const existingMetadata = metadataRequest.result;
+        const existingIsValidSameContent = metadataIsStructurallyValid(existingMetadata) && existingMetadata.integrity === record.metadata.integrity && existingMetadata.size === record.metadata.size && existingMetadata.contentType === record.metadata.contentType && existingBytes?.byteLength === record.metadata.size;
+        if (existingIsValidSameContent) return;
+        try {
+          entries.put(record.entry);
+          metadata.put(record.metadata);
+          written = true;
+        } catch (error) {
+          synchronousError = error;
+          abortTransaction();
+        }
+      };
+      entryRequest.onsuccess = () => {
+        entryDone = true;
+        decide();
+      };
+      metadataRequest.onsuccess = () => {
+        metadataDone = true;
+        decide();
+      };
       try {
         await transactionComplete(transaction);
         completed = true;
       } catch (error) {
         if (signal?.aborted) throw abortError();
-        throw error;
+        throw synchronousError ?? error;
       }
+      if (synchronousError) throw synchronousError;
+      return written;
     } finally {
       signal?.removeEventListener("abort", abortTransaction);
-      database.close();
-    }
-  }
-  async deleteIfWriteToken(key, writeToken) {
-    const database = await this.#open();
-    try {
-      const transaction = database.transaction([ENTRY_STORE, METADATA_STORE], "readwrite");
-      const entries = transaction.objectStore(ENTRY_STORE);
-      const metadata = transaction.objectStore(METADATA_STORE);
-      const request = metadata.get(key);
-      request.onsuccess = () => {
-        if (request.result?.writeToken !== writeToken) return;
-        entries.delete(key);
-        metadata.delete(key);
-      };
-      await transactionComplete(transaction);
-    } finally {
       database.close();
     }
   }
@@ -2077,48 +2291,108 @@ class IndexedDBVerifiedRemoteStore {
       const store = transaction.objectStore(METADATA_STORE);
       const request = store.get(key);
       request.onsuccess = () => {
-        const current = request.result;
-        if (!current) return;
-        store.put({ ...current, lastAccessedAt: accessedAt, lastValidatedAt: validatedAt });
+        if (!metadataIsStructurallyValid(request.result)) return;
+        store.put({ ...request.result, lastAccessedAt: accessedAt, lastValidatedAt: validatedAt });
       };
       await transactionComplete(transaction);
     } finally {
       database.close();
     }
   }
-  async delete(key) {
+  async #scanBatch(primaryStore, afterKey, limit) {
     const database = await this.#open();
     try {
-      const transaction = database.transaction([ENTRY_STORE, METADATA_STORE], "readwrite");
-      transaction.objectStore(ENTRY_STORE).delete(key);
-      transaction.objectStore(METADATA_STORE).delete(key);
-      await transactionComplete(transaction);
+      const transaction = database.transaction([ENTRY_STORE, METADATA_STORE], "readonly");
+      const entries = transaction.objectStore(ENTRY_STORE);
+      const metadata = transaction.objectStore(METADATA_STORE);
+      const primary = primaryStore === ENTRY_STORE ? entries : metadata;
+      const records = [];
+      let nextKey = null;
+      let done = true;
+      const cursorRequest = primary.openCursor();
+      const cursorFinished = new Promise((resolve, reject) => {
+        cursorRequest.onerror = () => reject(cursorRequest.error ?? new Error("IndexedDB cursor failed."));
+        cursorRequest.onsuccess = () => {
+          const cursor = cursorRequest.result;
+          if (!cursor) {
+            done = true;
+            resolve();
+            return;
+          }
+          if (afterKey !== null) {
+            const comparison = this.#indexedDB.cmp(cursor.primaryKey, afterKey);
+            if (comparison < 0) {
+              cursor.continue(afterKey);
+              return;
+            }
+            if (comparison === 0) {
+              cursor.continue();
+              return;
+            }
+          }
+          const record = {
+            key: cursor.primaryKey,
+            entry: primaryStore === ENTRY_STORE ? cursor.value : void 0,
+            metadata: primaryStore === METADATA_STORE ? cursor.value : void 0
+          };
+          records.push(record);
+          const counterpartRequest = primaryStore === ENTRY_STORE ? metadata.get(cursor.primaryKey) : entries.get(cursor.primaryKey);
+          counterpartRequest.onsuccess = () => {
+            if (primaryStore === ENTRY_STORE) record.metadata = counterpartRequest.result;
+            else record.entry = counterpartRequest.result;
+          };
+          nextKey = cursor.primaryKey;
+          if (records.length >= limit) {
+            done = false;
+            resolve();
+            return;
+          }
+          cursor.continue();
+        };
+      });
+      await Promise.all([cursorFinished, transactionComplete(transaction)]);
+      return { records, nextKey, done };
     } finally {
       database.close();
     }
   }
-  async metadata() {
-    const database = await this.#open();
-    try {
-      const transaction = database.transaction(METADATA_STORE, "readonly");
-      const request = transaction.objectStore(METADATA_STORE).getAll();
-      const completion = transactionComplete(transaction);
-      const result = await requestResult(request);
-      await completion;
-      return result;
-    } finally {
-      database.close();
-    }
+  scanMetadataBatch(afterKey, limit) {
+    return this.#scanBatch(METADATA_STORE, afterKey, limit);
   }
-  async entryKeys() {
+  scanEntryBatch(afterKey, limit) {
+    return this.#scanBatch(ENTRY_STORE, afterKey, limit);
+  }
+  async oldestBatch(limit) {
     const database = await this.#open();
     try {
-      const transaction = database.transaction(ENTRY_STORE, "readonly");
-      const request = transaction.objectStore(ENTRY_STORE).getAllKeys();
-      const completion = transactionComplete(transaction);
-      const result = await requestResult(request);
-      await completion;
-      return result;
+      const transaction = database.transaction([ENTRY_STORE, METADATA_STORE], "readonly");
+      const entries = transaction.objectStore(ENTRY_STORE);
+      const metadata = transaction.objectStore(METADATA_STORE);
+      const records = [];
+      const cursorRequest = metadata.index("lastAccessedAt").openCursor();
+      const cursorFinished = new Promise((resolve, reject) => {
+        cursorRequest.onerror = () => reject(cursorRequest.error ?? new Error("IndexedDB LRU cursor failed."));
+        cursorRequest.onsuccess = () => {
+          const cursor = cursorRequest.result;
+          if (!cursor || records.length >= limit) {
+            resolve();
+            return;
+          }
+          const record = {
+            key: cursor.primaryKey,
+            entry: void 0,
+            metadata: cursor.value
+          };
+          records.push(record);
+          const entryRequest = entries.get(cursor.primaryKey);
+          entryRequest.onsuccess = () => {
+            record.entry = entryRequest.result;
+          };
+          cursor.continue();
+        };
+      });
+      await Promise.all([cursorFinished, transactionComplete(transaction)]);
+      return records;
     } finally {
       database.close();
     }
@@ -2139,25 +2413,16 @@ class IndexedDBVerifiedRemoteStore {
         let entryDone = false;
         const deleteIfStillCandidate = () => {
           if (!metadataDone || !entryDone) return;
-          const current = metadataRequest.result;
+          const currentMetadata = metadataRequest.result;
           const currentEntry = entryRequest.result;
-          if (!current) {
-            if (!candidate.deleteOrphanEntry || !currentEntry) return;
-            entries.delete(candidate.key);
-            removedEntries += 1;
-            if (typeof currentEntry === "object" && !Array.isArray(currentEntry) && currentEntry.data instanceof ArrayBuffer) {
-              removedBytes += currentEntry.data.byteLength;
-            }
-            return;
-          }
-          if (typeof current !== "object" || Array.isArray(current)) return;
-          const currentMetadata = current;
-          const candidateStillMatches = candidate.writeToken === null ? !metadataIsStructurallyValid(current) : currentMetadata.writeToken === candidate.writeToken && currentMetadata.lastAccessedAt === candidate.lastAccessedAt;
+          const currentWriteToken = currentMetadata && typeof currentMetadata === "object" && !Array.isArray(currentMetadata) ? currentMetadata.writeToken : void 0;
+          const candidateStillMatches = candidate.expectedWriteToken !== null && currentWriteToken === candidate.expectedWriteToken || candidate.deleteIfMetadataInvalid && currentMetadata !== void 0 && !metadataIsStructurallyValid(currentMetadata) || candidate.deleteIfMetadataMissing && currentMetadata === void 0;
           if (!candidateStillMatches) return;
           entries.delete(candidate.key);
           metadata.delete(candidate.key);
-          removedEntries += 1;
-          removedBytes += Number.isSafeInteger(currentMetadata.size) ? Number(currentMetadata.size) : 0;
+          if (currentEntry !== void 0 || currentMetadata !== void 0) removedEntries += 1;
+          const bytes = entryBytes(currentEntry, candidate.key);
+          if (bytes) removedBytes += bytes.byteLength;
         };
         metadataRequest.onsuccess = () => {
           metadataDone = true;
@@ -2185,25 +2450,35 @@ class IndexedDBVerifiedRemoteStore {
       database.close();
     }
   }
-}
-function isQuotaExceeded(error) {
-  return error instanceof DOMException ? error.name === "QuotaExceededError" : Boolean(
-    error && typeof error === "object" && "name" in error && error.name === "QuotaExceededError"
-  );
-}
-function isAbortError(error) {
-  return Boolean(error && typeof error === "object" && "name" in error && error.name === "AbortError");
-}
-function metadataIsStructurallyValid(metadata) {
-  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return false;
-  const candidate = metadata;
-  return candidate.formatVersion === CACHE_FORMAT_VERSION && typeof candidate.key === "string" && typeof candidate.integrity === "string" && candidate.key === `${CACHE_FORMAT_VERSION}:${candidate.integrity}` && /^sha256-[0-9a-f]{64}$/u.test(candidate.integrity) && Number.isSafeInteger(candidate.size) && Number(candidate.size) > 0 && typeof candidate.contentType === "string" && normalizeContentType(candidate.contentType) === candidate.contentType && Number.isFinite(candidate.createdAt) && Number.isFinite(candidate.lastAccessedAt) && Number.isFinite(candidate.lastValidatedAt) && typeof candidate.writeToken === "string" && candidate.writeToken.length > 0;
-}
-async function sha256Hex(bytes, subtleCrypto) {
-  const digest = new Uint8Array(
-    await subtleCrypto.digest("SHA-256", Uint8Array.from(bytes).buffer)
-  );
-  return [...digest].map((value) => value.toString(16).padStart(2, "0")).join("");
+  async cleanupInfo() {
+    const database = await this.#open();
+    try {
+      const transaction = database.transaction(INFO_STORE, "readonly");
+      const request = transaction.objectStore(INFO_STORE).get("cleanup");
+      const [result] = await Promise.all([
+        requestResult(request),
+        transactionComplete(transaction)
+      ]);
+      if (!result || typeof result !== "object" || Array.isArray(result)) return null;
+      const candidate = result;
+      if (candidate.key !== "cleanup" || !Number.isFinite(candidate.lastCleanupAt) || !Number.isSafeInteger(candidate.removedEntries) || Number(candidate.removedEntries) < 0 || !Number.isSafeInteger(candidate.removedBytes) || Number(candidate.removedBytes) < 0) {
+        return null;
+      }
+      return candidate;
+    } finally {
+      database.close();
+    }
+  }
+  async recordCleanup(record) {
+    const database = await this.#open();
+    try {
+      const transaction = database.transaction(INFO_STORE, "readwrite");
+      transaction.objectStore(INFO_STORE).put(record);
+      await transactionComplete(transaction);
+    } finally {
+      database.close();
+    }
+  }
 }
 function createVerifiedRemoteBinaryCache(options = {}) {
   const indexedDB2 = options.indexedDB ?? globalThis.indexedDB;
@@ -2238,9 +2513,12 @@ function createVerifiedRemoteBinaryCache(options = {}) {
   if (typeof estimateStorage !== "function") {
     throw new TypeError("estimateStorage must be a function.");
   }
-  const store = new IndexedDBVerifiedRemoteStore(indexedDB2);
-  let initialPrune = null;
+  const cacheIdentity = normalizeCacheIdentity(options.cacheIdentity);
+  const databaseName = cacheIdentity?.databaseName ?? DATABASE_NAME;
+  const store = new IndexedDBVerifiedRemoteStore(indexedDB2, databaseName, cacheIdentity, now);
+  const instanceToken = createInstanceToken(now);
   let writeSequence = 0;
+  let initialSweep = null;
   async function waterMarks() {
     let quotaBudget = maxCacheBytes;
     try {
@@ -2253,96 +2531,135 @@ function createVerifiedRemoteBinaryCache(options = {}) {
     const high = Math.min(maxCacheBytes, quotaBudget);
     return { high, low: Math.max(0, Math.floor(high * lowWaterRatio)) };
   }
-  async function statsFrom(metadata) {
-    const valid = metadata.filter(metadataIsStructurallyValid);
-    const accessed = valid.map(({ lastAccessedAt }) => lastAccessedAt);
-    const { high, low } = await waterMarks();
-    return Object.freeze({
-      entries: valid.length,
-      bytes: valid.reduce((total, entry) => total + entry.size, 0),
-      oldestAccessedAt: accessed.length > 0 ? Math.min(...accessed) : null,
-      newestAccessedAt: accessed.length > 0 ? Math.max(...accessed) : null,
-      highWaterBytes: high,
-      lowWaterBytes: low
-    });
+  async function forEachMetadataBatch(visitor, onlyFirst = false) {
+    let afterKey = null;
+    while (true) {
+      const batch = await store.scanMetadataBatch(afterKey, cleanupBatchSize);
+      await visitor(batch.records);
+      if (onlyFirst || batch.done || batch.nextKey === null) return;
+      afterKey = batch.nextKey;
+    }
   }
-  async function pruneFor(incomingBytes = 0, pinnedKey = null, force = false) {
+  async function forEachEntryBatch(visitor, onlyFirst = false) {
+    let afterKey = null;
+    while (true) {
+      const batch = await store.scanEntryBatch(afterKey, cleanupBatchSize);
+      await visitor(batch.records);
+      if (onlyFirst || batch.done || batch.nextKey === null) return;
+      afterKey = batch.nextKey;
+    }
+  }
+  async function cleanupInvalid(onlyFirst = false) {
     const currentTime = now();
-    const metadata = await store.metadata();
-    const entryKeys = new Set(
-      (await store.entryKeys()).filter((key) => typeof key === "string")
-    );
-    const metadataKeys = new Set(
-      metadata.flatMap((entry) => {
-        if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
-        const key = entry.key;
-        return typeof key === "string" ? [key] : [];
-      })
-    );
-    const { high, low } = await waterMarks();
-    const valid = metadata.filter(
-      (entry) => metadataIsStructurallyValid(entry) && entryKeys.has(entry.key) && currentTime - entry.lastAccessedAt <= ttlMs
-    );
-    const invalid = metadata.filter(
-      (entry) => !metadataIsStructurallyValid(entry) || !entryKeys.has(entry.key) || currentTime - entry.lastAccessedAt > ttlMs
-    );
-    let remainingBytes = valid.reduce((total, entry) => total + entry.size, 0);
-    const candidates = /* @__PURE__ */ new Map();
-    for (const entry of invalid) {
-      if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
-      const candidate = entry;
-      if (typeof candidate.key !== "string" || candidate.key === pinnedKey) continue;
-      candidates.set(
-        candidate.key,
-        metadataIsStructurallyValid(entry) ? {
-          key: entry.key,
-          lastAccessedAt: entry.lastAccessedAt,
-          writeToken: entry.writeToken,
-          deleteOrphanEntry: false
-        } : {
-          key: candidate.key,
-          lastAccessedAt: null,
-          writeToken: null,
-          deleteOrphanEntry: false
-        }
-      );
-    }
-    for (const key of entryKeys) {
-      if (key === pinnedKey || metadataKeys.has(key)) continue;
-      candidates.set(key, {
-        key,
-        lastAccessedAt: null,
-        writeToken: null,
-        deleteOrphanEntry: true
-      });
-    }
-    const target = Math.max(0, Math.min(low, high - incomingBytes));
-    if (force || remainingBytes + incomingBytes > high) {
-      for (const entry of [...valid].sort(
-        (left, right) => left.lastAccessedAt - right.lastAccessedAt || left.key.localeCompare(right.key)
-      )) {
-        if (remainingBytes <= target) break;
-        if (entry.key === pinnedKey) continue;
-        candidates.set(entry.key, {
-          key: entry.key,
-          lastAccessedAt: entry.lastAccessedAt,
-          writeToken: entry.writeToken,
-          deleteOrphanEntry: false
-        });
-        remainingBytes -= entry.size;
-      }
-    }
     let removedEntries = 0;
     let removedBytes = 0;
-    const selected = [...candidates.values()];
-    for (let index = 0; index < selected.length; index += cleanupBatchSize) {
-      const removed = await store.deleteBatch(selected.slice(index, index + cleanupBatchSize));
+    await forEachMetadataBatch(async (records) => {
+      const candidates = records.filter((record) => !recordIsUsable(record, currentTime, ttlMs)).map(candidateFor);
+      const removed = await store.deleteBatch(candidates);
       removedEntries += removed.entries;
       removedBytes += removed.bytes;
-      await Promise.resolve();
-    }
-    const after = await statsFrom(await store.metadata());
+    }, onlyFirst);
+    await forEachEntryBatch(async (records) => {
+      const candidates = records.filter((record) => record.metadata === void 0).map(candidateFor);
+      const removed = await store.deleteBatch(candidates);
+      removedEntries += removed.entries;
+      removedBytes += removed.bytes;
+    }, onlyFirst);
+    return { entries: removedEntries, bytes: removedBytes };
+  }
+  function ensureInitialSweep() {
+    initialSweep ??= cleanupInvalid(true).catch((error) => {
+      initialSweep = null;
+      throw error;
+    });
+    return initialSweep;
+  }
+  async function computeStats() {
+    const currentTime = now();
+    let entries = 0;
+    let bytes = 0;
+    let oldestAccessedAt = null;
+    let newestAccessedAt = null;
+    await forEachMetadataBatch((records) => {
+      for (const record of records) {
+        if (!recordIsUsable(record, currentTime, ttlMs)) continue;
+        entries += 1;
+        bytes += record.metadata.size;
+        oldestAccessedAt = oldestAccessedAt === null ? record.metadata.lastAccessedAt : Math.min(oldestAccessedAt, record.metadata.lastAccessedAt);
+        newestAccessedAt = newestAccessedAt === null ? record.metadata.lastAccessedAt : Math.max(newestAccessedAt, record.metadata.lastAccessedAt);
+      }
+    });
+    const [{ high, low }, cleanup] = await Promise.all([waterMarks(), store.cleanupInfo()]);
     return Object.freeze({
+      databaseName,
+      cacheIdentity,
+      entries,
+      bytes,
+      oldestAccessedAt,
+      newestAccessedAt,
+      highWaterBytes: high,
+      lowWaterBytes: low,
+      lastCleanupAt: cleanup?.lastCleanupAt ?? null,
+      lastCleanupRemovedEntries: cleanup?.removedEntries ?? 0,
+      lastCleanupRemovedBytes: cleanup?.removedBytes ?? 0
+    });
+  }
+  async function physicalEntryStats() {
+    let entries = 0;
+    let bytes = 0;
+    await forEachEntryBatch((records) => {
+      for (const record of records) {
+        entries += 1;
+        const storedBytes = entryBytes(record.entry, record.key);
+        if (storedBytes) bytes += storedBytes.byteLength;
+      }
+    });
+    return { entries, bytes };
+  }
+  async function pruneFor(incomingBytes = 0, pinnedKey = null, force = false) {
+    const invalidRemoved = await cleanupInvalid();
+    let stats = await computeStats();
+    let removedEntries = invalidRemoved.entries;
+    let removedBytes = invalidRemoved.bytes;
+    let replacedBytes = 0;
+    if (pinnedKey) {
+      const existing = await store.get(pinnedKey);
+      if (existing && recordIsUsable(existing, now(), ttlMs)) replacedBytes = existing.metadata.size;
+    }
+    const effectiveIncomingBytes = Math.max(0, incomingBytes - replacedBytes);
+    const target = Math.max(
+      0,
+      Math.min(stats.lowWaterBytes, stats.highWaterBytes - effectiveIncomingBytes)
+    );
+    if (force || stats.bytes + effectiveIncomingBytes > stats.highWaterBytes) {
+      while (stats.bytes > target) {
+        const oldest = await store.oldestBatch(cleanupBatchSize + 1);
+        const candidates = [];
+        let selectedBytes = 0;
+        for (const record of oldest) {
+          if (record.key === pinnedKey || !recordIsUsable(record, now(), ttlMs)) continue;
+          candidates.push(candidateFor(record));
+          selectedBytes += record.metadata.size;
+          if (stats.bytes - selectedBytes <= target || candidates.length >= cleanupBatchSize) break;
+        }
+        if (candidates.length === 0) break;
+        const removed = await store.deleteBatch(candidates);
+        removedEntries += removed.entries;
+        removedBytes += removed.bytes;
+        if (removed.entries === 0) break;
+        stats = await computeStats();
+      }
+    }
+    const after = await computeStats();
+    await store.recordCleanup({
+      key: "cleanup",
+      lastCleanupAt: now(),
+      removedEntries,
+      removedBytes
+    });
+    return Object.freeze({
+      databaseName,
+      cacheIdentity,
       removedEntries,
       removedBytes,
       remainingEntries: after.entries,
@@ -2350,13 +2667,6 @@ function createVerifiedRemoteBinaryCache(options = {}) {
       highWaterBytes: after.highWaterBytes,
       lowWaterBytes: after.lowWaterBytes
     });
-  }
-  function ensureInitialPrune() {
-    initialPrune ??= pruneFor().catch((error) => {
-      initialPrune = null;
-      throw error;
-    });
-    return initialPrune;
   }
   async function verifyBytes(bytes, input, actualContentType) {
     if (bytes.byteLength !== input.size) {
@@ -2381,41 +2691,41 @@ function createVerifiedRemoteBinaryCache(options = {}) {
     const record = await store.get(key);
     if (!record) return { status: "miss" };
     const currentTime = now();
-    const { entry, metadata } = record;
-    const entryIsValid = entry && typeof entry === "object" && entry.key === key && entry.data instanceof ArrayBuffer;
-    if (!entryIsValid) {
-      await store.delete(key);
-      return { status: "invalid" };
-    }
-    const bytes = new Uint8Array(entry.data);
-    const metadataMatches = metadataIsStructurallyValid(metadata) && metadata.integrity === input.integrity && metadata.size === input.size && metadata.contentType === input.contentType && currentTime - metadata.lastAccessedAt <= ttlMs && entry.key === key;
-    if (!metadataMatches) {
-      await store.delete(key);
+    const bytes = entryBytes(record.entry, key);
+    const metadataMatches = recordIsUsable(record, currentTime, ttlMs) && record.metadata.integrity === input.integrity && record.metadata.size === input.size && record.metadata.contentType === input.contentType && bytes?.byteLength === input.size;
+    if (!metadataMatches || !bytes) {
+      await store.deleteBatch([candidateFor(record)]);
       return { status: "invalid" };
     }
     try {
-      await verifyBytes(bytes, input, metadata.contentType);
+      await verifyBytes(bytes, input, record.metadata.contentType);
     } catch {
-      await store.delete(key);
+      await store.deleteBatch([candidateFor(record)]);
       return { status: "invalid" };
     }
-    if (currentTime - metadata.lastAccessedAt >= touchIntervalMs) {
+    if (currentTime - record.metadata.lastAccessedAt >= touchIntervalMs) {
       await store.touch(key, currentTime, currentTime).catch(() => {
       });
     }
-    return { status: "hit", bytes: Uint8Array.from(bytes) };
+    return { status: "hit", bytes };
   }
   async function writeCached(input, bytes, signal) {
     const key = `${CACHE_FORMAT_VERSION}:${input.integrity}`;
     const { high } = await waterMarks();
-    if (bytes.byteLength > high) return { status: "skipped" };
-    const writeToken = `${now()}:${++writeSequence}`;
+    if (bytes.byteLength > high) {
+      return {
+        status: "skipped",
+        writeToken: null,
+        warnings: [{ operation: "write", code: "ASSET_CACHE_ENTRY_OVER_BUDGET" }]
+      };
+    }
+    const writeToken = `${instanceToken}:${++writeSequence}`;
     const write = async () => {
       assertNotAborted(signal);
       const timestamp = now();
-      await store.put(
+      const written = await store.putIfAbsentValid(
         {
-          entry: { key, data: Uint8Array.from(bytes).buffer },
+          entry: { key, data: bytes.buffer },
           metadata: {
             formatVersion: CACHE_FORMAT_VERSION,
             key,
@@ -2430,32 +2740,61 @@ function createVerifiedRemoteBinaryCache(options = {}) {
         },
         signal
       );
-      if (signal?.aborted) {
-        await store.deleteIfWriteToken(key, writeToken).catch(() => {
-        });
-        throw abortError();
-      }
+      return written;
     };
     try {
       await pruneFor(bytes.byteLength, key);
-      await write();
-      await pruneFor(0, key).catch(() => {
+      const written = await write();
+      if (signal?.aborted) {
+        if (written) {
+          await store.deleteBatch([
+            {
+              key,
+              expectedWriteToken: writeToken,
+              deleteIfMetadataInvalid: false,
+              deleteIfMetadataMissing: false
+            }
+          ]).catch(() => {
+          });
+        }
+        throw abortError();
+      }
+      const warnings = [];
+      await pruneFor(0, key).catch((error) => {
+        warnings.push({
+          operation: "cleanup",
+          code: diagnosticCode(error, "ASSET_CACHE_CLEANUP_FAILED")
+        });
       });
-      return Object.freeze({ status: "stored", key, writeToken });
+      return { status: "stored", writeToken: written ? writeToken : null, warnings };
     } catch (error) {
       if (isAbortError(error)) throw error;
-      if (!isQuotaExceeded(error)) return { status: "failed" };
+      if (!isQuotaExceeded(error)) {
+        return {
+          status: "failed",
+          writeToken: null,
+          warnings: [{ operation: "write", code: diagnosticCode(error, "ASSET_CACHE_WRITE_FAILED") }]
+        };
+      }
       try {
         await pruneFor(bytes.byteLength, key, true);
-        await write();
-        await pruneFor(0, key).catch(() => {
-        });
-        return Object.freeze({ status: "stored", key, writeToken });
+        const written = await write();
+        return { status: "stored", writeToken: written ? writeToken : null, warnings: [] };
       } catch (retryError) {
         if (isAbortError(retryError)) throw retryError;
-        return { status: "failed" };
+        return {
+          status: "failed",
+          writeToken: null,
+          warnings: [
+            { operation: "write", code: diagnosticCode(retryError, "ASSET_CACHE_QUOTA_EXCEEDED") }
+          ]
+        };
       }
     }
+  }
+  function addWarning(warnings, operation, code) {
+    if (warnings.some((warning) => warning.operation === operation && warning.code === code)) return;
+    warnings.push(Object.freeze({ operation, code }));
   }
   const cache = {
     async resolve(input, resolveOptions) {
@@ -2466,24 +2805,34 @@ function createVerifiedRemoteBinaryCache(options = {}) {
         throw new TypeError("Verified remote binary resolve options must provide load.");
       }
       const normalized = normalizeInput(input);
+      const warnings = [];
       assertNotAborted(resolveOptions.signal);
+      try {
+        await ensureInitialSweep();
+      } catch (error) {
+        if (isAbortError(error)) throw error;
+        addWarning(warnings, "cleanup", diagnosticCode(error, "ASSET_CACHE_CLEANUP_FAILED"));
+      }
       let cacheRead = "miss";
       try {
-        await ensureInitialPrune();
         const cached = await readCached(normalized);
         cacheRead = cached.status;
         if (cached.status === "hit" && cached.bytes) {
+          assertNotAborted(resolveOptions.signal);
           return Object.freeze({
             bytes: cached.bytes,
             contentType: normalized.contentType,
             integrity: normalized.integrity,
             source: "indexeddb",
             cacheRead,
-            cacheWrite: "not-needed"
+            cacheWrite: "not-needed",
+            cacheWarnings: Object.freeze([...warnings])
           });
         }
-      } catch {
+      } catch (error) {
+        if (isAbortError(error)) throw error;
         cacheRead = "failed";
+        addWarning(warnings, "read", diagnosticCode(error, "ASSET_CACHE_READ_FAILED"));
       }
       assertNotAborted(resolveOptions.signal);
       const loaded = await resolveOptions.load(
@@ -2496,37 +2845,57 @@ function createVerifiedRemoteBinaryCache(options = {}) {
       if (!loaded || typeof loaded !== "object" || Array.isArray(loaded)) {
         throw cacheError("ASSET_CACHE_LOAD_INVALID", "Remote binary loader returned no result.");
       }
-      const bytes = copyBytes(loaded.bytes);
+      const bytes = takeBytes(loaded.bytes, loaded.transferOwnership === true);
       await verifyBytes(bytes, normalized, loaded.contentType);
       assertNotAborted(resolveOptions.signal);
       const writeResult = await writeCached(normalized, bytes, resolveOptions.signal);
+      for (const warning of writeResult.warnings) {
+        addWarning(warnings, warning.operation, warning.code);
+      }
       if (resolveOptions.signal?.aborted) {
-        if (writeResult.status === "stored") {
-          await store.deleteIfWriteToken(writeResult.key, writeResult.writeToken).catch(() => {
+        if (writeResult.writeToken) {
+          await store.deleteBatch([
+            {
+              key: `${CACHE_FORMAT_VERSION}:${normalized.integrity}`,
+              expectedWriteToken: writeResult.writeToken,
+              deleteIfMetadataInvalid: false,
+              deleteIfMetadataMissing: false
+            }
+          ]).catch(() => {
           });
         }
         throw abortError();
       }
       return Object.freeze({
-        bytes: Uint8Array.from(bytes),
+        bytes,
         contentType: normalized.contentType,
         integrity: normalized.integrity,
         source: "network",
         cacheRead,
-        cacheWrite: writeResult.status
+        cacheWrite: writeResult.status,
+        cacheWarnings: Object.freeze([...warnings])
       });
     },
     async getStats() {
-      return statsFrom(await store.metadata());
+      await pruneFor();
+      return computeStats();
     },
     prune() {
       return pruneFor();
     },
     async clear() {
-      const before = await statsFrom(await store.metadata());
+      const before = await physicalEntryStats();
       await store.clear();
+      await store.recordCleanup({
+        key: "cleanup",
+        lastCleanupAt: now(),
+        removedEntries: before.entries,
+        removedBytes: before.bytes
+      });
       const { high, low } = await waterMarks();
       return Object.freeze({
+        databaseName,
+        cacheIdentity,
         removedEntries: before.entries,
         removedBytes: before.bytes,
         remainingEntries: 0,
@@ -2653,5 +3022,6 @@ function createAssetManagerComposition(featureFlags, options = {}) {
 }
 export {
   createAssetManagerComposition,
-  createVerifiedRemoteBinaryCache
+  createVerifiedRemoteBinaryCache,
+  createVerifiedRemoteCacheDatabaseName
 };

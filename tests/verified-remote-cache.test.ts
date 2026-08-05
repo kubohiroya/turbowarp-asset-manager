@@ -3,6 +3,7 @@ import {describe, expect, it, vi} from 'vitest';
 
 import {
   createVerifiedRemoteBinaryCache,
+  createVerifiedRemoteCacheDatabaseName,
   type VerifiedRemoteBinaryInput
 } from '../src/verified-remote-cache.js';
 
@@ -81,6 +82,23 @@ async function getCacheMetadata(
   }
 }
 
+async function replaceCacheWriteToken(
+  indexedDB: IDBFactory,
+  integrity: string,
+  writeToken: string
+): Promise<void> {
+  const database = await openDatabase(indexedDB, DATABASE_NAME);
+  try {
+    const transaction = database.transaction('metadata', 'readwrite');
+    const store = transaction.objectStore('metadata');
+    const request = store.get(`1:${integrity}`);
+    request.onsuccess = () => store.put({...request.result, writeToken});
+    await transactionComplete(transaction);
+  } finally {
+    database.close();
+  }
+}
+
 async function putUnknownFormatRecord(indexedDB: IDBFactory): Promise<void> {
   const database = await openDatabase(indexedDB, DATABASE_NAME);
   try {
@@ -143,6 +161,21 @@ async function cacheStoreCounts(
   }
 }
 
+async function getCacheInfo(
+  indexedDB: IDBFactory,
+  databaseName: string
+): Promise<Record<string, unknown> | undefined> {
+  const database = await openDatabase(indexedDB, databaseName);
+  try {
+    const transaction = database.transaction('info', 'readonly');
+    const result = await requestResult(transaction.objectStore('info').get('identity'));
+    await transactionComplete(transaction);
+    return result as Record<string, unknown> | undefined;
+  } finally {
+    database.close();
+  }
+}
+
 async function putLegacyRecord(indexedDB: IDBFactory): Promise<void> {
   const request = indexedDB.open('tw-asset-manager', 1);
   request.onupgradeneeded = () => request.result.createObjectStore('assets', {keyPath: 'name'});
@@ -169,6 +202,81 @@ async function getLegacyRecord(indexedDB: IDBFactory): Promise<unknown> {
 }
 
 describe('verified remote binary cache', () => {
+  it('creates readable story-scoped database names without retaining a source path', () => {
+    expect(
+      createVerifiedRemoteCacheDatabaseName({
+        id: 'story-0001',
+        label: '/Users/example/海 の冒険.kamishibai.yaml'
+      })
+    ).toBe('tw-kamishibai-assets-v1--海-の冒険--story-0001');
+  });
+
+  it('isolates identical content by story and exposes its readable cache identity', async () => {
+    const indexedDB = new IDBFactory();
+    const bytes = new Uint8Array([3, 3, 7]);
+    const input = await inputFor(bytes);
+    const firstLoad = vi.fn(async () => ({bytes, contentType: CONTENT_TYPE}));
+    const secondLoad = vi.fn(async () => ({bytes, contentType: CONTENT_TYPE}));
+    const first = createVerifiedRemoteBinaryCache({
+      indexedDB,
+      cacheIdentity: {id: 'story-0001', label: '海の冒険.kamishibai.yaml'}
+    });
+    const second = createVerifiedRemoteBinaryCache({
+      indexedDB,
+      cacheIdentity: {id: 'story-0002', label: '海の冒険.kamishibai.yaml'}
+    });
+
+    const firstResult = await first.resolve(input, {load: firstLoad});
+    const secondResult = await second.resolve(input, {load: secondLoad});
+    expect(firstResult.source).toBe('network');
+    expect(secondResult.source).toBe('network');
+    expect(firstLoad).toHaveBeenCalledTimes(1);
+    expect(secondLoad).toHaveBeenCalledTimes(1);
+    const firstStats = await first.getStats();
+    const secondStats = await second.getStats();
+    expect(firstStats.databaseName).not.toBe(secondStats.databaseName);
+    expect(firstStats.cacheIdentity).toMatchObject({
+      id: 'story-0001',
+      label: '海の冒険.kamishibai.yaml'
+    });
+    await expect(getCacheInfo(indexedDB, firstStats.databaseName)).resolves.toMatchObject({
+      id: 'story-0001',
+      label: '海の冒険.kamishibai.yaml',
+      databaseName: firstStats.databaseName
+    });
+  });
+
+  it('can preserve a generated database name when the story display label changes', async () => {
+    const indexedDB = new IDBFactory();
+    const id = 'story-rename-01';
+    const originalLabel = 'old-name.kamishibai.yaml';
+    const databaseName = createVerifiedRemoteCacheDatabaseName({id, label: originalLabel});
+    const bytes = new Uint8Array([1, 6, 1, 8]);
+    const input = await inputFor(bytes);
+    const original = createVerifiedRemoteBinaryCache({
+      indexedDB,
+      cacheIdentity: {id, label: originalLabel, databaseName}
+    });
+    await original.resolve(input, {
+      load: async () => ({bytes, contentType: CONTENT_TYPE})
+    });
+
+    const renamed = createVerifiedRemoteBinaryCache({
+      indexedDB,
+      cacheIdentity: {id, label: 'new-name.kamishibai.yaml', databaseName}
+    });
+    const network = vi.fn(async () => ({bytes, contentType: CONTENT_TYPE}));
+    await expect(renamed.resolve(input, {load: network})).resolves.toMatchObject({
+      source: 'indexeddb'
+    });
+    expect(network).not.toHaveBeenCalled();
+    await expect(getCacheInfo(indexedDB, databaseName)).resolves.toMatchObject({
+      id,
+      label: 'new-name.kamishibai.yaml',
+      databaseName
+    });
+  });
+
   it('stores verified network bytes by integrity and returns defensive cache copies', async () => {
     const indexedDB = new IDBFactory();
     const bytes = new Uint8Array([1, 2, 3, 4]);
@@ -195,6 +303,23 @@ describe('verified remote binary cache', () => {
     });
     expect([...second.bytes]).toEqual([1, 2, 3, 4]);
     expect(load).toHaveBeenCalledTimes(1);
+  });
+
+  it('accepts ownership transfer without making another JavaScript heap copy', async () => {
+    const indexedDB = new IDBFactory();
+    const source = new Uint8Array([9, 8, 7, 6]).buffer;
+    const input = await inputFor(new Uint8Array(source));
+    const cache = createVerifiedRemoteBinaryCache({indexedDB});
+
+    const result = await cache.resolve(input, {
+      load: async () => ({
+        bytes: source,
+        contentType: CONTENT_TYPE,
+        transferOwnership: true
+      })
+    });
+    expect(result.bytes.buffer).toBe(source);
+    expect([...result.bytes]).toEqual([9, 8, 7, 6]);
   });
 
   it('deletes a corrupt cache hit and replaces it with verified network bytes', async () => {
@@ -236,6 +361,16 @@ describe('verified remote binary cache', () => {
       cacheRead: 'failed',
       cacheWrite: 'failed'
     });
+    const result = await cache.resolve(input, {
+      load: async () => ({bytes, contentType: CONTENT_TYPE})
+    });
+    expect(result.cacheWarnings).toEqual(
+      expect.arrayContaining([
+        {operation: 'cleanup', code: 'ASSET_CACHE_INDEXEDDB_UNAVAILABLE'},
+        {operation: 'read', code: 'ASSET_CACHE_INDEXEDDB_UNAVAILABLE'},
+        {operation: 'write', code: 'ASSET_CACHE_INDEXEDDB_UNAVAILABLE'}
+      ])
+    );
   });
 
   it('uses the network in memory-only mode when IndexedDB does not exist', async () => {
@@ -303,6 +438,10 @@ describe('verified remote binary cache', () => {
       expect(result).toMatchObject({source: 'network', cacheWrite: 'failed'});
       expect([...result.bytes]).toEqual([...bytes]);
       expect(put).toHaveBeenCalledTimes(2);
+      expect(result.cacheWarnings).toContainEqual({
+        operation: 'write',
+        code: 'ASSET_CACHE_QUOTA_EXCEEDED'
+      });
     } finally {
       put.mockRestore();
     }
@@ -384,6 +523,92 @@ describe('verified remote binary cache', () => {
     await expect(cache.getStats()).resolves.toMatchObject({entries: 0, bytes: 0});
   });
 
+  it('does not return a cache hit when cancellation happens during verification', async () => {
+    const indexedDB = new IDBFactory();
+    const bytes = new Uint8Array([6, 2, 6, 4]);
+    const input = await inputFor(bytes);
+    const baseCache = createVerifiedRemoteBinaryCache({indexedDB});
+    await baseCache.resolve(input, {
+      load: async () => ({bytes, contentType: CONTENT_TYPE})
+    });
+
+    let releaseDigest!: () => void;
+    const digestGate = new Promise<void>((resolve) => {
+      releaseDigest = resolve;
+    });
+    let digestStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      digestStarted = resolve;
+    });
+    const delegate = globalThis.crypto.subtle;
+    const delayedSubtle = {
+      async digest(algorithm: AlgorithmIdentifier, data: BufferSource) {
+        digestStarted();
+        await digestGate;
+        return delegate.digest(algorithm, data);
+      }
+    } as SubtleCrypto;
+    const cache = createVerifiedRemoteBinaryCache({indexedDB, subtleCrypto: delayedSubtle});
+    const controller = new AbortController();
+    const resolution = cache.resolve(input, {
+      signal: controller.signal,
+      load: async () => {
+        throw new Error('network must not be used');
+      }
+    });
+    await started;
+    controller.abort();
+    releaseDigest();
+
+    await expect(resolution).rejects.toMatchObject({name: 'AbortError'});
+    await expect(baseCache.getStats()).resolves.toMatchObject({entries: 1, bytes: 4});
+  });
+
+  it('does not let a stale invalid reader delete a newer valid record', async () => {
+    const indexedDB = new IDBFactory();
+    const bytes = new Uint8Array([1, 4, 1, 4]);
+    const input = await inputFor(bytes);
+    const integrity = String(input.integrity);
+    const baseCache = createVerifiedRemoteBinaryCache({indexedDB});
+    await baseCache.resolve(input, {
+      load: async () => ({bytes, contentType: CONTENT_TYPE})
+    });
+
+    let releaseDigest!: () => void;
+    const digestGate = new Promise<void>((resolve) => {
+      releaseDigest = resolve;
+    });
+    let digestStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      digestStarted = resolve;
+    });
+    let digestCalls = 0;
+    const delegate = globalThis.crypto.subtle;
+    const staleSubtle = {
+      async digest(algorithm: AlgorithmIdentifier, data: BufferSource) {
+        digestCalls += 1;
+        if (digestCalls === 1) {
+          digestStarted();
+          await digestGate;
+          return new Uint8Array(32).buffer;
+        }
+        return delegate.digest(algorithm, data);
+      }
+    } as SubtleCrypto;
+    const staleReader = createVerifiedRemoteBinaryCache({indexedDB, subtleCrypto: staleSubtle});
+    const resolution = staleReader.resolve(input, {
+      load: async () => ({bytes, contentType: CONTENT_TYPE})
+    });
+    await started;
+    const replacementToken = 'replacement-token-from-another-tab';
+    await replaceCacheWriteToken(indexedDB, integrity, replacementToken);
+    releaseDigest();
+
+    await expect(resolution).resolves.toMatchObject({source: 'network', cacheWrite: 'stored'});
+    expect((await getCacheMetadata(indexedDB, integrity))?.writeToken).toBe(replacementToken);
+    await expect(baseCache.getStats()).resolves.toMatchObject({entries: 1, bytes: 4});
+  });
+
   it('throttles access timestamp writes and removes unknown-format records', async () => {
     const indexedDB = new IDBFactory();
     let currentTime = 1_000;
@@ -427,6 +652,61 @@ describe('verified remote binary cache', () => {
     await expect(cacheStoreCounts(indexedDB)).resolves.toEqual({entries: 1, metadata: 1});
   });
 
+  it('uses cursor batches instead of materializing every cache record', async () => {
+    const indexedDB = new IDBFactory();
+    const getAll = vi.spyOn(IDBObjectStore.prototype, 'getAll');
+    const getAllKeys = vi.spyOn(IDBObjectStore.prototype, 'getAllKeys');
+    try {
+      const cache = createVerifiedRemoteBinaryCache({
+        indexedDB,
+        cleanupBatchSize: 1,
+        maxCacheBytes: 32,
+        quotaFraction: 1,
+        estimateStorage: async () => ({quota: 1_000})
+      });
+      for (let index = 0; index < 5; index += 1) {
+        const bytes = new Uint8Array([index + 1, index + 2]);
+        const input = await inputFor(bytes, `${index}.bin`);
+        await cache.resolve(input, {
+          load: async () => ({bytes, contentType: CONTENT_TYPE})
+        });
+      }
+      await cache.prune();
+      await cache.getStats();
+      expect(getAll).not.toHaveBeenCalled();
+      expect(getAllKeys).not.toHaveBeenCalled();
+    } finally {
+      getAll.mockRestore();
+      getAllKeys.mockRestore();
+    }
+  });
+
+  it('automatically removes expired entries before reporting stats', async () => {
+    const indexedDB = new IDBFactory();
+    let currentTime = 10;
+    const bytes = new Uint8Array([2, 7, 1]);
+    const input = await inputFor(bytes);
+    const cache = createVerifiedRemoteBinaryCache({
+      indexedDB,
+      now: () => currentTime,
+      ttlMs: 10
+    });
+    await cache.resolve(input, {
+      load: async () => ({bytes, contentType: CONTENT_TYPE})
+    });
+    currentTime = 21;
+
+    const stats = await cache.getStats();
+    expect(stats).toMatchObject({
+      entries: 0,
+      bytes: 0,
+      lastCleanupAt: 21,
+      lastCleanupRemovedEntries: 1,
+      lastCleanupRemovedBytes: 3
+    });
+    await expect(cacheStoreCounts(indexedDB)).resolves.toEqual({entries: 0, metadata: 0});
+  });
+
   it('converges concurrent same-integrity writes on one content-addressed record', async () => {
     const indexedDB = new IDBFactory();
     const bytes = new Uint8Array([1, 2, 1, 2]);
@@ -441,6 +721,29 @@ describe('verified remote binary cache', () => {
       )
     );
     await expect(cache.getStats()).resolves.toMatchObject({entries: 1, bytes: 4});
+  });
+
+  it('uses different write generations for cache instances created at the same time', async () => {
+    const indexedDB = new IDBFactory();
+    const firstBytes = new Uint8Array([1, 1, 2]);
+    const secondBytes = new Uint8Array([2, 3, 5]);
+    const firstInput = await inputFor(firstBytes, 'first.bin');
+    const secondInput = await inputFor(secondBytes, 'second.bin');
+    const first = createVerifiedRemoteBinaryCache({indexedDB, now: () => 100});
+    const second = createVerifiedRemoteBinaryCache({indexedDB, now: () => 100});
+    await Promise.all([
+      first.resolve(firstInput, {
+        load: async () => ({bytes: firstBytes, contentType: CONTENT_TYPE})
+      }),
+      second.resolve(secondInput, {
+        load: async () => ({bytes: secondBytes, contentType: CONTENT_TYPE})
+      })
+    ]);
+
+    const firstToken = (await getCacheMetadata(indexedDB, String(firstInput.integrity)))?.writeToken;
+    const secondToken = (await getCacheMetadata(indexedDB, String(secondInput.integrity)))
+      ?.writeToken;
+    expect(firstToken).not.toBe(secondToken);
   });
 
   it('clears only the verified remote cache and leaves the legacy asset database intact', async () => {

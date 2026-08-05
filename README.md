@@ -45,6 +45,40 @@ and audio MIME types are accepted. Project-local costume, backdrop, and sound id
 registered with `registerProjectAsset`. Importing the module does not register a Standalone
 extension or add blocks to a palette.
 
+Kamishibai hosts should scope the persistent cache to one story. Generate the database name when
+the story manifest is first built, persist both the stable ID and generated name in that manifest,
+and keep the database name when only the source filename changes:
+
+```js
+import {
+  createAssetManagerComposition,
+  createVerifiedRemoteCacheDatabaseName
+} from '@kubohiroya/turbowarp-asset-manager/composition';
+
+const cacheIdentity = {
+  id: storyManifest.cacheId,
+  label: storySourceFile.name,
+  databaseName: storyManifest.cacheDatabaseName ??
+    createVerifiedRemoteCacheDatabaseName({
+      id: storyManifest.cacheId,
+      label: storySourceFile.name
+    })
+};
+const assets = createAssetManagerComposition(undefined, {
+  verifiedRemoteCache: {cacheIdentity}
+});
+```
+
+Generated names use the form
+`tw-kamishibai-assets-v1--<readable-script-name>--<stable-story-id>`. Only the basename is used;
+local directory paths are not retained. Unicode letters and digits are preserved, while spaces and
+other punctuation become hyphens. The stable ID prevents same-filename stories from sharing data.
+Persisting the generated name prevents a normal rename from abandoning the old database. The
+database also contains a small `info/identity` record with the current display label, stable ID,
+format version, and last-open time. Stats return the same identity so an app shell can display and
+clear caches per story. The unscoped default database remains available for generic composition
+consumers, but DSL 4.0 runtime integration must always provide `cacheIdentity`.
+
 ### Verified remote binary cache
 
 Composition hosts can opt into a cache-first remote-binary path without adding blocks to the
@@ -66,7 +100,8 @@ const result = await assets.resolveVerifiedRemoteBinary(model, {
     const response = await fetch(url, {signal});
     return {
       bytes: await response.arrayBuffer(),
-      contentType: response.headers.get('content-type')
+      contentType: response.headers.get('content-type'),
+      transferOwnership: true
     };
   }
 });
@@ -75,11 +110,13 @@ const result = await assets.resolveVerifiedRemoteBinary(model, {
 A valid content-addressed IndexedDB hit is revalidated and returned without calling the loader, so
 previously verified content remains available offline. A read failure falls back to the loader. If
 verification succeeds but the cache write fails, the result is still returned for memory-only use;
-`cacheRead` and `cacheWrite` report the cache outcome. Cancellation prevents that resolution's
-write from remaining in the cache.
+`cacheRead` and `cacheWrite` report the cache outcome, while `cacheWarnings` contains sanitized
+machine-readable codes for blocked, unavailable, quota, cleanup, and write failures. Cancellation
+prevents that resolution's write from remaining in the cache.
 
-The verified cache uses the isolated `tw-asset-manager-verified-binary-v1` database and does not
-alter the legacy name-keyed `tw-asset-manager` database. Records contain the integrity, size,
+The unscoped verified cache uses the isolated `tw-asset-manager-verified-binary-v1` database; a
+story-scoped host uses the readable database name described above. Neither mode alters the legacy
+name-keyed `tw-asset-manager` database. Records contain the integrity, size,
 Content-Type, timestamps, and bytes; source URLs and credentials are not persisted. The default
 high-water mark is the smaller of 256 MiB and 20% of the browser-reported origin quota. Before a
 write exceeds that mark, least-recently-used records are removed to the 80% low-water mark. Records
@@ -91,14 +128,22 @@ Hosts can override `maxCacheBytes`, `quotaFraction`, `lowWaterRatio`, `ttlMs`,
 `touchIntervalMs`, and `cleanupBatchSize` through the second argument to
 `createAssetManagerComposition`. They can expose storage controls using
 `getVerifiedRemoteCacheStats`, `pruneVerifiedRemoteCache`, and
-`clearVerifiedRemoteCache`. Cleanup deletes metadata and binary records in bounded batches;
+`clearVerifiedRemoteCache`. Cleanup walks primary-key cursors and the `lastAccessedAt` LRU index in
+bounded batches; it never materializes the complete key or metadata set in one JavaScript array.
+Stats reconcile TTL and entry/metadata pairing before they are returned. Cleanup and conditional
+deletion compare the observed write generation again inside the deletion transaction, so a stale
+reader cannot remove a newer record from another tab. Binary and metadata records are deleted
+together;
 clearing this cache does not delete legacy Standalone assets. IndexedDB is an auxiliary cache, not
 a secrecy boundary: deployed applications should avoid remote assets containing credentials or
 private material and should offer users a cache-clear control where appropriate.
 
-Persistent cache lifetime and materialized memory lifetime are separate. The verified cache does
-not keep a second JavaScript heap copy after `resolveVerifiedRemoteBinary` returns; the caller owns
-the returned copy. Registering those bytes as an image or sound creates a separate in-memory
+Persistent cache lifetime and materialized memory lifetime are separate. When the loader sets
+`transferOwnership: true`, it must not read or mutate the supplied `ArrayBuffer` after returning;
+Asset Manager verifies, stores, and returns that owned buffer without an additional full-size
+JavaScript copy. Without that flag, Asset Manager makes one defensive input copy. IndexedDB still
+performs its browser-managed structured clone. After resolution, the caller owns the returned
+buffer and Asset Manager retains no application-level heap copy. Registering those bytes as an image or sound creates a separate in-memory
 resource, which the composition host releases with `releaseAsset` or `releaseAll`. A scene-based
 DSL can therefore implement the following policy without deleting the offline cache:
 
