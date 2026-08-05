@@ -361,7 +361,7 @@ describe('project-local assets', () => {
     expect(extension.getInfo().docsURI).toBe(EXTENSION_DOCS_URI);
     expect(EXTENSION_DOCS_URI).toBe('https://kubohiroya.github.io/turbowarp-asset-manager/');
     expect(extension.getVersion()).toBe(EXTENSION_VERSION);
-    expect(EXTENSION_VERSION).toBe('0.4.1');
+    expect(EXTENSION_VERSION).toBe('0.5.0');
   });
 
   it('validates project asset addresses without registration side effects', () => {

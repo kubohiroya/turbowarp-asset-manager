@@ -1,6 +1,6 @@
 {
   "name": "@kubohiroya/turbowarp-asset-manager",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "An IndexedDB-backed image, audio, and runtime-text asset manager for TurboWarp projects.",
   "author": "Hiroya Kubo <hiroya@cuc.ac.jp>",
   "type": "module",
@@ -12,6 +12,13 @@
   },
   "bugs": {
     "url": "https://github.com/kubohiroya/turbowarp-asset-manager/issues"
+  },
+  "exports": {
+    "./composition": {
+      "types": "./dist/types/composition.d.ts",
+      "import": "./dist/composition.js"
+    },
+    "./package.json": "./package.json"
   },
   "files": [
     "dist/",
@@ -28,7 +35,10 @@
   "scripts": {
     "dev": "vite build --watch",
     "typecheck": "tsc --noEmit",
-    "build": "vite build",
+    "build": "pnpm build:extension && pnpm build:composition && pnpm build:types",
+    "build:extension": "vite build",
+    "build:composition": "vite build --config vite.composition.config.ts",
+    "build:types": "tsc --project tsconfig.build.json",
     "test": "vitest run",
     "docs": "node scripts/generate-readme.mjs",
     "docs:check": "npm run docs && git diff --exit-code -- README.md",
