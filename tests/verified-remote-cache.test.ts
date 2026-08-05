@@ -1,6 +1,7 @@
 import {IDBFactory, IDBObjectStore} from 'fake-indexeddb';
 import {describe, expect, it, vi} from 'vitest';
 
+import {StoryCacheCatalog} from '../src/verified-cache-catalog.js';
 import {
   createVerifiedRemoteBinaryCache,
   createVerifiedRemoteCacheDatabaseName,
@@ -830,6 +831,48 @@ describe('verified remote binary cache', () => {
     expect(databaseNames).toContain(secondName);
   });
 
+  it('does not exceed the origin-wide budget when every other story database is active', async () => {
+    const indexedDB = new IDBFactory();
+    const common = {
+      indexedDB,
+      maxCacheBytes: 6,
+      quotaFraction: 1,
+      lowWaterRatio: 0.5,
+      estimateStorage: async () => ({quota: 1_000})
+    };
+    const first = createVerifiedRemoteBinaryCache({
+      ...common,
+      cacheIdentity: {id: 'story-0001', label: 'first-active.kamishibai.yaml'}
+    });
+    const second = createVerifiedRemoteBinaryCache({
+      ...common,
+      cacheIdentity: {id: 'story-0002', label: 'second-active.kamishibai.yaml'}
+    });
+    const firstBytes = new Uint8Array([1, 2, 3, 4]);
+    const secondBytes = new Uint8Array([5, 6, 7, 8]);
+    await first.resolve(await inputFor(firstBytes, 'first-active.bin'), {
+      load: async () => ({bytes: firstBytes, contentType: CONTENT_TYPE})
+    });
+
+    const result = await second.resolve(await inputFor(secondBytes, 'second-active.bin'), {
+      load: async () => ({bytes: secondBytes, contentType: CONTENT_TYPE})
+    });
+
+    expect(result).toMatchObject({source: 'network', cacheWrite: 'skipped'});
+    expect(result.cacheWarnings).toContainEqual({
+      operation: 'write',
+      code: 'ASSET_CACHE_ORIGIN_BUDGET_PINNED'
+    });
+    const stories = await second.listStoryCaches();
+    expect(stories.reduce((total, story) => total + story.bytes, 0)).toBeLessThanOrEqual(6);
+    expect(stories).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({id: 'story-0001', bytes: 4, active: true}),
+        expect.objectContaining({id: 'story-0002', bytes: 0, active: true})
+      ])
+    );
+  });
+
   it('deletes an abandoned story database after the catalog TTL without opening it', async () => {
     const indexedDB = new IDBFactory();
     let currentTime = 1;
@@ -966,6 +1009,168 @@ describe('verified remote binary cache', () => {
     });
     await secondTab.releaseStoryCacheLease();
     await expect(manager.deleteStoryCache(databaseName)).resolves.toMatchObject({deleted: true});
+  });
+
+  it('does not release its own active lease implicitly for explicit database deletion', async () => {
+    const indexedDB = new IDBFactory();
+    const cache = createVerifiedRemoteBinaryCache({
+      indexedDB,
+      cacheIdentity: {id: 'story-0001', label: 'active-delete.kamishibai.yaml'}
+    });
+    const bytes = new Uint8Array([1, 2, 3]);
+    await cache.resolve(await inputFor(bytes), {
+      load: async () => ({bytes, contentType: CONTENT_TYPE})
+    });
+    const databaseName = (await cache.getStats()).databaseName;
+
+    await expect(cache.deleteStoryCache(databaseName)).rejects.toMatchObject({
+      code: 'ASSET_CACHE_DATABASE_ACTIVE'
+    });
+    await cache.releaseStoryCacheLease();
+    await expect(cache.deleteStoryCache(databaseName)).resolves.toMatchObject({deleted: true});
+  });
+
+  it('prevents a new lease from racing with a database deletion marker', async () => {
+    const indexedDB = new IDBFactory();
+    const catalog = new StoryCacheCatalog(indexedDB, () => 10);
+    const identity = {
+      databaseName: createVerifiedRemoteCacheDatabaseName({
+        id: 'story-0001',
+        label: 'deletion-race.kamishibai.yaml'
+      }),
+      id: 'story-0001',
+      label: 'deletion-race.kamishibai.yaml'
+    };
+    await catalog.upsertAndRenewLease(
+      identity,
+      {entries: 1, bytes: 3, lastCleanupAt: null, revision: 1},
+      10,
+      'initial-runtime-token',
+      100
+    );
+    await catalog.releaseLease(identity.databaseName, 'initial-runtime-token');
+    const heldDatabase = await openDatabase(indexedDB, identity.databaseName);
+    const deletionRequested = new Promise<void>((resolve) => {
+      heldDatabase.onversionchange = () => resolve();
+    });
+
+    const deletion = catalog.delete(identity.databaseName, 'database-delete-token');
+    await deletionRequested;
+    await expect(
+      catalog.acquireLease(identity, 10, 'new-runtime-token', 100)
+    ).rejects.toMatchObject({code: 'ASSET_CACHE_DATABASE_DELETING'});
+    heldDatabase.close();
+    await expect(deletion).resolves.toMatchObject({deleted: true});
+  });
+
+  it('recovers an abandoned deletion marker before acquiring a new runtime lease', async () => {
+    const indexedDB = new IDBFactory();
+    let currentTime = 1;
+    const identity = {id: 'story-0001', label: 'stale-deletion.kamishibai.yaml'};
+    const first = createVerifiedRemoteBinaryCache({
+      indexedDB,
+      now: () => currentTime,
+      cacheIdentity: identity
+    });
+    const bytes = new Uint8Array([1, 2, 3]);
+    const input = await inputFor(bytes);
+    await first.resolve(input, {
+      load: async () => ({bytes, contentType: CONTENT_TYPE})
+    });
+    await first.releaseStoryCacheLease();
+    const databaseName = (await first.listStoryCaches())[0]!.databaseName;
+    const catalogDatabase = await openDatabase(indexedDB, 'tw-kamishibai-cache-catalog-v1');
+    try {
+      const transaction = catalogDatabase.transaction('stories', 'readwrite');
+      const store = transaction.objectStore('stories');
+      const request = store.get(databaseName);
+      request.onsuccess = () => {
+        store.put({
+          ...request.result,
+          deletingToken: 'abandoned-delete-token',
+          deletingStartedAt: currentTime
+        });
+      };
+      await transactionComplete(transaction);
+    } finally {
+      catalogDatabase.close();
+    }
+
+    currentTime = 2_000_002;
+    const recovered = createVerifiedRemoteBinaryCache({
+      indexedDB,
+      now: () => currentTime,
+      cacheIdentity: identity
+    });
+    await expect(
+      recovered.resolve(input, {
+        load: async () => ({bytes, contentType: CONTENT_TYPE})
+      })
+    ).resolves.toMatchObject({source: 'network', cacheWrite: 'stored'});
+    await expect(recovered.listStoryCaches()).resolves.toEqual([
+      expect.objectContaining({databaseName, bytes: 3, active: true})
+    ]);
+  });
+
+  it('does not let an older statistics revision overwrite a newer catalog value', async () => {
+    const indexedDB = new IDBFactory();
+    const catalog = new StoryCacheCatalog(indexedDB, () => 10);
+    const identity = {
+      databaseName: createVerifiedRemoteCacheDatabaseName({
+        id: 'story-0001',
+        label: 'revision.kamishibai.yaml'
+      }),
+      id: 'story-0001',
+      label: 'revision.kamishibai.yaml'
+    };
+    await catalog.upsertAndRenewLease(
+      identity,
+      {entries: 2, bytes: 8, lastCleanupAt: 10, revision: 2},
+      10,
+      'newer-runtime-token',
+      100
+    );
+    await catalog.upsertAndRenewLease(
+      identity,
+      {entries: 0, bytes: 0, lastCleanupAt: null, revision: 1},
+      10,
+      'older-runtime-token',
+      100
+    );
+
+    await expect(catalog.list()).resolves.toEqual([
+      expect.objectContaining({databaseName: identity.databaseName, entries: 2, bytes: 8})
+    ]);
+  });
+
+  it('reports catalog update failures from prune and clear as machine-readable warnings', async () => {
+    const indexedDB = new IDBFactory();
+    const cache = createVerifiedRemoteBinaryCache({
+      indexedDB,
+      cacheIdentity: {id: 'story-0001', label: 'clear-warning.kamishibai.yaml'}
+    });
+    const bytes = new Uint8Array([1, 2, 3]);
+    await cache.resolve(await inputFor(bytes), {
+      load: async () => ({bytes, contentType: CONTENT_TYPE})
+    });
+    const originalOpen = indexedDB.open.bind(indexedDB);
+    const open = vi.spyOn(indexedDB, 'open').mockImplementation((name, version) => {
+      if (name === 'tw-kamishibai-cache-catalog-v1') throw new Error('catalog unavailable');
+      return version === undefined ? originalOpen(name) : originalOpen(name, version);
+    });
+    try {
+      await expect(cache.prune()).resolves.toMatchObject({
+        warnings: [{operation: 'cleanup', code: 'ASSET_CACHE_CATALOG_UNAVAILABLE'}]
+      });
+      await expect(cache.clear()).resolves.toMatchObject({
+        remainingBytes: 0,
+        warnings: [
+          {operation: 'cleanup', code: 'ASSET_CACHE_CATALOG_UNAVAILABLE'}
+        ]
+      });
+    } finally {
+      open.mockRestore();
+    }
   });
 
   it('automatically removes expired entries before reporting stats', async () => {

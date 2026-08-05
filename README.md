@@ -91,7 +91,11 @@ entries; explicit story deletion removes the complete database and its catalog r
 Each running story renews its own lease with `renewVerifiedRemoteStoryCacheLease` and releases it
 with `releaseVerifiedRemoteStoryCacheLease` at story stop or session disposal. Cleanup and explicit
 deletion skip a database while any tab still has an unexpired lease; an expired lease is removed
-automatically after a crashed or closed tab can no longer renew it.
+automatically after a crashed or closed tab can no longer renew it. Lease acquisition and the story
+catalog update share one transaction. Deletion first installs an exclusive catalog marker, so a new
+runtime cannot acquire a lease between the active check and `deleteDatabase`. The current runtime's
+lease is not released implicitly: the host must stop or dispose the story, release its lease, and
+only then request complete database deletion.
 
 ### Verified remote binary cache
 
@@ -138,7 +142,10 @@ current story's least-recently-used records are then removed to the 80% low-wate
 database that has not been opened for the TTL can be deleted from the catalog without opening and materializing its
 assets. Individual records unused for 30 days, corrupt metadata, and unknown formats are pruned;
 access timestamp writes are throttled to once per hour. A record larger than the current budget is
-used in memory but not cached. `QuotaExceededError` triggers cleanup and one write retry.
+used in memory but not cached. Bytes held by other active story databases reduce the current story's
+effective allowance. If those pinned bytes leave too little room, verified network bytes are used in
+memory without an IndexedDB write and `ASSET_CACHE_ORIGIN_BUDGET_PINNED` is reported.
+`QuotaExceededError` triggers cleanup and one write retry.
 
 Hosts can override `maxCacheBytes`, `quotaFraction`, `lowWaterRatio`, `ttlMs`,
 `touchIntervalMs`, `cleanupBatchSize`, and the runtime `leaseTtlMs` through the second argument to
@@ -153,6 +160,10 @@ Stats reconcile TTL and entry/metadata pairing before they are returned. Cleanup
 deletion compare the observed write generation again inside the deletion transaction, so a stale
 reader cannot remove a newer record from another tab. Binary and metadata records are deleted
 together;
+story DB mutations also advance a monotonic statistics revision. The catalog ignores an older
+snapshot from another tab, preventing stale entry and byte counts from replacing a newer clear or
+write. Local prune, clear, and stats results expose machine-readable `warnings` when catalog
+reconciliation fails while leaving the verified local cache operation usable;
 clearing this cache does not delete legacy Standalone assets. IndexedDB is an auxiliary cache, not
 a secrecy boundary: deployed applications should avoid remote assets containing credentials or
 private material and should offer users a cache-clear control where appropriate.

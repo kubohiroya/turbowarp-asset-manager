@@ -58,6 +58,7 @@ export interface VerifiedRemoteCacheStats {
     readonly lastCleanupAt: number | null;
     readonly lastCleanupRemovedEntries: number;
     readonly lastCleanupRemovedBytes: number;
+    readonly warnings: ReadonlyArray<VerifiedRemoteCacheWarning>;
 }
 export interface VerifiedRemoteCachePruneResult {
     readonly databaseName: string;
@@ -68,6 +69,7 @@ export interface VerifiedRemoteCachePruneResult {
     readonly remainingBytes: number;
     readonly highWaterBytes: number;
     readonly lowWaterBytes: number;
+    readonly warnings: ReadonlyArray<VerifiedRemoteCacheWarning>;
 }
 export interface VerifiedRemoteBinaryCacheOptions {
     readonly indexedDB?: IDBFactory;

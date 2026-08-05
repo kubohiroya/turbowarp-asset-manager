@@ -5,6 +5,7 @@ const LEASE_STORE = 'leases';
 const CATALOG_FORMAT_VERSION = 1;
 const STORY_DATABASE_PREFIX = 'tw-kamishibai-assets-v1--';
 const MAX_DATABASE_NAME_LENGTH = 160;
+const DELETION_MARKER_TTL_MS = 30 * 60 * 1000;
 
 export interface VerifiedRemoteStoryCacheInfo {
   readonly databaseName: string;
@@ -46,12 +47,16 @@ export interface StoryCacheCatalogStats {
   readonly entries: number;
   readonly bytes: number;
   readonly lastCleanupAt: number | null;
+  readonly revision: number;
 }
 
 type CatalogRecord = Omit<VerifiedRemoteStoryCacheInfo, 'active'> & {
   formatVersion: number;
   key: string;
   updatedAt: number;
+  statsRevision?: number;
+  deletingToken?: string | null;
+  deletingStartedAt?: number | null;
 };
 
 type CatalogLeaseRecord = {
@@ -115,7 +120,23 @@ function isCatalogRecord(value: unknown): value is CatalogRecord {
       (record.lastCleanupAt === null ||
         (Number.isFinite(record.lastCleanupAt) && Number(record.lastCleanupAt) >= 0)) &&
       Number.isFinite(record.updatedAt) &&
-      Number(record.updatedAt) >= 0
+      Number(record.updatedAt) >= 0 &&
+      (record.statsRevision === undefined || isNonNegativeSafeInteger(record.statsRevision)) &&
+      (record.deletingToken === undefined ||
+        record.deletingToken === null ||
+        (typeof record.deletingToken === 'string' && record.deletingToken.length >= 16)) &&
+      (record.deletingStartedAt === undefined ||
+        record.deletingStartedAt === null ||
+        (Number.isFinite(record.deletingStartedAt) && Number(record.deletingStartedAt) >= 0))
+  );
+}
+
+function deletionIsStale(record: CatalogRecord, currentTime: number): boolean {
+  return Boolean(
+    record.deletingToken &&
+      (record.deletingStartedAt === undefined ||
+        record.deletingStartedAt === null ||
+        currentTime - record.deletingStartedAt > DELETION_MARKER_TTL_MS)
   );
 }
 
@@ -214,61 +235,96 @@ export class StoryCacheCatalog {
     });
   }
 
-  async upsert(
+  async #writeLease(
     identity: StoryCacheCatalogIdentity,
-    stats: StoryCacheCatalogStats,
-    accessedAt: number
+    stats: StoryCacheCatalogStats | null,
+    accessedAt: number,
+    token: string,
+    expiresAt: number
   ): Promise<void> {
     const database = await this.#open();
+    let semanticError: Error | null = null;
     try {
-      const transaction = database.transaction(STORY_STORE, 'readwrite');
+      const transaction = database.transaction([STORY_STORE, LEASE_STORE], 'readwrite');
       const store = transaction.objectStore(STORY_STORE);
       const request = store.get(identity.databaseName) as IDBRequest<unknown>;
       request.onsuccess = () => {
         const previous = isCatalogRecord(request.result) ? request.result : null;
+        if (previous?.deletingToken) {
+          const stale = deletionIsStale(previous, this.#now());
+          semanticError = catalogError(
+            stale ? 'ASSET_CACHE_DATABASE_DELETION_STALE' : 'ASSET_CACHE_DATABASE_DELETING',
+            stale
+              ? 'Story cache database has an abandoned deletion marker.'
+              : 'Story cache database deletion is in progress.'
+          );
+          transaction.abort();
+          return;
+        }
         const currentTime = this.#now();
+        const previousRevision = previous?.statsRevision ?? 0;
+        const acceptStats = stats !== null && (!previous || stats.revision >= previousRevision);
         const record: CatalogRecord = {
           key: identity.databaseName,
           formatVersion: CATALOG_FORMAT_VERSION,
           databaseName: identity.databaseName,
           id: identity.id,
           label: identity.label,
-          entries: stats.entries,
-          bytes: stats.bytes,
+          entries: acceptStats ? stats.entries : (previous?.entries ?? 0),
+          bytes: acceptStats ? stats.bytes : (previous?.bytes ?? 0),
           lastOpenedAt: Math.max(previous?.lastOpenedAt ?? 0, currentTime),
           lastAccessedAt: Math.max(previous?.lastAccessedAt ?? 0, accessedAt),
-          lastCleanupAt: stats.lastCleanupAt,
-          updatedAt: currentTime
+          lastCleanupAt: acceptStats ? stats.lastCleanupAt : (previous?.lastCleanupAt ?? null),
+          updatedAt: currentTime,
+          statsRevision: acceptStats ? stats.revision : previousRevision,
+          deletingToken: null,
+          deletingStartedAt: null
         };
         store.put(record);
+        const lease: CatalogLeaseRecord = {
+          key: `${identity.databaseName}:${token}`,
+          databaseName: identity.databaseName,
+          token,
+          expiresAt
+        };
+        transaction.objectStore(LEASE_STORE).put(lease);
       };
-      await transactionComplete(transaction);
+      try {
+        await transactionComplete(transaction);
+      } catch (error) {
+        throw semanticError ?? error;
+      }
     } finally {
       database.close();
     }
   }
 
-  async touch(identity: StoryCacheCatalogIdentity, accessedAt: number): Promise<void> {
-    const database = await this.#open();
-    try {
-      const transaction = database.transaction(STORY_STORE, 'readwrite');
-      const store = transaction.objectStore(STORY_STORE);
-      const request = store.get(identity.databaseName) as IDBRequest<unknown>;
-      request.onsuccess = () => {
-        if (!isCatalogRecord(request.result)) return;
-        store.put({
-          ...request.result,
-          id: identity.id,
-          label: identity.label,
-          lastOpenedAt: Math.max(request.result.lastOpenedAt, this.#now()),
-          lastAccessedAt: Math.max(request.result.lastAccessedAt, accessedAt),
-          updatedAt: this.#now()
-        });
-      };
-      await transactionComplete(transaction);
-    } finally {
-      database.close();
-    }
+  acquireLease(
+    identity: StoryCacheCatalogIdentity,
+    accessedAt: number,
+    token: string,
+    expiresAt: number
+  ): Promise<void> {
+    return this.#writeLease(identity, null, accessedAt, token, expiresAt);
+  }
+
+  upsertAndRenewLease(
+    identity: StoryCacheCatalogIdentity,
+    stats: StoryCacheCatalogStats,
+    accessedAt: number,
+    token: string,
+    expiresAt: number
+  ): Promise<void> {
+    return this.#writeLease(identity, stats, accessedAt, token, expiresAt);
+  }
+
+  touchAndRenewLease(
+    identity: StoryCacheCatalogIdentity,
+    accessedAt: number,
+    token: string,
+    expiresAt: number
+  ): Promise<void> {
+    return this.#writeLease(identity, null, accessedAt, token, expiresAt);
   }
 
   async list(): Promise<ReadonlyArray<VerifiedRemoteStoryCacheInfo>> {
@@ -325,11 +381,20 @@ export class StoryCacheCatalog {
     }
   }
 
-  async #removeRecord(databaseName: string): Promise<void> {
+  async #removeRecord(databaseName: string, deletionToken: string): Promise<void> {
     const database = await this.#open();
     try {
       const transaction = database.transaction([STORY_STORE, LEASE_STORE], 'readwrite');
-      transaction.objectStore(STORY_STORE).delete(databaseName);
+      const stories = transaction.objectStore(STORY_STORE);
+      const storyRequest = stories.get(databaseName) as IDBRequest<unknown>;
+      storyRequest.onsuccess = () => {
+        if (
+          isCatalogRecord(storyRequest.result) &&
+          storyRequest.result.deletingToken === deletionToken
+        ) {
+          stories.delete(databaseName);
+        }
+      };
       const leases = transaction.objectStore(LEASE_STORE);
       const request = leases.openCursor();
       request.onsuccess = () => {
@@ -346,91 +411,151 @@ export class StoryCacheCatalog {
     }
   }
 
-  async delete(databaseName: string): Promise<VerifiedRemoteStoryCacheDeleteResult> {
-    const record = (await this.list()).find((entry) => entry.databaseName === databaseName);
+  async #beginDelete(databaseName: string, deletionToken: string): Promise<CatalogRecord | null> {
+    const database = await this.#open();
+    let record: CatalogRecord | null = null;
+    let storyComplete = false;
+    let leasesComplete = false;
+    let active = false;
+    let semanticError: Error | null = null;
+    try {
+      const transaction = database.transaction([STORY_STORE, LEASE_STORE], 'readwrite');
+      const stories = transaction.objectStore(STORY_STORE);
+      const storyRequest = stories.get(databaseName) as IDBRequest<unknown>;
+      const decide = () => {
+        if (!storyComplete || !leasesComplete || semanticError || !record) return;
+        if (
+          record.deletingToken &&
+          record.deletingToken !== deletionToken &&
+          !deletionIsStale(record, this.#now())
+        ) {
+          semanticError = catalogError(
+            'ASSET_CACHE_DATABASE_DELETING',
+            'Story cache database deletion is already in progress.'
+          );
+          transaction.abort();
+          return;
+        }
+        if (active) {
+          semanticError = catalogError(
+            'ASSET_CACHE_DATABASE_ACTIVE',
+            'Story cache database has an active runtime lease.'
+          );
+          transaction.abort();
+          return;
+        }
+        const currentTime = this.#now();
+        stories.put({
+          ...record,
+          deletingToken: deletionToken,
+          deletingStartedAt: currentTime,
+          updatedAt: currentTime
+        });
+      };
+      storyRequest.onsuccess = () => {
+        if (isCatalogRecord(storyRequest.result)) record = storyRequest.result;
+        else if (storyRequest.result !== undefined) stories.delete(databaseName);
+        storyComplete = true;
+        decide();
+      };
+      const leaseRequest = transaction.objectStore(LEASE_STORE).openCursor();
+      leaseRequest.onsuccess = () => {
+        const cursor = leaseRequest.result;
+        if (!cursor) {
+          leasesComplete = true;
+          decide();
+          return;
+        }
+        if (!isLeaseRecord(cursor.value) || cursor.value.expiresAt <= this.#now()) {
+          cursor.delete();
+        } else if (cursor.value.databaseName === databaseName) {
+          active = true;
+        }
+        cursor.continue();
+      };
+      try {
+        await transactionComplete(transaction);
+      } catch (error) {
+        throw semanticError ?? error;
+      }
+      return record;
+    } finally {
+      database.close();
+    }
+  }
+
+  async #cancelDelete(databaseName: string, deletionToken: string): Promise<void> {
+    const database = await this.#open();
+    try {
+      const transaction = database.transaction(STORY_STORE, 'readwrite');
+      const store = transaction.objectStore(STORY_STORE);
+      const request = store.get(databaseName) as IDBRequest<unknown>;
+      request.onsuccess = () => {
+        if (isCatalogRecord(request.result) && request.result.deletingToken === deletionToken) {
+          store.put({
+            ...request.result,
+            deletingToken: null,
+            deletingStartedAt: null,
+            updatedAt: this.#now()
+          });
+        }
+      };
+      await transactionComplete(transaction);
+    } finally {
+      database.close();
+    }
+  }
+
+  async delete(
+    databaseName: string,
+    deletionToken: string
+  ): Promise<VerifiedRemoteStoryCacheDeleteResult> {
+    const record = await this.#beginDelete(databaseName, deletionToken);
     if (!record) {
       return Object.freeze({databaseName, deleted: false, removedEntries: 0, removedBytes: 0});
     }
-    if (record.active) {
-      throw catalogError(
-        'ASSET_CACHE_DATABASE_ACTIVE',
-        'Story cache database has an active runtime lease.'
-      );
-    }
     if (!this.#indexedDB || typeof this.#indexedDB.deleteDatabase !== 'function') {
+      await this.#cancelDelete(databaseName, deletionToken).catch(() => {});
       throw catalogError('ASSET_CACHE_CATALOG_UNAVAILABLE', 'IndexedDB deletion is unavailable.');
     }
     let request: IDBOpenDBRequest;
     try {
       request = this.#indexedDB.deleteDatabase(databaseName);
     } catch (error) {
+      await this.#cancelDelete(databaseName, deletionToken).catch(() => {});
       throw catalogError(
         'ASSET_CACHE_DATABASE_DELETE_FAILED',
         'Story cache database could not be deleted.',
         error
       );
     }
-    await new Promise<void>((resolve, reject) => {
-      let settled = false;
-      request.onsuccess = () => {
-        void this.#removeRecord(databaseName).then(
-          () => {
-            if (settled) return;
-            settled = true;
-            resolve();
-          },
-          (error) => {
-            if (settled) return;
-            settled = true;
-            reject(error);
-          }
-        );
-      };
-      request.onerror = () => {
-        if (settled) return;
-        settled = true;
-        reject(
-          catalogError(
-            'ASSET_CACHE_DATABASE_DELETE_FAILED',
-            'Story cache database deletion failed.',
-            request.error
-          )
-        );
-      };
-      request.onblocked = () => {
-        if (settled) return;
-        settled = true;
-        reject(
-          catalogError(
-            'ASSET_CACHE_DATABASE_DELETE_BLOCKED',
-            'Story cache database deletion was blocked.'
-          )
-        );
-      };
-    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        request.onsuccess = () => resolve();
+        request.onerror = () =>
+          reject(
+            catalogError(
+              'ASSET_CACHE_DATABASE_DELETE_FAILED',
+              'Story cache database deletion failed.',
+              request.error
+            )
+          );
+        request.onblocked = () => {
+          // A blocked delete request is still live. Keep the deletion marker until it settles so
+          // a new runtime cannot acquire a lease while the browser may still delete the database.
+        };
+      });
+      await this.#removeRecord(databaseName, deletionToken);
+    } catch (error) {
+      await this.#cancelDelete(databaseName, deletionToken).catch(() => {});
+      throw error;
+    }
     return Object.freeze({
       databaseName,
       deleted: true,
       removedEntries: record.entries,
       removedBytes: record.bytes
     });
-  }
-
-  async renewLease(databaseName: string, token: string, expiresAt: number): Promise<void> {
-    const database = await this.#open();
-    try {
-      const transaction = database.transaction(LEASE_STORE, 'readwrite');
-      const record: CatalogLeaseRecord = {
-        key: `${databaseName}:${token}`,
-        databaseName,
-        token,
-        expiresAt
-      };
-      transaction.objectStore(LEASE_STORE).put(record);
-      await transactionComplete(transaction);
-    } finally {
-      database.close();
-    }
   }
 
   async releaseLease(databaseName: string, token: string): Promise<void> {
@@ -451,6 +576,7 @@ export class StoryCacheCatalog {
     readonly incomingBytes?: number;
     readonly pinnedDatabaseName?: string | null;
     readonly force?: boolean;
+    readonly createDeletionToken: () => string;
   }): Promise<VerifiedRemoteStoryCachePruneResult> {
     const warnings: string[] = [];
     let records = [...(await this.list())];
@@ -459,7 +585,7 @@ export class StoryCacheCatalog {
     let removedBytes = 0;
     const remove = async (record: VerifiedRemoteStoryCacheInfo) => {
       try {
-        const result = await this.delete(record.databaseName);
+        const result = await this.delete(record.databaseName, options.createDeletionToken());
         if (!result.deleted) return false;
         removedDatabases += 1;
         removedEntries += result.removedEntries;

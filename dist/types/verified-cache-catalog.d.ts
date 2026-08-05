@@ -34,15 +34,16 @@ export interface StoryCacheCatalogStats {
     readonly entries: number;
     readonly bytes: number;
     readonly lastCleanupAt: number | null;
+    readonly revision: number;
 }
 export declare class StoryCacheCatalog {
     #private;
     constructor(indexedDB: IDBFactory | undefined, now: () => number);
-    upsert(identity: StoryCacheCatalogIdentity, stats: StoryCacheCatalogStats, accessedAt: number): Promise<void>;
-    touch(identity: StoryCacheCatalogIdentity, accessedAt: number): Promise<void>;
+    acquireLease(identity: StoryCacheCatalogIdentity, accessedAt: number, token: string, expiresAt: number): Promise<void>;
+    upsertAndRenewLease(identity: StoryCacheCatalogIdentity, stats: StoryCacheCatalogStats, accessedAt: number, token: string, expiresAt: number): Promise<void>;
+    touchAndRenewLease(identity: StoryCacheCatalogIdentity, accessedAt: number, token: string, expiresAt: number): Promise<void>;
     list(): Promise<ReadonlyArray<VerifiedRemoteStoryCacheInfo>>;
-    delete(databaseName: string): Promise<VerifiedRemoteStoryCacheDeleteResult>;
-    renewLease(databaseName: string, token: string, expiresAt: number): Promise<void>;
+    delete(databaseName: string, deletionToken: string): Promise<VerifiedRemoteStoryCacheDeleteResult>;
     releaseLease(databaseName: string, token: string): Promise<void>;
     prune(options: {
         readonly highWaterBytes: number;
@@ -51,5 +52,6 @@ export declare class StoryCacheCatalog {
         readonly incomingBytes?: number;
         readonly pinnedDatabaseName?: string | null;
         readonly force?: boolean;
+        readonly createDeletionToken: () => string;
     }): Promise<VerifiedRemoteStoryCachePruneResult>;
 }
