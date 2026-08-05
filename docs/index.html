@@ -22,6 +22,7 @@
       <nav class="primary-nav" aria-label="Guide sections">
         <a href="#quick-start">Quick start</a>
         <a href="#how-it-works">How it works</a>
+        <a href="#composition-cache">Composition API</a>
         <a href="#recipes">Recipes</a>
         <a href="#reference">Reference</a>
       </nav>
@@ -79,7 +80,7 @@
         <li>
           <h3>Load the extension</h3>
           <p>In TurboWarp, choose <strong>Add Extension → Custom Extension</strong> and paste:</p>
-          <pre><code>https://cdn.jsdelivr.net/npm/@kubohiroya/turbowarp-asset-manager@0.4.1/dist/asset-manager.js</code></pre>
+          <pre><code>https://cdn.jsdelivr.net/npm/@kubohiroya/turbowarp-asset-manager@0.6.0/dist/asset-manager.js</code></pre>
           <p>Enable <strong>Run extension without sandbox</strong>.</p>
         </li>
         <li>
@@ -214,6 +215,107 @@
           </div>
         </div>
       </figure>
+
+      <h3 id="composition-cache">Verified remote cache for composition hosts</h3>
+      <p>
+        Version 0.6.0 adds a block-free, cache-first path for app shells and composite extensions.
+        It is separate from the legacy name-keyed cache above. The host supplies the network loader
+        and an expected SHA-256, byte size, and Content-Type. Asset Manager returns a valid
+        IndexedDB hit without a network request; otherwise it downloads, verifies, and only then
+        stores the bytes. Source URLs and credentials are not persisted.
+      </p>
+      <pre><code>import {
+  createAssetManagerComposition,
+  createVerifiedRemoteCacheDatabaseName
+} from '@kubohiroya/turbowarp-asset-manager/composition';
+
+const databaseName = createVerifiedRemoteCacheDatabaseName({
+  id: story.cacheId,
+  label: story.fileName
+});
+const assets = createAssetManagerComposition(undefined, {
+  verifiedRemoteCache: {
+    cacheIdentity: {id: story.cacheId, label: story.fileName, databaseName}
+  }
+});
+const result = await assets.resolveVerifiedRemoteBinary(model, {
+  load: async ({url}, {signal}) =&gt; {
+    const response = await fetch(url, {signal});
+    return {
+      bytes: await response.arrayBuffer(),
+      contentType: response.headers.get('content-type'),
+      transferOwnership: true
+    };
+  }
+});</code></pre>
+      <figure class="diagram" aria-describedby="composition-cache-description">
+        <figcaption>Persistent cache lifetime and materialized memory lifetime are independent</figcaption>
+        <p id="composition-cache-description" class="sr-only">
+          The story manifest supplies a stable story ID and readable filename. Asset Manager uses
+          them to identify a per-story IndexedDB database, verifies downloaded bytes, and returns
+          them to the host. The host materializes an image, sound, or model and releases that
+          in-memory resource according to scene or story retention without deleting the persistent
+          verified bytes.
+        </p>
+        <ol class="flow-list" style="--flow-columns: 4" aria-hidden="true">
+          <li class="diagram-node"><strong>Story identity</strong><span>readable DB + stable ID</span></li>
+          <li class="diagram-node diagram-node-primary"><strong>Verified bytes</strong><span>cache hit or checked download</span></li>
+          <li class="diagram-node diagram-node-accent"><strong>Materialized resource</strong><span>image, audio, or model</span></li>
+          <li class="diagram-node"><strong>Release by policy</strong><span>scene or story</span></li>
+        </ol>
+      </figure>
+      <div class="resource-table-wrap">
+        <table>
+          <thead><tr><th>Layer</th><th>Lifetime and cleanup</th><th>Host responsibility</th></tr></thead>
+          <tbody>
+            <tr>
+              <td>Returned binary</td>
+              <td>Owned by the caller after resolution</td>
+              <td>Drop references after registration; <code>transferOwnership: true</code> avoids an extra full-size JavaScript copy.</td>
+            </tr>
+            <tr>
+              <td>Materialized memory</td>
+              <td><code>retention: scene</code> or <code>retention: story</code></td>
+              <td>Call <code>releaseAsset</code> or <code>releaseAll</code> when the policy expires.</td>
+            </tr>
+            <tr>
+              <td>Verified IndexedDB bytes</td>
+              <td>TTL, LRU, origin budget, or explicit clear</td>
+              <td>Offer cache visibility and clear controls; memory release does not delete this cache.</td>
+            </tr>
+            <tr>
+              <td>Story catalog and lease</td>
+              <td>One readable database record per story; active runtimes are protected</td>
+              <td>Renew while running and release the lease when the story or session stops.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        Story databases use names such as
+        <code>tw-kamishibai-assets-v1--opening-yaml--story-0001</code>. A small shared catalog stores
+        only understandable identity, size, timestamps, and runtime leases—not asset binaries—and
+        lets an app shell list, prune, or delete caches. Cleanup skips every database with an active
+        lease. The default high-water mark is the smaller of 256 MiB and 20% of the reported origin
+        quota; inactive story databases and least-recently-used records are removed first. Records
+        unused for 30 days are eligible for removal. IndexedDB failures and pinned-origin budget
+        pressure are reported as machine-readable warnings while verified bytes remain usable in
+        memory.
+      </p>
+      <p>
+        Use <code>listVerifiedRemoteStoryCaches</code>,
+        <code>pruneVerifiedRemoteStoryCaches</code>, and
+        <code>deleteVerifiedRemoteStoryCache</code> for app-level storage management. Use
+        <code>renewVerifiedRemoteStoryCacheLease</code> and
+        <code>releaseVerifiedRemoteStoryCacheLease</code> for runtime ownership. The DSL values
+        <code>retention: scene</code> and <code>retention: story</code> are host lifecycle policy;
+        Asset Manager does not parse YAML or reinterpret them as IndexedDB TTL.
+      </p>
+      <aside class="callout callout-warning">
+        <strong>IndexedDB is an auxiliary cache, not private storage.</strong>
+        Do not cache credentials or secret material. Releasing JavaScript references permits
+        garbage collection, but browsers do not guarantee immediate physical memory erasure.
+      </aside>
 
       <h3 id="replacement-flow">How safe same-name replacement works</h3>
       <p>

@@ -22,6 +22,7 @@
       <nav class="primary-nav" aria-label="ガイド内メニュー">
         <a href="#quick-start">はじめに</a>
         <a href="#how-it-works">仕組み</a>
+        <a href="#composition-cache">Composition API</a>
         <a href="#recipes">使用例</a>
         <a href="#reference">ブロック一覧</a>
       </nav>
@@ -79,7 +80,7 @@
         <li>
           <h3>拡張機能を読み込む</h3>
           <p>TurboWarp で <strong>拡張機能を追加 → カスタム拡張機能</strong>を選び、次の URL を貼り付けます。</p>
-          <pre><code>https://cdn.jsdelivr.net/npm/@kubohiroya/turbowarp-asset-manager@0.4.1/dist/asset-manager.js</code></pre>
+          <pre><code>https://cdn.jsdelivr.net/npm/@kubohiroya/turbowarp-asset-manager@0.6.0/dist/asset-manager.js</code></pre>
           <p><strong>サンドボックスなしで実行</strong>を有効にします。</p>
         </li>
         <li>
@@ -213,6 +214,104 @@
           </div>
         </div>
       </figure>
+
+      <h3 id="composition-cache">Composition ホスト向け検証済みリモートキャッシュ</h3>
+      <p>
+        バージョン 0.6.0 では、app shell や複合拡張機能からブロックを追加せずに使える
+        cache-first の経路を追加しました。これは上記の従来型「アセット名キー」のキャッシュとは別です。
+        ホストがネットワーク loader と、期待する SHA-256・バイト数・Content-Type を渡します。
+        IndexedDB の内容が正しければ通信せず返し、なければダウンロード後に検証を通ったデータだけを
+        保存します。取得元 URL や認証情報は保存しません。
+      </p>
+      <pre><code>import {
+  createAssetManagerComposition,
+  createVerifiedRemoteCacheDatabaseName
+} from '@kubohiroya/turbowarp-asset-manager/composition';
+
+const databaseName = createVerifiedRemoteCacheDatabaseName({
+  id: story.cacheId,
+  label: story.fileName
+});
+const assets = createAssetManagerComposition(undefined, {
+  verifiedRemoteCache: {
+    cacheIdentity: {id: story.cacheId, label: story.fileName, databaseName}
+  }
+});
+const result = await assets.resolveVerifiedRemoteBinary(model, {
+  load: async ({url}, {signal}) =&gt; {
+    const response = await fetch(url, {signal});
+    return {
+      bytes: await response.arrayBuffer(),
+      contentType: response.headers.get('content-type'),
+      transferOwnership: true
+    };
+  }
+});</code></pre>
+      <figure class="diagram" aria-describedby="composition-cache-description">
+        <figcaption>永続キャッシュと、実体化後のメモリーは別々のライフサイクルで管理する</figcaption>
+        <p id="composition-cache-description" class="sr-only">
+          台本 manifest から安定した台本 ID と可読なファイル名を渡します。Asset Manager は台本ごとの
+          IndexedDB を識別し、取得データを検証してホストへ返します。ホストは画像、音声、モデルとして
+          実体化し、scene または story の保持期間に従ってメモリー上のリソースを解放します。その際、
+          永続化された検証済みデータは削除しません。
+        </p>
+        <ol class="flow-list" style="--flow-columns: 4" aria-hidden="true">
+          <li class="diagram-node"><strong>台本の識別情報</strong><span>可読な DB 名 + 安定 ID</span></li>
+          <li class="diagram-node diagram-node-primary"><strong>検証済み bytes</strong><span>cache hit または検証済み取得</span></li>
+          <li class="diagram-node diagram-node-accent"><strong>実体化した素材</strong><span>画像・音声・モデル</span></li>
+          <li class="diagram-node"><strong>方針に従い解放</strong><span>scene または story</span></li>
+        </ol>
+      </figure>
+      <div class="resource-table-wrap">
+        <table>
+          <thead><tr><th>層</th><th>保持期間・掃除</th><th>ホスト側の責務</th></tr></thead>
+          <tbody>
+            <tr>
+              <td>返されたバイナリー</td>
+              <td>解決後は呼び出し側が所有</td>
+              <td>登録後に参照を外します。<code>transferOwnership: true</code> なら JavaScript 上の全量コピーを 1 回減らせます。</td>
+            </tr>
+            <tr>
+              <td>実体化したメモリー</td>
+              <td><code>retention: scene</code> または <code>retention: story</code></td>
+              <td>保持期間が終わったら <code>releaseAsset</code> または <code>releaseAll</code> を呼びます。</td>
+            </tr>
+            <tr>
+              <td>IndexedDB の検証済み bytes</td>
+              <td>TTL、LRU、origin 全体の上限、または明示消去</td>
+              <td>容量表示と消去手段を提供します。メモリー解放だけではこのキャッシュを削除しません。</td>
+            </tr>
+            <tr>
+              <td>台本 catalog と lease</td>
+              <td>台本ごとの可読な DB 情報。実行中の DB は保護</td>
+              <td>実行中は lease を更新し、台本停止・session 終了時に解放します。</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        台本 DB は <code>tw-kamishibai-assets-v1--opening-yaml--story-0001</code> のような名前です。
+        小さな共通 catalog には、理解可能な識別情報、サイズ、日時、実行時 lease だけを記録し、
+        アセット本体は入れません。app shell はこれを使って台本別キャッシュを一覧・掃除・削除できます。
+        有効な lease がある DB は掃除しません。既定の上限は 256 MiB と、ブラウザーが報告する origin 容量の
+        20% のうち小さい方で、未使用の台本 DB、次に LRU のレコードから削除します。30 日間使われていない
+        レコードは削除対象です。IndexedDB の失敗や、他の実行中台本が容量を占有して保存できない場合は、
+        機械判読可能な warning を返しつつ、検証済み bytes 自体はメモリーで利用できます。
+      </p>
+      <p>
+        app のストレージ管理には <code>listVerifiedRemoteStoryCaches</code>、
+        <code>pruneVerifiedRemoteStoryCaches</code>、
+        <code>deleteVerifiedRemoteStoryCache</code> を使います。実行中の所有権には
+        <code>renewVerifiedRemoteStoryCacheLease</code> と
+        <code>releaseVerifiedRemoteStoryCacheLease</code> を使います。DSL の
+        <code>retention: scene</code> と <code>retention: story</code> はホスト側のメモリー保持方針です。
+        Asset Manager は YAML を解釈せず、これらを IndexedDB の TTL として扱いません。
+      </p>
+      <aside class="callout callout-warning">
+        <strong>IndexedDB は補助キャッシュであり、秘密情報の保管場所ではありません。</strong>
+        認証情報や秘密データをキャッシュしないでください。JavaScript の参照を外すと garbage collection
+        の対象になりますが、ブラウザーは物理メモリーからの即時消去を保証しません。
+      </aside>
 
       <h3 id="replacement-flow">同名アセットを安全に置き換える仕組み</h3>
       <p>
