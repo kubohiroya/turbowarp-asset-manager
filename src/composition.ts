@@ -9,7 +9,10 @@ import {
   type VerifiedRemoteBinaryResult,
   type VerifiedRemoteCacheWarning,
   type VerifiedRemoteCachePruneResult,
-  type VerifiedRemoteCacheStats
+  type VerifiedRemoteCacheStats,
+  type VerifiedRemoteStoryCacheDeleteResult,
+  type VerifiedRemoteStoryCacheInfo,
+  type VerifiedRemoteStoryCachePruneResult
 } from './verified-remote-cache.js';
 
 export {
@@ -26,7 +29,10 @@ export {
   type VerifiedRemoteCacheIdentity,
   type VerifiedRemoteCacheIdentityInput,
   type VerifiedRemoteCachePruneResult,
-  type VerifiedRemoteCacheStats
+  type VerifiedRemoteCacheStats,
+  type VerifiedRemoteStoryCacheDeleteResult,
+  type VerifiedRemoteStoryCacheInfo,
+  type VerifiedRemoteStoryCachePruneResult
 } from './verified-remote-cache.js';
 
 export interface EmbeddedAssetBytesInput {
@@ -74,6 +80,13 @@ export interface AssetManagerComposition {
   getVerifiedRemoteCacheStats(): Promise<VerifiedRemoteCacheStats>;
   pruneVerifiedRemoteCache(): Promise<VerifiedRemoteCachePruneResult>;
   clearVerifiedRemoteCache(): Promise<VerifiedRemoteCachePruneResult>;
+  listVerifiedRemoteStoryCaches(): Promise<ReadonlyArray<VerifiedRemoteStoryCacheInfo>>;
+  pruneVerifiedRemoteStoryCaches(): Promise<VerifiedRemoteStoryCachePruneResult>;
+  deleteVerifiedRemoteStoryCache(
+    databaseName: unknown
+  ): Promise<VerifiedRemoteStoryCacheDeleteResult>;
+  renewVerifiedRemoteStoryCacheLease(): Promise<void>;
+  releaseVerifiedRemoteStoryCacheLease(): Promise<void>;
 }
 
 export function createAssetManagerComposition(
@@ -203,6 +216,21 @@ export function createAssetManagerComposition(
     },
     clearVerifiedRemoteCache() {
       return remoteCache().clear();
+    },
+    listVerifiedRemoteStoryCaches() {
+      return remoteCache().listStoryCaches();
+    },
+    pruneVerifiedRemoteStoryCaches() {
+      return remoteCache().pruneStoryCaches();
+    },
+    deleteVerifiedRemoteStoryCache(databaseName) {
+      return remoteCache().deleteStoryCache(databaseName);
+    },
+    renewVerifiedRemoteStoryCacheLease() {
+      return remoteCache().renewStoryCacheLease();
+    },
+    releaseVerifiedRemoteStoryCacheLease() {
+      return remoteCache().releaseStoryCacheLease();
     }
   };
   return Object.freeze(composition);

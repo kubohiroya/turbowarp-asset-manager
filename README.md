@@ -79,6 +79,20 @@ format version, and last-open time. Stats return the same identity so an app she
 clear caches per story. The unscoped default database remains available for generic composition
 consumers, but DSL 4.0 runtime integration must always provide `cacheIdentity`.
 
+Story databases are indexed by the small shared `tw-kamishibai-cache-catalog-v1` database. The
+catalog stores only database names, story IDs, display labels, logical byte and entry counts,
+last-used timestamps, and short-lived runtime leases; it never stores asset binary data or enables
+cross-story asset lookup. This lets an app shell enumerate understandable per-story caches,
+enforce one origin-wide budget, and delete a database for a story that is no longer installed.
+`listVerifiedRemoteStoryCaches`,
+`pruneVerifiedRemoteStoryCaches`, and `deleteVerifiedRemoteStoryCache` expose those controls.
+`clearVerifiedRemoteCache` keeps the current story database and its identity while removing its
+entries; explicit story deletion removes the complete database and its catalog record.
+Each running story renews its own lease with `renewVerifiedRemoteStoryCacheLease` and releases it
+with `releaseVerifiedRemoteStoryCacheLease` at story stop or session disposal. Cleanup and explicit
+deletion skip a database while any tab still has an unexpired lease; an expired lease is removed
+automatically after a crashed or closed tab can no longer renew it.
+
 ### Verified remote binary cache
 
 Composition hosts can opt into a cache-first remote-binary path without adding blocks to the
@@ -119,17 +133,22 @@ story-scoped host uses the readable database name described above. Neither mode 
 name-keyed `tw-asset-manager` database. Records contain the integrity, size,
 Content-Type, timestamps, and bytes; source URLs and credentials are not persisted. The default
 high-water mark is the smaller of 256 MiB and 20% of the browser-reported origin quota. Before a
-write exceeds that mark, least-recently-used records are removed to the 80% low-water mark. Records
-unused for 30 days, corrupt metadata, and unknown formats are pruned; access timestamp writes are
-throttled to once per hour. A record larger than the current budget is used in memory but not
-cached. `QuotaExceededError` triggers cleanup and one write retry.
+write exceeds that mark, old unpinned and inactive story databases are removed first and the
+current story's least-recently-used records are then removed to the 80% low-water mark. A story
+database that has not been opened for the TTL can be deleted from the catalog without opening and materializing its
+assets. Individual records unused for 30 days, corrupt metadata, and unknown formats are pruned;
+access timestamp writes are throttled to once per hour. A record larger than the current budget is
+used in memory but not cached. `QuotaExceededError` triggers cleanup and one write retry.
 
 Hosts can override `maxCacheBytes`, `quotaFraction`, `lowWaterRatio`, `ttlMs`,
-`touchIntervalMs`, and `cleanupBatchSize` through the second argument to
+`touchIntervalMs`, `cleanupBatchSize`, and the runtime `leaseTtlMs` through the second argument to
 `createAssetManagerComposition`. They can expose storage controls using
 `getVerifiedRemoteCacheStats`, `pruneVerifiedRemoteCache`, and
 `clearVerifiedRemoteCache`. Cleanup walks primary-key cursors and the `lastAccessedAt` LRU index in
 bounded batches; it never materializes the complete key or metadata set in one JavaScript array.
+Maintenance uses key cursors and lightweight metadata lookups and does not read cached
+`ArrayBuffer` values merely to calculate stats, TTL, LRU, or clear results. Orphaned binary records
+without metadata are deleted, but their unknown byte length is not added to diagnostic byte totals.
 Stats reconcile TTL and entry/metadata pairing before they are returned. Cleanup and conditional
 deletion compare the observed write generation again inside the deletion transaction, so a stale
 reader cannot remove a newer record from another tab. Binary and metadata records are deleted

@@ -6,7 +6,10 @@ import {
   type EmbeddedAssetRegistration,
   type VerifiedRemoteBinaryInput,
   type VerifiedRemoteBinaryResult,
-  type VerifiedRemoteCacheWarning
+  type VerifiedRemoteCacheWarning,
+  type VerifiedRemoteStoryCacheDeleteResult,
+  type VerifiedRemoteStoryCacheInfo,
+  type VerifiedRemoteStoryCachePruneResult
 } from '@kubohiroya/turbowarp-asset-manager/composition';
 
 const input: EmbeddedAssetBytesInput = {
@@ -40,8 +43,21 @@ const warning: VerifiedRemoteCacheWarning = {
   operation: 'cleanup',
   code: 'ASSET_CACHE_CLEANUP_FAILED'
 };
+const storyCaches: Promise<ReadonlyArray<VerifiedRemoteStoryCacheInfo>> =
+  composition.listVerifiedRemoteStoryCaches();
+const storyPrune: Promise<VerifiedRemoteStoryCachePruneResult> =
+  composition.pruneVerifiedRemoteStoryCaches();
+const storyDelete: Promise<VerifiedRemoteStoryCacheDeleteResult> =
+  composition.deleteVerifiedRemoteStoryCache(databaseName);
+const storyLeaseRenewal: Promise<void> = composition.renewVerifiedRemoteStoryCacheLease();
+const storyLeaseRelease: Promise<void> = composition.releaseVerifiedRemoteStoryCacheLease();
 
 void registration;
 void remote;
 void warning;
 void databaseName;
+void storyCaches;
+void storyPrune;
+void storyDelete;
+void storyLeaseRenewal;
+void storyLeaseRelease;

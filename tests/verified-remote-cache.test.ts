@@ -211,6 +211,19 @@ describe('verified remote binary cache', () => {
     ).toBe('tw-kamishibai-assets-v1--海-の冒険--story-0001');
   });
 
+  it('round-trips generated names containing supplementary-plane letters at maximum id length', () => {
+    const id = `s${'0'.repeat(63)}`;
+    const label = `${'𐐀'.repeat(48)}.kamishibai.yaml`;
+    const databaseName = createVerifiedRemoteCacheDatabaseName({id, label});
+
+    expect(databaseName.length).toBeLessThanOrEqual(160);
+    expect(() =>
+      createVerifiedRemoteBinaryCache({
+        cacheIdentity: {id, label, databaseName}
+      })
+    ).not.toThrow();
+  });
+
   it('isolates identical content by story and exposes its readable cache identity', async () => {
     const indexedDB = new IDBFactory();
     const bytes = new Uint8Array([3, 3, 7]);
@@ -367,6 +380,32 @@ describe('verified remote binary cache', () => {
     expect(result.cacheWarnings).toEqual(
       expect.arrayContaining([
         {operation: 'cleanup', code: 'ASSET_CACHE_INDEXEDDB_UNAVAILABLE'},
+        {operation: 'read', code: 'ASSET_CACHE_INDEXEDDB_UNAVAILABLE'},
+        {operation: 'write', code: 'ASSET_CACHE_INDEXEDDB_UNAVAILABLE'}
+      ])
+    );
+  });
+
+  it('keeps story-scoped resolution memory-only when the catalog is unavailable', async () => {
+    const bytes = new Uint8Array([7, 7, 1]);
+    const input = await inputFor(bytes);
+    const unavailable = {
+      open() {
+        throw new Error('storage unavailable');
+      }
+    } as unknown as IDBFactory;
+    const cache = createVerifiedRemoteBinaryCache({
+      indexedDB: unavailable,
+      cacheIdentity: {id: 'story-0001', label: 'offline.kamishibai.yaml'}
+    });
+
+    const result = await cache.resolve(input, {
+      load: async () => ({bytes, contentType: CONTENT_TYPE})
+    });
+    expect(result).toMatchObject({source: 'network', cacheWrite: 'failed'});
+    expect(result.cacheWarnings).toEqual(
+      expect.arrayContaining([
+        {operation: 'cleanup', code: 'ASSET_CACHE_CATALOG_UNAVAILABLE'},
         {operation: 'read', code: 'ASSET_CACHE_INDEXEDDB_UNAVAILABLE'},
         {operation: 'write', code: 'ASSET_CACHE_INDEXEDDB_UNAVAILABLE'}
       ])
@@ -679,6 +718,254 @@ describe('verified remote binary cache', () => {
       getAll.mockRestore();
       getAllKeys.mockRestore();
     }
+  });
+
+  it('does not read binary entry values during stats, pruning, or clearing', async () => {
+    const indexedDB = new IDBFactory();
+    const cache = createVerifiedRemoteBinaryCache({indexedDB});
+    for (let index = 0; index < 3; index += 1) {
+      const bytes = new Uint8Array([index + 1, index + 2, index + 3]);
+      await cache.resolve(await inputFor(bytes, `${index}.bin`), {
+        load: async () => ({bytes, contentType: CONTENT_TYPE})
+      });
+    }
+
+    const originalGet = IDBObjectStore.prototype.get;
+    const binaryReads = vi.fn();
+    const get = vi
+      .spyOn(IDBObjectStore.prototype, 'get')
+      .mockImplementation(function (this: IDBObjectStore, query) {
+        if (this.name === 'entries') binaryReads();
+        return originalGet.call(this, query);
+      });
+    try {
+      await cache.getStats();
+      await cache.prune();
+      await cache.clear();
+      expect(binaryReads).not.toHaveBeenCalled();
+    } finally {
+      get.mockRestore();
+    }
+  });
+
+  it('uses only the requested key binary reads while LRU cleanup evicts other entries', async () => {
+    const indexedDB = new IDBFactory();
+    const cache = createVerifiedRemoteBinaryCache({
+      indexedDB,
+      maxCacheBytes: 6,
+      quotaFraction: 1,
+      lowWaterRatio: 0.5,
+      estimateStorage: async () => ({quota: 1_000})
+    });
+    for (let index = 0; index < 2; index += 1) {
+      const bytes = new Uint8Array([index + 1, index + 2, index + 3]);
+      await cache.resolve(await inputFor(bytes, `${index}.bin`), {
+        load: async () => ({bytes, contentType: CONTENT_TYPE})
+      });
+    }
+
+    const originalGet = IDBObjectStore.prototype.get;
+    const binaryReads = vi.fn();
+    const get = vi
+      .spyOn(IDBObjectStore.prototype, 'get')
+      .mockImplementation(function (this: IDBObjectStore, query) {
+        if (this.name === 'entries') binaryReads();
+        return originalGet.call(this, query);
+      });
+    try {
+      const bytes = new Uint8Array([7, 8, 9]);
+      await cache.resolve(await inputFor(bytes, 'third.bin'), {
+        load: async () => ({bytes, contentType: CONTENT_TYPE})
+      });
+      expect(binaryReads).toHaveBeenCalledTimes(2);
+    } finally {
+      get.mockRestore();
+    }
+  });
+
+  it('enforces the origin-wide budget by deleting the oldest unpinned story database', async () => {
+    const indexedDB = new IDBFactory();
+    let currentTime = 1;
+    const common = {
+      indexedDB,
+      now: () => currentTime,
+      maxCacheBytes: 6,
+      quotaFraction: 1,
+      lowWaterRatio: 0.5,
+      estimateStorage: async () => ({quota: 1_000})
+    };
+    const firstName = createVerifiedRemoteCacheDatabaseName({
+      id: 'story-0001',
+      label: 'first.kamishibai.yaml'
+    });
+    const secondName = createVerifiedRemoteCacheDatabaseName({
+      id: 'story-0002',
+      label: 'second.kamishibai.yaml'
+    });
+    const first = createVerifiedRemoteBinaryCache({
+      ...common,
+      cacheIdentity: {id: 'story-0001', label: 'first.kamishibai.yaml', databaseName: firstName}
+    });
+    const second = createVerifiedRemoteBinaryCache({
+      ...common,
+      cacheIdentity: {id: 'story-0002', label: 'second.kamishibai.yaml', databaseName: secondName}
+    });
+    const firstBytes = new Uint8Array([1, 2, 3, 4]);
+    await first.resolve(await inputFor(firstBytes, 'first.bin'), {
+      load: async () => ({bytes: firstBytes, contentType: CONTENT_TYPE})
+    });
+    await first.releaseStoryCacheLease();
+
+    currentTime = 2;
+    const secondBytes = new Uint8Array([5, 6, 7, 8]);
+    await second.resolve(await inputFor(secondBytes, 'second.bin'), {
+      load: async () => ({bytes: secondBytes, contentType: CONTENT_TYPE})
+    });
+
+    await expect(second.listStoryCaches()).resolves.toEqual([
+      expect.objectContaining({databaseName: secondName, bytes: 4})
+    ]);
+    const databaseNames = (await indexedDB.databases()).map((database) => database.name);
+    expect(databaseNames).not.toContain(firstName);
+    expect(databaseNames).toContain(secondName);
+  });
+
+  it('deletes an abandoned story database after the catalog TTL without opening it', async () => {
+    const indexedDB = new IDBFactory();
+    let currentTime = 1;
+    const firstName = createVerifiedRemoteCacheDatabaseName({
+      id: 'story-0001',
+      label: 'abandoned.kamishibai.yaml'
+    });
+    const first = createVerifiedRemoteBinaryCache({
+      indexedDB,
+      now: () => currentTime,
+      ttlMs: 10,
+      leaseTtlMs: 5,
+      cacheIdentity: {
+        id: 'story-0001',
+        label: 'abandoned.kamishibai.yaml',
+        databaseName: firstName
+      }
+    });
+    const bytes = new Uint8Array([1, 2, 3]);
+    await first.resolve(await inputFor(bytes), {
+      load: async () => ({bytes, contentType: CONTENT_TYPE})
+    });
+
+    currentTime = 12;
+    const manager = createVerifiedRemoteBinaryCache({indexedDB, now: () => currentTime, ttlMs: 10});
+    await expect(manager.pruneStoryCaches()).resolves.toMatchObject({
+      removedDatabases: 1,
+      removedEntries: 1,
+      removedBytes: 3,
+      remainingDatabases: 0,
+      remainingBytes: 0
+    });
+    const databaseNames = (await indexedDB.databases()).map((database) => database.name);
+    expect(databaseNames).not.toContain(firstName);
+  });
+
+  it('does not let an unscoped cache resolution implicitly prune story databases', async () => {
+    const indexedDB = new IDBFactory();
+    let currentTime = 1;
+    const story = createVerifiedRemoteBinaryCache({
+      indexedDB,
+      now: () => currentTime,
+      ttlMs: 1_000,
+      cacheIdentity: {id: 'story-0001', label: 'kept.kamishibai.yaml'}
+    });
+    const storyBytes = new Uint8Array([1, 2, 3]);
+    await story.resolve(await inputFor(storyBytes, 'story.bin'), {
+      load: async () => ({bytes: storyBytes, contentType: CONTENT_TYPE})
+    });
+    const storyDatabaseName = (await story.getStats()).databaseName;
+
+    currentTime = 100;
+    const unscoped = createVerifiedRemoteBinaryCache({
+      indexedDB,
+      now: () => currentTime,
+      ttlMs: 1,
+      maxCacheBytes: 3,
+      quotaFraction: 1,
+      estimateStorage: async () => ({quota: 1_000})
+    });
+    const genericBytes = new Uint8Array([4, 5, 6]);
+    await unscoped.resolve(await inputFor(genericBytes, 'generic.bin'), {
+      load: async () => ({bytes: genericBytes, contentType: CONTENT_TYPE})
+    });
+
+    await expect(unscoped.listStoryCaches()).resolves.toEqual([
+      expect.objectContaining({databaseName: storyDatabaseName, bytes: 3})
+    ]);
+  });
+
+  it('lists, clears, and explicitly deletes one story cache without affecting another', async () => {
+    const indexedDB = new IDBFactory();
+    const first = createVerifiedRemoteBinaryCache({
+      indexedDB,
+      cacheIdentity: {id: 'story-0001', label: 'first.kamishibai.yaml'}
+    });
+    const second = createVerifiedRemoteBinaryCache({
+      indexedDB,
+      cacheIdentity: {id: 'story-0002', label: 'second.kamishibai.yaml'}
+    });
+    const firstBytes = new Uint8Array([1, 2, 3]);
+    const secondBytes = new Uint8Array([4, 5, 6]);
+    await first.resolve(await inputFor(firstBytes, 'first.bin'), {
+      load: async () => ({bytes: firstBytes, contentType: CONTENT_TYPE})
+    });
+    await second.resolve(await inputFor(secondBytes, 'second.bin'), {
+      load: async () => ({bytes: secondBytes, contentType: CONTENT_TYPE})
+    });
+    const firstDatabaseName = (await first.getStats()).databaseName;
+    const secondDatabaseName = (await second.getStats()).databaseName;
+
+    await first.clear();
+    await first.releaseStoryCacheLease();
+    const listedAfterClear = await second.listStoryCaches();
+    expect(listedAfterClear).toHaveLength(2);
+    expect(listedAfterClear).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({databaseName: firstDatabaseName, bytes: 0}),
+        expect.objectContaining({databaseName: secondDatabaseName, bytes: 3})
+      ])
+    );
+    await expect(second.deleteStoryCache(firstDatabaseName)).resolves.toMatchObject({
+      databaseName: firstDatabaseName,
+      deleted: true,
+      removedEntries: 0,
+      removedBytes: 0
+    });
+    await expect(second.listStoryCaches()).resolves.toEqual([
+      expect.objectContaining({databaseName: secondDatabaseName, bytes: 3})
+    ]);
+  });
+
+  it('keeps a story database while any runtime lease remains active', async () => {
+    const indexedDB = new IDBFactory();
+    const identity = {id: 'story-0001', label: 'shared.kamishibai.yaml'};
+    const firstTab = createVerifiedRemoteBinaryCache({indexedDB, cacheIdentity: identity});
+    const secondTab = createVerifiedRemoteBinaryCache({indexedDB, cacheIdentity: identity});
+    const manager = createVerifiedRemoteBinaryCache({indexedDB});
+    const bytes = new Uint8Array([1, 2, 3]);
+    const input = await inputFor(bytes);
+    await firstTab.resolve(input, {
+      load: async () => ({bytes, contentType: CONTENT_TYPE})
+    });
+    await secondTab.resolve(input, {
+      load: async () => {
+        throw new Error('network must not be used');
+      }
+    });
+    const databaseName = (await firstTab.getStats()).databaseName;
+
+    await firstTab.releaseStoryCacheLease();
+    await expect(manager.deleteStoryCache(databaseName)).rejects.toMatchObject({
+      code: 'ASSET_CACHE_DATABASE_ACTIVE'
+    });
+    await secondTab.releaseStoryCacheLease();
+    await expect(manager.deleteStoryCache(databaseName)).resolves.toMatchObject({deleted: true});
   });
 
   it('automatically removes expired entries before reporting stats', async () => {

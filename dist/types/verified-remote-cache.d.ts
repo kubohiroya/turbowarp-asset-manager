@@ -1,3 +1,5 @@
+import { type VerifiedRemoteStoryCacheDeleteResult, type VerifiedRemoteStoryCacheInfo, type VerifiedRemoteStoryCachePruneResult } from './verified-cache-catalog.js';
+export type { VerifiedRemoteStoryCacheDeleteResult, VerifiedRemoteStoryCacheInfo, VerifiedRemoteStoryCachePruneResult } from './verified-cache-catalog.js';
 export interface VerifiedRemoteBinaryInput {
     readonly url: unknown;
     readonly integrity: unknown;
@@ -81,6 +83,7 @@ export interface VerifiedRemoteBinaryCacheOptions {
     readonly ttlMs?: number;
     readonly touchIntervalMs?: number;
     readonly cleanupBatchSize?: number;
+    readonly leaseTtlMs?: number;
     readonly cacheIdentity?: VerifiedRemoteCacheIdentityInput;
 }
 export interface VerifiedRemoteBinaryCache {
@@ -88,6 +91,11 @@ export interface VerifiedRemoteBinaryCache {
     getStats(): Promise<VerifiedRemoteCacheStats>;
     prune(): Promise<VerifiedRemoteCachePruneResult>;
     clear(): Promise<VerifiedRemoteCachePruneResult>;
+    listStoryCaches(): Promise<ReadonlyArray<VerifiedRemoteStoryCacheInfo>>;
+    pruneStoryCaches(): Promise<VerifiedRemoteStoryCachePruneResult>;
+    deleteStoryCache(databaseName: unknown): Promise<VerifiedRemoteStoryCacheDeleteResult>;
+    renewStoryCacheLease(): Promise<void>;
+    releaseStoryCacheLease(): Promise<void>;
 }
 export declare function createVerifiedRemoteCacheDatabaseName(input: {
     readonly id: unknown;

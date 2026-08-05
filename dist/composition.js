@@ -1868,6 +1868,387 @@ class AssetManagerExtension {
     return kind === "image" ? "image/x-scratch-costume" : "audio/x-scratch-sound";
   }
 }
+const CATALOG_DATABASE_NAME = "tw-kamishibai-cache-catalog-v1";
+const CATALOG_DATABASE_VERSION = 2;
+const STORY_STORE = "stories";
+const LEASE_STORE = "leases";
+const CATALOG_FORMAT_VERSION = 1;
+const STORY_DATABASE_PREFIX$1 = "tw-kamishibai-assets-v1--";
+const MAX_DATABASE_NAME_LENGTH$1 = 160;
+function catalogError(code, message, cause) {
+  const error = new Error(message, cause === void 0 ? void 0 : { cause });
+  Object.defineProperty(error, "code", { value: code });
+  return error;
+}
+function transactionComplete$1(transaction) {
+  return new Promise((resolve, reject) => {
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error ?? new Error("IndexedDB transaction failed."));
+    transaction.onabort = () => reject(transaction.error ?? new Error("IndexedDB transaction was aborted."));
+  });
+}
+function isNonNegativeSafeInteger(value) {
+  return Number.isSafeInteger(value) && Number(value) >= 0;
+}
+function isCatalogRecord(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value;
+  return Boolean(
+    record.formatVersion === CATALOG_FORMAT_VERSION && typeof record.key === "string" && record.key === record.databaseName && typeof record.databaseName === "string" && record.databaseName.length <= MAX_DATABASE_NAME_LENGTH$1 && record.databaseName.startsWith(STORY_DATABASE_PREFIX$1) && /^[\p{Letter}\p{Number}._-]+$/u.test(record.databaseName) && typeof record.id === "string" && /^[a-z0-9][a-z0-9_-]{7,63}$/u.test(record.id) && record.databaseName.endsWith(`--${record.id}`) && typeof record.label === "string" && record.label.length > 0 && record.label.length <= 256 && !/[\u0000-\u001f\u007f]/u.test(record.label) && isNonNegativeSafeInteger(record.entries) && isNonNegativeSafeInteger(record.bytes) && Number.isFinite(record.lastOpenedAt) && Number(record.lastOpenedAt) >= 0 && Number.isFinite(record.lastAccessedAt) && Number(record.lastAccessedAt) >= 0 && (record.lastCleanupAt === null || Number.isFinite(record.lastCleanupAt) && Number(record.lastCleanupAt) >= 0) && Number.isFinite(record.updatedAt) && Number(record.updatedAt) >= 0
+  );
+}
+function isLeaseRecord(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value;
+  return Boolean(
+    typeof record.key === "string" && typeof record.databaseName === "string" && record.databaseName.startsWith(STORY_DATABASE_PREFIX$1) && typeof record.token === "string" && record.token.length >= 16 && record.key === `${record.databaseName}:${record.token}` && Number.isFinite(record.expiresAt) && Number(record.expiresAt) >= 0
+  );
+}
+function publicInfo(record, active) {
+  return Object.freeze({
+    databaseName: record.databaseName,
+    id: record.id,
+    label: record.label,
+    entries: record.entries,
+    bytes: record.bytes,
+    lastOpenedAt: record.lastOpenedAt,
+    lastAccessedAt: record.lastAccessedAt,
+    lastCleanupAt: record.lastCleanupAt,
+    active
+  });
+}
+class StoryCacheCatalog {
+  #indexedDB;
+  #now;
+  constructor(indexedDB2, now) {
+    this.#indexedDB = indexedDB2;
+    this.#now = now;
+  }
+  async #open() {
+    if (!this.#indexedDB || typeof this.#indexedDB.open !== "function") {
+      throw catalogError("ASSET_CACHE_CATALOG_UNAVAILABLE", "Story cache catalog is unavailable.");
+    }
+    let request;
+    try {
+      request = this.#indexedDB.open(CATALOG_DATABASE_NAME, CATALOG_DATABASE_VERSION);
+    } catch (error) {
+      throw catalogError(
+        "ASSET_CACHE_CATALOG_UNAVAILABLE",
+        "Story cache catalog could not be opened.",
+        error
+      );
+    }
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      request.onupgradeneeded = () => {
+        const database = request.result;
+        if (!database.objectStoreNames.contains(STORY_STORE)) {
+          const store = database.createObjectStore(STORY_STORE, { keyPath: "key" });
+          store.createIndex("lastAccessedAt", "lastAccessedAt");
+        }
+        if (!database.objectStoreNames.contains(LEASE_STORE)) {
+          const leases = database.createObjectStore(LEASE_STORE, { keyPath: "key" });
+          leases.createIndex("databaseName", "databaseName");
+          leases.createIndex("expiresAt", "expiresAt");
+        }
+      };
+      request.onsuccess = () => {
+        const database = request.result;
+        if (settled) {
+          database.close();
+          return;
+        }
+        settled = true;
+        database.onversionchange = () => database.close();
+        resolve(database);
+      };
+      request.onerror = () => {
+        if (settled) return;
+        settled = true;
+        reject(
+          catalogError(
+            "ASSET_CACHE_CATALOG_UNAVAILABLE",
+            "Story cache catalog open request failed.",
+            request.error
+          )
+        );
+      };
+      request.onblocked = () => {
+        if (settled) return;
+        settled = true;
+        reject(catalogError("ASSET_CACHE_CATALOG_BLOCKED", "Story cache catalog open was blocked."));
+      };
+    });
+  }
+  async upsert(identity, stats, accessedAt) {
+    const database = await this.#open();
+    try {
+      const transaction = database.transaction(STORY_STORE, "readwrite");
+      const store = transaction.objectStore(STORY_STORE);
+      const request = store.get(identity.databaseName);
+      request.onsuccess = () => {
+        const previous = isCatalogRecord(request.result) ? request.result : null;
+        const currentTime = this.#now();
+        const record = {
+          key: identity.databaseName,
+          formatVersion: CATALOG_FORMAT_VERSION,
+          databaseName: identity.databaseName,
+          id: identity.id,
+          label: identity.label,
+          entries: stats.entries,
+          bytes: stats.bytes,
+          lastOpenedAt: Math.max(previous?.lastOpenedAt ?? 0, currentTime),
+          lastAccessedAt: Math.max(previous?.lastAccessedAt ?? 0, accessedAt),
+          lastCleanupAt: stats.lastCleanupAt,
+          updatedAt: currentTime
+        };
+        store.put(record);
+      };
+      await transactionComplete$1(transaction);
+    } finally {
+      database.close();
+    }
+  }
+  async touch(identity, accessedAt) {
+    const database = await this.#open();
+    try {
+      const transaction = database.transaction(STORY_STORE, "readwrite");
+      const store = transaction.objectStore(STORY_STORE);
+      const request = store.get(identity.databaseName);
+      request.onsuccess = () => {
+        if (!isCatalogRecord(request.result)) return;
+        store.put({
+          ...request.result,
+          id: identity.id,
+          label: identity.label,
+          lastOpenedAt: Math.max(request.result.lastOpenedAt, this.#now()),
+          lastAccessedAt: Math.max(request.result.lastAccessedAt, accessedAt),
+          updatedAt: this.#now()
+        });
+      };
+      await transactionComplete$1(transaction);
+    } finally {
+      database.close();
+    }
+  }
+  async list() {
+    const database = await this.#open();
+    try {
+      const transaction = database.transaction([STORY_STORE, LEASE_STORE], "readwrite");
+      const store = transaction.objectStore(STORY_STORE);
+      const leases = transaction.objectStore(LEASE_STORE);
+      const records = [];
+      const activeDatabases = /* @__PURE__ */ new Set();
+      const request = store.openCursor();
+      const cursorComplete = new Promise((resolve, reject) => {
+        request.onerror = () => reject(request.error ?? new Error("Catalog cursor failed."));
+        request.onsuccess = () => {
+          const cursor = request.result;
+          if (!cursor) {
+            resolve();
+            return;
+          }
+          if (isCatalogRecord(cursor.value)) records.push(cursor.value);
+          else cursor.delete();
+          cursor.continue();
+        };
+      });
+      const leaseRequest = leases.openCursor();
+      const leasesComplete = new Promise((resolve, reject) => {
+        leaseRequest.onerror = () => reject(leaseRequest.error ?? new Error("Catalog lease cursor failed."));
+        leaseRequest.onsuccess = () => {
+          const cursor = leaseRequest.result;
+          if (!cursor) {
+            resolve();
+            return;
+          }
+          if (!isLeaseRecord(cursor.value) || cursor.value.expiresAt <= this.#now()) {
+            cursor.delete();
+          } else {
+            activeDatabases.add(cursor.value.databaseName);
+          }
+          cursor.continue();
+        };
+      });
+      await Promise.all([cursorComplete, leasesComplete, transactionComplete$1(transaction)]);
+      records.sort(
+        (left, right) => left.lastAccessedAt - right.lastAccessedAt || left.databaseName.localeCompare(right.databaseName, "en-US")
+      );
+      return Object.freeze(
+        records.map((record) => publicInfo(record, activeDatabases.has(record.databaseName)))
+      );
+    } finally {
+      database.close();
+    }
+  }
+  async #removeRecord(databaseName) {
+    const database = await this.#open();
+    try {
+      const transaction = database.transaction([STORY_STORE, LEASE_STORE], "readwrite");
+      transaction.objectStore(STORY_STORE).delete(databaseName);
+      const leases = transaction.objectStore(LEASE_STORE);
+      const request = leases.openCursor();
+      request.onsuccess = () => {
+        const cursor = request.result;
+        if (!cursor) return;
+        if (isLeaseRecord(cursor.value) && cursor.value.databaseName === databaseName) {
+          cursor.delete();
+        }
+        cursor.continue();
+      };
+      await transactionComplete$1(transaction);
+    } finally {
+      database.close();
+    }
+  }
+  async delete(databaseName) {
+    const record = (await this.list()).find((entry) => entry.databaseName === databaseName);
+    if (!record) {
+      return Object.freeze({ databaseName, deleted: false, removedEntries: 0, removedBytes: 0 });
+    }
+    if (record.active) {
+      throw catalogError(
+        "ASSET_CACHE_DATABASE_ACTIVE",
+        "Story cache database has an active runtime lease."
+      );
+    }
+    if (!this.#indexedDB || typeof this.#indexedDB.deleteDatabase !== "function") {
+      throw catalogError("ASSET_CACHE_CATALOG_UNAVAILABLE", "IndexedDB deletion is unavailable.");
+    }
+    let request;
+    try {
+      request = this.#indexedDB.deleteDatabase(databaseName);
+    } catch (error) {
+      throw catalogError(
+        "ASSET_CACHE_DATABASE_DELETE_FAILED",
+        "Story cache database could not be deleted.",
+        error
+      );
+    }
+    await new Promise((resolve, reject) => {
+      let settled = false;
+      request.onsuccess = () => {
+        void this.#removeRecord(databaseName).then(
+          () => {
+            if (settled) return;
+            settled = true;
+            resolve();
+          },
+          (error) => {
+            if (settled) return;
+            settled = true;
+            reject(error);
+          }
+        );
+      };
+      request.onerror = () => {
+        if (settled) return;
+        settled = true;
+        reject(
+          catalogError(
+            "ASSET_CACHE_DATABASE_DELETE_FAILED",
+            "Story cache database deletion failed.",
+            request.error
+          )
+        );
+      };
+      request.onblocked = () => {
+        if (settled) return;
+        settled = true;
+        reject(
+          catalogError(
+            "ASSET_CACHE_DATABASE_DELETE_BLOCKED",
+            "Story cache database deletion was blocked."
+          )
+        );
+      };
+    });
+    return Object.freeze({
+      databaseName,
+      deleted: true,
+      removedEntries: record.entries,
+      removedBytes: record.bytes
+    });
+  }
+  async renewLease(databaseName, token, expiresAt) {
+    const database = await this.#open();
+    try {
+      const transaction = database.transaction(LEASE_STORE, "readwrite");
+      const record = {
+        key: `${databaseName}:${token}`,
+        databaseName,
+        token,
+        expiresAt
+      };
+      transaction.objectStore(LEASE_STORE).put(record);
+      await transactionComplete$1(transaction);
+    } finally {
+      database.close();
+    }
+  }
+  async releaseLease(databaseName, token) {
+    const database = await this.#open();
+    try {
+      const transaction = database.transaction(LEASE_STORE, "readwrite");
+      transaction.objectStore(LEASE_STORE).delete(`${databaseName}:${token}`);
+      await transactionComplete$1(transaction);
+    } finally {
+      database.close();
+    }
+  }
+  async prune(options) {
+    const warnings = [];
+    let records = [...await this.list()];
+    let removedDatabases = 0;
+    let removedEntries = 0;
+    let removedBytes = 0;
+    const remove = async (record) => {
+      try {
+        const result = await this.delete(record.databaseName);
+        if (!result.deleted) return false;
+        removedDatabases += 1;
+        removedEntries += result.removedEntries;
+        removedBytes += result.removedBytes;
+        return true;
+      } catch (error) {
+        const code = error && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : "ASSET_CACHE_DATABASE_DELETE_FAILED";
+        if (!warnings.includes(code)) warnings.push(code);
+        return false;
+      }
+    };
+    const currentTime = this.#now();
+    for (const record of records) {
+      if (record.databaseName === options.pinnedDatabaseName) continue;
+      if (record.active) continue;
+      if (currentTime - record.lastAccessedAt <= options.ttlMs) continue;
+      await remove(record);
+    }
+    records = [...await this.list()];
+    let totalBytes = records.reduce((sum, record) => sum + record.bytes, 0);
+    const incomingBytes = Math.max(0, options.incomingBytes ?? 0);
+    const target = options.force ? Math.max(0, Math.min(options.lowWaterBytes, totalBytes - incomingBytes)) : Math.max(0, Math.min(options.lowWaterBytes, options.highWaterBytes - incomingBytes));
+    if (options.force || totalBytes + incomingBytes > options.highWaterBytes) {
+      for (const record of records) {
+        if (record.databaseName === options.pinnedDatabaseName) continue;
+        if (record.active) continue;
+        if (!await remove(record)) continue;
+        totalBytes -= record.bytes;
+        if (totalBytes <= target) break;
+      }
+    }
+    const remaining = await this.list();
+    return Object.freeze({
+      removedDatabases,
+      removedEntries,
+      removedBytes,
+      remainingDatabases: remaining.length,
+      remainingBytes: remaining.reduce((sum, record) => sum + record.bytes, 0),
+      highWaterBytes: options.highWaterBytes,
+      lowWaterBytes: options.lowWaterBytes,
+      warnings: Object.freeze(warnings)
+    });
+  }
+}
 const DATABASE_NAME = "tw-asset-manager-verified-binary-v1";
 const DATABASE_VERSION = 2;
 const ENTRY_STORE = "entries";
@@ -1875,12 +2256,14 @@ const METADATA_STORE = "metadata";
 const INFO_STORE = "info";
 const CACHE_FORMAT_VERSION = 1;
 const STORY_DATABASE_PREFIX = "tw-kamishibai-assets-v1--";
+const MAX_DATABASE_NAME_LENGTH = 160;
 const DEFAULT_MAX_CACHE_BYTES = 256 * 1024 * 1024;
 const DEFAULT_QUOTA_FRACTION = 0.2;
 const DEFAULT_LOW_WATER_RATIO = 0.8;
 const DEFAULT_TTL_MS = 30 * 24 * 60 * 60 * 1e3;
 const DEFAULT_TOUCH_INTERVAL_MS = 60 * 60 * 1e3;
 const DEFAULT_CLEANUP_BATCH_SIZE = 64;
+const DEFAULT_LEASE_TTL_MS = 5 * 60 * 1e3;
 function cacheError(code, message, cause) {
   const error = new Error(message, cause === void 0 ? void 0 : { cause });
   Object.defineProperty(error, "code", { value: code });
@@ -1987,10 +2370,20 @@ function normalizeCacheIdentityLabel(value) {
   }
   return basename;
 }
-function cacheLabelSlug(label) {
+function truncateUtf16(value, maxCodeUnits, maxCodePoints) {
+  let result = "";
+  let codePoints = 0;
+  for (const character of value) {
+    if (codePoints >= maxCodePoints || result.length + character.length > maxCodeUnits) break;
+    result += character;
+    codePoints += 1;
+  }
+  return result;
+}
+function cacheLabelSlug(label, maxCodeUnits) {
   const withoutExtension = label.replace(/(?:\.kamishibai)?\.ya?ml$/iu, "");
   const slug = withoutExtension.toLocaleLowerCase("en-US").replace(/[^\p{Letter}\p{Number}._-]+/gu, "-").replace(/^[._-]+|[._-]+$/gu, "");
-  return [...slug || "story"].slice(0, 48).join("");
+  return truncateUtf16(slug || "story", maxCodeUnits, 48);
 }
 function createVerifiedRemoteCacheDatabaseName(input) {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
@@ -1998,7 +2391,8 @@ function createVerifiedRemoteCacheDatabaseName(input) {
   }
   const id = normalizeCacheIdentityId(input.id);
   const label = normalizeCacheIdentityLabel(input.label);
-  return `${STORY_DATABASE_PREFIX}${cacheLabelSlug(label)}--${id}`;
+  const slugBudget = MAX_DATABASE_NAME_LENGTH - STORY_DATABASE_PREFIX.length - 2 - id.length;
+  return `${STORY_DATABASE_PREFIX}${cacheLabelSlug(label, slugBudget)}--${id}`;
 }
 function normalizeCacheIdentity(input) {
   if (input === void 0) return null;
@@ -2015,13 +2409,23 @@ function normalizeCacheIdentity(input) {
     throw cacheError("ASSET_CACHE_IDENTITY_INVALID", "Cache database name must be a string.");
   }
   const databaseName = input.databaseName.normalize("NFKC");
-  if (databaseName.length > 160 || !databaseName.startsWith(STORY_DATABASE_PREFIX) || !databaseName.endsWith(`--${id}`) || !/^[\p{Letter}\p{Number}._-]+$/u.test(databaseName)) {
+  if (databaseName.length > MAX_DATABASE_NAME_LENGTH || !databaseName.startsWith(STORY_DATABASE_PREFIX) || !databaseName.endsWith(`--${id}`) || !/^[\p{Letter}\p{Number}._-]+$/u.test(databaseName)) {
     throw cacheError(
       "ASSET_CACHE_IDENTITY_INVALID",
       "Cache database name must be a generated Kamishibai story database name for the same id."
     );
   }
   return Object.freeze({ id, label, databaseName });
+}
+function normalizeStoryDatabaseName(value) {
+  if (typeof value !== "string") {
+    throw cacheError("ASSET_CACHE_IDENTITY_INVALID", "Story cache database name must be a string.");
+  }
+  const databaseName = value.normalize("NFKC");
+  if (databaseName.length > MAX_DATABASE_NAME_LENGTH || !databaseName.startsWith(STORY_DATABASE_PREFIX) || !/^[\p{Letter}\p{Number}._-]+$/u.test(databaseName)) {
+    throw cacheError("ASSET_CACHE_IDENTITY_INVALID", "Story cache database name is invalid.");
+  }
+  return databaseName;
 }
 function takeBytes(value, transferOwnership) {
   if (value instanceof ArrayBuffer) {
@@ -2069,11 +2473,18 @@ function recordIsUsable(record, currentTime, ttlMs) {
     bytes && bytes.byteLength === record.metadata.size && currentTime >= record.metadata.createdAt && currentTime >= record.metadata.lastAccessedAt && currentTime - record.metadata.lastAccessedAt <= ttlMs
   );
 }
+function scanRecordIsUsable(record, currentTime, ttlMs) {
+  if (!record.entryPresent || !metadataIsStructurallyValid(record.metadata)) return false;
+  return Boolean(
+    currentTime >= record.metadata.createdAt && currentTime >= record.metadata.lastAccessedAt && currentTime - record.metadata.lastAccessedAt <= ttlMs
+  );
+}
 function candidateFor(record) {
   if (metadataIsStructurallyValid(record.metadata)) {
     return {
       key: record.key,
       expectedWriteToken: record.metadata.writeToken,
+      expectedSize: record.metadata.size,
       deleteIfMetadataInvalid: false,
       deleteIfMetadataMissing: false
     };
@@ -2081,6 +2492,7 @@ function candidateFor(record) {
   return {
     key: record.key,
     expectedWriteToken: null,
+    expectedSize: 0,
     deleteIfMetadataInvalid: record.metadata !== void 0,
     deleteIfMetadataMissing: record.metadata === void 0
   };
@@ -2111,6 +2523,9 @@ class IndexedDBVerifiedRemoteStore {
     this.#databaseName = databaseName;
     this.#cacheIdentity = cacheIdentity;
     this.#now = now;
+  }
+  resetIdentityState() {
+    this.#identityStored = false;
   }
   async #open() {
     if (!this.#indexedDB || typeof this.#indexedDB.open !== "function") {
@@ -2219,6 +2634,23 @@ class IndexedDBVerifiedRemoteStore {
       database.close();
     }
   }
+  async getScanRecord(key) {
+    const database = await this.#open();
+    try {
+      const transaction = database.transaction([ENTRY_STORE, METADATA_STORE], "readonly");
+      const entryKeyRequest = transaction.objectStore(ENTRY_STORE).getKey(key);
+      const metadataRequest = transaction.objectStore(METADATA_STORE).get(key);
+      const [entryKey, metadata] = await Promise.all([
+        requestResult(entryKeyRequest),
+        requestResult(metadataRequest),
+        transactionComplete(transaction)
+      ]);
+      if (entryKey === void 0 && metadata === void 0) return null;
+      return { key, entryPresent: entryKey !== void 0, metadata };
+    } finally {
+      database.close();
+    }
+  }
   async putIfAbsentValid(record, signal) {
     assertNotAborted(signal);
     const database = await this.#open();
@@ -2309,7 +2741,7 @@ class IndexedDBVerifiedRemoteStore {
       const records = [];
       let nextKey = null;
       let done = true;
-      const cursorRequest = primary.openCursor();
+      const cursorRequest = primaryStore === ENTRY_STORE ? primary.openKeyCursor() : primary.openCursor();
       const cursorFinished = new Promise((resolve, reject) => {
         cursorRequest.onerror = () => reject(cursorRequest.error ?? new Error("IndexedDB cursor failed."));
         cursorRequest.onsuccess = () => {
@@ -2332,14 +2764,14 @@ class IndexedDBVerifiedRemoteStore {
           }
           const record = {
             key: cursor.primaryKey,
-            entry: primaryStore === ENTRY_STORE ? cursor.value : void 0,
+            entryPresent: primaryStore === ENTRY_STORE,
             metadata: primaryStore === METADATA_STORE ? cursor.value : void 0
           };
           records.push(record);
-          const counterpartRequest = primaryStore === ENTRY_STORE ? metadata.get(cursor.primaryKey) : entries.get(cursor.primaryKey);
+          const counterpartRequest = primaryStore === ENTRY_STORE ? metadata.get(cursor.primaryKey) : entries.getKey(cursor.primaryKey);
           counterpartRequest.onsuccess = () => {
             if (primaryStore === ENTRY_STORE) record.metadata = counterpartRequest.result;
-            else record.entry = counterpartRequest.result;
+            else record.entryPresent = counterpartRequest.result !== void 0;
           };
           nextKey = cursor.primaryKey;
           if (records.length >= limit) {
@@ -2380,13 +2812,13 @@ class IndexedDBVerifiedRemoteStore {
           }
           const record = {
             key: cursor.primaryKey,
-            entry: void 0,
+            entryPresent: false,
             metadata: cursor.value
           };
           records.push(record);
-          const entryRequest = entries.get(cursor.primaryKey);
+          const entryRequest = entries.getKey(cursor.primaryKey);
           entryRequest.onsuccess = () => {
-            record.entry = entryRequest.result;
+            record.entryPresent = entryRequest.result !== void 0;
           };
           cursor.continue();
         };
@@ -2408,21 +2840,20 @@ class IndexedDBVerifiedRemoteStore {
       const metadata = transaction.objectStore(METADATA_STORE);
       for (const candidate of candidates) {
         const metadataRequest = metadata.get(candidate.key);
-        const entryRequest = entries.get(candidate.key);
+        const entryRequest = entries.getKey(candidate.key);
         let metadataDone = false;
         let entryDone = false;
         const deleteIfStillCandidate = () => {
           if (!metadataDone || !entryDone) return;
           const currentMetadata = metadataRequest.result;
-          const currentEntry = entryRequest.result;
+          const currentEntryPresent = entryRequest.result !== void 0;
           const currentWriteToken = currentMetadata && typeof currentMetadata === "object" && !Array.isArray(currentMetadata) ? currentMetadata.writeToken : void 0;
           const candidateStillMatches = candidate.expectedWriteToken !== null && currentWriteToken === candidate.expectedWriteToken || candidate.deleteIfMetadataInvalid && currentMetadata !== void 0 && !metadataIsStructurallyValid(currentMetadata) || candidate.deleteIfMetadataMissing && currentMetadata === void 0;
           if (!candidateStillMatches) return;
           entries.delete(candidate.key);
           metadata.delete(candidate.key);
-          if (currentEntry !== void 0 || currentMetadata !== void 0) removedEntries += 1;
-          const bytes = entryBytes(currentEntry, candidate.key);
-          if (bytes) removedBytes += bytes.byteLength;
+          if (currentEntryPresent || currentMetadata !== void 0) removedEntries += 1;
+          removedBytes += candidate.expectedSize;
         };
         metadataRequest.onsuccess = () => {
           metadataDone = true;
@@ -2509,6 +2940,11 @@ function createVerifiedRemoteBinaryCache(options = {}) {
     options.cleanupBatchSize ?? DEFAULT_CLEANUP_BATCH_SIZE,
     "cleanupBatchSize"
   );
+  const leaseTtlMs = positiveSafeInteger(
+    options.leaseTtlMs ?? DEFAULT_LEASE_TTL_MS,
+    "leaseTtlMs"
+  );
+  const catalogHeartbeatIntervalMs = Math.max(1, Math.floor(leaseTtlMs / 2));
   const estimateStorage = options.estimateStorage ?? (typeof globalThis.navigator?.storage?.estimate === "function" ? () => globalThis.navigator.storage.estimate() : async () => ({}));
   if (typeof estimateStorage !== "function") {
     throw new TypeError("estimateStorage must be a function.");
@@ -2516,9 +2952,13 @@ function createVerifiedRemoteBinaryCache(options = {}) {
   const cacheIdentity = normalizeCacheIdentity(options.cacheIdentity);
   const databaseName = cacheIdentity?.databaseName ?? DATABASE_NAME;
   const store = new IndexedDBVerifiedRemoteStore(indexedDB2, databaseName, cacheIdentity, now);
+  const catalog = new StoryCacheCatalog(indexedDB2, now);
   const instanceToken = createInstanceToken(now);
   let writeSequence = 0;
   let initialSweep = null;
+  let catalogInitialized = null;
+  let lastCatalogTouchAt = Number.NEGATIVE_INFINITY;
+  let leaseHeld = false;
   async function waterMarks() {
     let quotaBudget = maxCacheBytes;
     try {
@@ -2554,7 +2994,7 @@ function createVerifiedRemoteBinaryCache(options = {}) {
     let removedEntries = 0;
     let removedBytes = 0;
     await forEachMetadataBatch(async (records) => {
-      const candidates = records.filter((record) => !recordIsUsable(record, currentTime, ttlMs)).map(candidateFor);
+      const candidates = records.filter((record) => !scanRecordIsUsable(record, currentTime, ttlMs)).map(candidateFor);
       const removed = await store.deleteBatch(candidates);
       removedEntries += removed.entries;
       removedBytes += removed.bytes;
@@ -2582,7 +3022,7 @@ function createVerifiedRemoteBinaryCache(options = {}) {
     let newestAccessedAt = null;
     await forEachMetadataBatch((records) => {
       for (const record of records) {
-        if (!recordIsUsable(record, currentTime, ttlMs)) continue;
+        if (!scanRecordIsUsable(record, currentTime, ttlMs)) continue;
         entries += 1;
         bytes += record.metadata.size;
         oldestAccessedAt = oldestAccessedAt === null ? record.metadata.lastAccessedAt : Math.min(oldestAccessedAt, record.metadata.lastAccessedAt);
@@ -2604,14 +3044,49 @@ function createVerifiedRemoteBinaryCache(options = {}) {
       lastCleanupRemovedBytes: cleanup?.removedBytes ?? 0
     });
   }
+  async function updateCatalog(stats, accessedAt = now()) {
+    if (!cacheIdentity) return;
+    await catalog.upsert(cacheIdentity, stats, accessedAt);
+    await catalog.renewLease(databaseName, instanceToken, accessedAt + leaseTtlMs);
+    leaseHeld = true;
+    lastCatalogTouchAt = Math.max(lastCatalogTouchAt, accessedAt);
+  }
+  async function touchCatalog(accessedAt) {
+    if (!cacheIdentity) return;
+    if (leaseHeld && accessedAt - lastCatalogTouchAt < catalogHeartbeatIntervalMs) return;
+    await catalog.touch(cacheIdentity, accessedAt);
+    await catalog.renewLease(databaseName, instanceToken, accessedAt + leaseTtlMs);
+    leaseHeld = true;
+    lastCatalogTouchAt = accessedAt;
+  }
+  function ensureCatalog() {
+    if (!cacheIdentity) return Promise.resolve();
+    catalogInitialized ??= computeStats().then((stats) => updateCatalog(stats)).catch((error) => {
+      catalogInitialized = null;
+      throw error;
+    });
+    return catalogInitialized;
+  }
+  async function pruneCatalog(incomingBytes = 0, force = false) {
+    const { high, low } = await waterMarks();
+    return catalog.prune({
+      highWaterBytes: high,
+      lowWaterBytes: low,
+      ttlMs,
+      incomingBytes,
+      pinnedDatabaseName: cacheIdentity?.databaseName ?? null,
+      force
+    });
+  }
   async function physicalEntryStats() {
     let entries = 0;
     let bytes = 0;
     await forEachEntryBatch((records) => {
       for (const record of records) {
         entries += 1;
-        const storedBytes = entryBytes(record.entry, record.key);
-        if (storedBytes) bytes += storedBytes.byteLength;
+        if (record.entryPresent && metadataIsStructurallyValid(record.metadata)) {
+          bytes += record.metadata.size;
+        }
       }
     });
     return { entries, bytes };
@@ -2623,8 +3098,10 @@ function createVerifiedRemoteBinaryCache(options = {}) {
     let removedBytes = invalidRemoved.bytes;
     let replacedBytes = 0;
     if (pinnedKey) {
-      const existing = await store.get(pinnedKey);
-      if (existing && recordIsUsable(existing, now(), ttlMs)) replacedBytes = existing.metadata.size;
+      const existing = await store.getScanRecord(pinnedKey);
+      if (existing && scanRecordIsUsable(existing, now(), ttlMs)) {
+        replacedBytes = existing.metadata.size;
+      }
     }
     const effectiveIncomingBytes = Math.max(0, incomingBytes - replacedBytes);
     const target = Math.max(
@@ -2637,7 +3114,7 @@ function createVerifiedRemoteBinaryCache(options = {}) {
         const candidates = [];
         let selectedBytes = 0;
         for (const record of oldest) {
-          if (record.key === pinnedKey || !recordIsUsable(record, now(), ttlMs)) continue;
+          if (record.key === pinnedKey || !scanRecordIsUsable(record, now(), ttlMs)) continue;
           candidates.push(candidateFor(record));
           selectedBytes += record.metadata.size;
           if (stats.bytes - selectedBytes <= target || candidates.length >= cleanupBatchSize) break;
@@ -2651,11 +3128,14 @@ function createVerifiedRemoteBinaryCache(options = {}) {
       }
     }
     const after = await computeStats();
+    const cleanupAt = now();
     await store.recordCleanup({
       key: "cleanup",
-      lastCleanupAt: now(),
+      lastCleanupAt: cleanupAt,
       removedEntries,
       removedBytes
+    });
+    await updateCatalog({ ...after, lastCleanupAt: cleanupAt }).catch(() => {
     });
     return Object.freeze({
       databaseName,
@@ -2742,6 +3222,20 @@ function createVerifiedRemoteBinaryCache(options = {}) {
       );
       return written;
     };
+    const catalogWarnings = [];
+    if (cacheIdentity) {
+      try {
+        const catalogPrune = await pruneCatalog(bytes.byteLength);
+        for (const code of catalogPrune.warnings) {
+          catalogWarnings.push({ operation: "cleanup", code });
+        }
+      } catch (error) {
+        catalogWarnings.push({
+          operation: "cleanup",
+          code: diagnosticCode(error, "ASSET_CACHE_CATALOG_FAILED")
+        });
+      }
+    }
     try {
       await pruneFor(bytes.byteLength, key);
       const written = await write();
@@ -2751,6 +3245,7 @@ function createVerifiedRemoteBinaryCache(options = {}) {
             {
               key,
               expectedWriteToken: writeToken,
+              expectedSize: input.size,
               deleteIfMetadataInvalid: false,
               deleteIfMetadataMissing: false
             }
@@ -2759,13 +3254,26 @@ function createVerifiedRemoteBinaryCache(options = {}) {
         }
         throw abortError();
       }
-      const warnings = [];
+      const warnings = [...catalogWarnings];
       await pruneFor(0, key).catch((error) => {
         warnings.push({
           operation: "cleanup",
           code: diagnosticCode(error, "ASSET_CACHE_CLEANUP_FAILED")
         });
       });
+      if (cacheIdentity) {
+        try {
+          const catalogPrune = await pruneCatalog();
+          for (const code of catalogPrune.warnings) {
+            warnings.push({ operation: "cleanup", code });
+          }
+        } catch (error) {
+          warnings.push({
+            operation: "cleanup",
+            code: diagnosticCode(error, "ASSET_CACHE_CATALOG_FAILED")
+          });
+        }
+      }
       return { status: "stored", writeToken: written ? writeToken : null, warnings };
     } catch (error) {
       if (isAbortError(error)) throw error;
@@ -2773,19 +3281,60 @@ function createVerifiedRemoteBinaryCache(options = {}) {
         return {
           status: "failed",
           writeToken: null,
-          warnings: [{ operation: "write", code: diagnosticCode(error, "ASSET_CACHE_WRITE_FAILED") }]
+          warnings: [
+            ...catalogWarnings,
+            { operation: "write", code: diagnosticCode(error, "ASSET_CACHE_WRITE_FAILED") }
+          ]
         };
       }
       try {
+        if (cacheIdentity) {
+          try {
+            const catalogPrune = await pruneCatalog(bytes.byteLength, true);
+            for (const code of catalogPrune.warnings) {
+              catalogWarnings.push({ operation: "cleanup", code });
+            }
+          } catch (catalogError2) {
+            catalogWarnings.push({
+              operation: "cleanup",
+              code: diagnosticCode(catalogError2, "ASSET_CACHE_CATALOG_FAILED")
+            });
+          }
+        }
         await pruneFor(bytes.byteLength, key, true);
         const written = await write();
-        return { status: "stored", writeToken: written ? writeToken : null, warnings: [] };
+        const warnings = [...catalogWarnings];
+        await pruneFor(0, key).catch((error2) => {
+          warnings.push({
+            operation: "cleanup",
+            code: diagnosticCode(error2, "ASSET_CACHE_CLEANUP_FAILED")
+          });
+        });
+        if (cacheIdentity) {
+          try {
+            const catalogPrune = await pruneCatalog();
+            for (const code of catalogPrune.warnings) {
+              warnings.push({ operation: "cleanup", code });
+            }
+          } catch (error2) {
+            warnings.push({
+              operation: "cleanup",
+              code: diagnosticCode(error2, "ASSET_CACHE_CATALOG_FAILED")
+            });
+          }
+        }
+        return {
+          status: "stored",
+          writeToken: written ? writeToken : null,
+          warnings
+        };
       } catch (retryError) {
         if (isAbortError(retryError)) throw retryError;
         return {
           status: "failed",
           writeToken: null,
           warnings: [
+            ...catalogWarnings,
             { operation: "write", code: diagnosticCode(retryError, "ASSET_CACHE_QUOTA_EXCEEDED") }
           ]
         };
@@ -2813,11 +3362,27 @@ function createVerifiedRemoteBinaryCache(options = {}) {
         if (isAbortError(error)) throw error;
         addWarning(warnings, "cleanup", diagnosticCode(error, "ASSET_CACHE_CLEANUP_FAILED"));
       }
+      if (cacheIdentity) {
+        try {
+          await ensureCatalog();
+        } catch (error) {
+          addWarning(warnings, "cleanup", diagnosticCode(error, "ASSET_CACHE_CATALOG_FAILED"));
+        }
+      }
       let cacheRead = "miss";
       try {
         const cached = await readCached(normalized);
         cacheRead = cached.status;
         if (cached.status === "hit" && cached.bytes) {
+          if (cacheIdentity) {
+            await touchCatalog(now()).catch((error) => {
+              addWarning(
+                warnings,
+                "cleanup",
+                diagnosticCode(error, "ASSET_CACHE_CATALOG_FAILED")
+              );
+            });
+          }
           assertNotAborted(resolveOptions.signal);
           return Object.freeze({
             bytes: cached.bytes,
@@ -2858,6 +3423,7 @@ function createVerifiedRemoteBinaryCache(options = {}) {
             {
               key: `${CACHE_FORMAT_VERSION}:${normalized.integrity}`,
               expectedWriteToken: writeResult.writeToken,
+              expectedSize: normalized.size,
               deleteIfMetadataInvalid: false,
               deleteIfMetadataMissing: false
             }
@@ -2886,11 +3452,14 @@ function createVerifiedRemoteBinaryCache(options = {}) {
     async clear() {
       const before = await physicalEntryStats();
       await store.clear();
+      const cleanupAt = now();
       await store.recordCleanup({
         key: "cleanup",
-        lastCleanupAt: now(),
+        lastCleanupAt: cleanupAt,
         removedEntries: before.entries,
         removedBytes: before.bytes
+      });
+      await updateCatalog({ entries: 0, bytes: 0, lastCleanupAt: cleanupAt }).catch(() => {
       });
       const { high, low } = await waterMarks();
       return Object.freeze({
@@ -2903,6 +3472,52 @@ function createVerifiedRemoteBinaryCache(options = {}) {
         highWaterBytes: high,
         lowWaterBytes: low
       });
+    },
+    listStoryCaches() {
+      return catalog.list();
+    },
+    pruneStoryCaches() {
+      return pruneCatalog();
+    },
+    async deleteStoryCache(value) {
+      const target = normalizeStoryDatabaseName(value);
+      let releasedOwnLease = false;
+      if (cacheIdentity && target === databaseName && leaseHeld) {
+        await catalog.releaseLease(databaseName, instanceToken);
+        releasedOwnLease = true;
+        leaseHeld = false;
+      }
+      let result;
+      try {
+        result = await catalog.delete(target);
+      } catch (error) {
+        if (releasedOwnLease) {
+          await catalog.renewLease(databaseName, instanceToken, now() + leaseTtlMs).then(
+            () => {
+              leaseHeld = true;
+            },
+            () => {
+            }
+          );
+        }
+        throw error;
+      }
+      if (result.deleted && target === databaseName) {
+        store.resetIdentityState();
+        initialSweep = null;
+        catalogInitialized = null;
+        lastCatalogTouchAt = Number.NEGATIVE_INFINITY;
+        leaseHeld = false;
+      }
+      return result;
+    },
+    renewStoryCacheLease() {
+      return touchCatalog(now());
+    },
+    async releaseStoryCacheLease() {
+      if (!cacheIdentity || !leaseHeld) return;
+      await catalog.releaseLease(databaseName, instanceToken);
+      leaseHeld = false;
     }
   };
   return Object.freeze(cache);
@@ -3016,6 +3631,21 @@ function createAssetManagerComposition(featureFlags, options = {}) {
     },
     clearVerifiedRemoteCache() {
       return remoteCache().clear();
+    },
+    listVerifiedRemoteStoryCaches() {
+      return remoteCache().listStoryCaches();
+    },
+    pruneVerifiedRemoteStoryCaches() {
+      return remoteCache().pruneStoryCaches();
+    },
+    deleteVerifiedRemoteStoryCache(databaseName) {
+      return remoteCache().deleteStoryCache(databaseName);
+    },
+    renewVerifiedRemoteStoryCacheLease() {
+      return remoteCache().renewStoryCacheLease();
+    },
+    releaseVerifiedRemoteStoryCacheLease() {
+      return remoteCache().releaseStoryCacheLease();
     }
   };
   return Object.freeze(composition);
