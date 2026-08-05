@@ -44,10 +44,11 @@
     "docs:check": "npm run docs && git diff --exit-code -- README.md",
     "docs:site:check": "node scripts/check-site.mjs",
     "check:dist": "npm run build && git diff --exit-code -- dist",
+    "archive:check": "node scripts/check-github-archive.mjs",
     "pack:check": "npm pack --dry-run --ignore-scripts",
     "release:check": "npm publish --dry-run --access public",
-    "check": "npm run typecheck && npm run test && npm run build && npm run docs:check && npm run docs:site:check && npm run check:dist && npm run pack:check",
-    "prepack": "npm run check"
+    "check": "npm run typecheck && npm run test && npm run build && npm run docs:check && npm run docs:site:check && npm run check:dist && npm run archive:check && npm run pack:check",
+    "prepack": "npm run build"
   },
   "devDependencies": {
     "@kubohiroya/vite-plugin-turbowarp-extension": "0.1.0",
