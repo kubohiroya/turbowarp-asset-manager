@@ -2358,6 +2358,7 @@ function createBinaryBundleStore(options = {}) {
     };
     try {
       ensureGeneration(normalized.key.key, generation);
+      assertNotAborted$1(signal);
       transaction = database.transaction([BUNDLE_STORE, METADATA_STORE$1], "readwrite");
       untrack = trackTransaction(normalized.key.key, transaction);
       removeAbort = abortWithSignal(transaction, signal);
@@ -2564,6 +2565,7 @@ function createBinaryBundleStore(options = {}) {
     let bundle;
     let metadata;
     try {
+      assertNotAborted$1(signal);
       const transaction = database.transaction([BUNDLE_STORE, METADATA_STORE$1], "readonly");
       untrack = trackTransaction(key.key, transaction);
       removeAbort = abortWithSignal(transaction, signal);
@@ -2620,6 +2622,7 @@ function createBinaryBundleStore(options = {}) {
     ensureGeneration(key.key, generation);
     await touch(key.key, metadata.writeToken);
     ensureGeneration(key.key, generation);
+    assertNotAborted$1(signal);
     return Object.freeze({
       namespace: key.namespace,
       name: key.name,
@@ -2641,6 +2644,7 @@ function createBinaryBundleStore(options = {}) {
     };
     try {
       ensureGeneration(key.key, generation);
+      assertNotAborted$1(signal);
       const transaction = database.transaction([BUNDLE_STORE, METADATA_STORE$1], "readwrite");
       untrack = trackTransaction(key.key, transaction);
       removeAbort = abortWithSignal(transaction, signal);

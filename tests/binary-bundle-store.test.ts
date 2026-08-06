@@ -140,6 +140,52 @@ function deferred<T>() {
   return {promise, resolve};
 }
 
+function delayedOpenFactory(
+  indexedDB: IDBFactory,
+  opened: ReturnType<typeof deferred<void>>,
+  gate: ReturnType<typeof deferred<void>>
+): IDBFactory {
+  return {
+    open(name: string, version?: number) {
+      const actual = version === undefined ? indexedDB.open(name) : indexedDB.open(name, version);
+      let success: ((this: IDBOpenDBRequest, event: Event) => unknown) | null = null;
+      const wrapper = {
+        get result() {
+          return actual.result;
+        },
+        get error() {
+          return actual.error;
+        },
+        set onupgradeneeded(
+          handler: ((this: IDBOpenDBRequest, event: IDBVersionChangeEvent) => unknown) | null
+        ) {
+          actual.onupgradeneeded = handler
+            ? (event) => handler.call(wrapper as unknown as IDBOpenDBRequest, event)
+            : null;
+        },
+        set onsuccess(handler: ((this: IDBOpenDBRequest, event: Event) => unknown) | null) {
+          success = handler;
+        },
+        set onerror(handler: ((this: IDBOpenDBRequest, event: Event) => unknown) | null) {
+          actual.onerror = handler
+            ? (event) => handler.call(wrapper as unknown as IDBOpenDBRequest, event)
+            : null;
+        },
+        set onblocked(handler: ((this: IDBOpenDBRequest, event: Event) => unknown) | null) {
+          actual.onblocked = handler
+            ? (event) => handler.call(wrapper as unknown as IDBOpenDBRequest, event)
+            : null;
+        }
+      };
+      actual.onsuccess = (event) => {
+        opened.resolve();
+        void gate.promise.then(() => success?.call(wrapper as unknown as IDBOpenDBRequest, event));
+      };
+      return wrapper as unknown as IDBOpenDBRequest;
+    }
+  } as IDBFactory;
+}
+
 describe('binary bundle store', () => {
   it('commits and returns a complete sorted bundle without retaining caller bytes', async () => {
     const indexedDB = new IDBFactory();
@@ -364,6 +410,28 @@ describe('binary bundle store', () => {
       code: 'ASSET_BINARY_BUNDLE_ABORTED'
     });
     await expect(indexedDB.databases()).resolves.toEqual([]);
+  });
+
+  it('rechecks AbortSignal after a pending IndexedDB open completes', async () => {
+    const indexedDB = new IDBFactory();
+    const opened = deferred<void>();
+    const gate = deferred<void>();
+    const store = createBinaryBundleStore({
+      indexedDB: delayedOpenFactory(indexedDB, opened, gate),
+      databaseName: DATABASE_NAME
+    });
+    const input = await poseBundle();
+    const controller = new AbortController();
+    const pending = store.put(input, {signal: controller.signal});
+    await opened.promise;
+    controller.abort('superseded-during-open');
+    gate.resolve();
+
+    await expect(pending).rejects.toMatchObject({
+      name: 'AbortError',
+      code: 'ASSET_BINARY_BUNDLE_ABORTED'
+    });
+    await expect(storeCounts(indexedDB)).resolves.toEqual({bundles: 0, metadata: 0});
   });
 
   it('reports unavailable storage and quota failures with stable codes', async () => {
