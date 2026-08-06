@@ -2,6 +2,10 @@
 
 An IndexedDB-backed image, audio, and runtime-text asset manager for TurboWarp projects. It can also register costumes, stage backdrops, sounds, and Temporary Variables runtime-variable references used by the current `.sb3` project.
 
+For setup, safety notes, recipes, and the complete block reference, see the illustrated
+[English user guide](https://kubohiroya.github.io/turbowarp-asset-manager/) or
+[Japanese user guide](https://kubohiroya.github.io/turbowarp-asset-manager/ja/).
+
 ## Installation
 
 Download [`dist/asset-manager.js`](dist/asset-manager.js), then open TurboWarp Desktop and load it as a local custom extension. Enable **Run extension without sandbox** when prompted.
