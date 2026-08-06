@@ -152,7 +152,7 @@ async function checkAppBarCss(cssPath) {
   const css = await readFile(cssPath, 'utf8');
   const requirements = [
     [/\.app-bar\s*{[\s\S]*?position:\s*sticky/, 'sticky app bar'],
-    [/\.app-bar-inner\s*{[\s\S]*?min-height:\s*4rem/, '64px app bar height'],
+    [/\.app-bar-inner\s*{[\s\S]*?min-height:\s*4\.25rem/, '68px app bar content height'],
     [/backdrop-filter:\s*blur\(/, 'backdrop blur'],
     [/border-bottom:/, 'bottom border'],
     [/focus-visible/, 'keyboard focus style'],
@@ -161,5 +161,12 @@ async function checkAppBarCss(cssPath) {
   ];
   for (const [pattern, label] of requirements) {
     if (!pattern.test(css)) errors.push(`${relative(cssPath)}: missing ${label}`);
+  }
+  const hiddenSelectors = [...css.matchAll(/([^{}]+)\{[^{}]*display:\s*none/g)]
+    .map((match) => match[1]);
+  for (const selector of ['.app-bar-brand', '.app-bar-mark', '.app-bar-github', '.app-bar-languages']) {
+    if (hiddenSelectors.some((hiddenSelector) => hiddenSelector.includes(selector))) {
+      errors.push(`${relative(cssPath)}: ${selector} must remain visible on mobile`);
+    }
   }
 }

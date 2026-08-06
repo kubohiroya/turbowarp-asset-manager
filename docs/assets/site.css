@@ -165,7 +165,7 @@ ol {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  min-height: 4rem;
+  min-height: 4.25rem;
   gap: 1rem;
 }
 
@@ -769,8 +769,7 @@ details > div {
     gap: 0.5rem;
   }
 
-  .app-bar-label,
-  .app-bar-github {
+  .app-bar-label {
     display: none;
   }
 
