@@ -48,6 +48,7 @@ html {
 
 body {
   margin: 0;
+  overflow-x: clip;
   color: var(--text);
   background:
     radial-gradient(circle at 10% 0%, color-mix(in srgb, var(--brand) 13%, transparent), transparent 28rem),
@@ -143,43 +144,47 @@ ol {
   top: 1rem;
 }
 
-.site-header {
+.app-bar {
   position: sticky;
   top: 0;
   z-index: 10;
   border-bottom: 1px solid color-mix(in srgb, var(--line) 80%, transparent);
   background: color-mix(in srgb, var(--page) 86%, transparent);
+  -webkit-backdrop-filter: blur(16px);
   backdrop-filter: blur(16px);
 }
 
-.header-inner,
+.app-bar-inner,
 .page-shell,
 .footer-inner {
   width: min(72rem, calc(100% - 2rem));
   margin-inline: auto;
 }
 
-.header-inner {
-  display: flex;
+.app-bar-inner {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  min-height: 4.25rem;
+  min-height: 4rem;
   gap: 1rem;
 }
 
-.brand {
+.app-bar-brand {
   display: inline-flex;
   align-items: center;
   gap: 0.65rem;
+  min-width: 0;
   color: var(--text);
   font-weight: 750;
   text-decoration: none;
   white-space: nowrap;
 }
 
-.brand-mark {
+.app-bar-mark {
   display: grid;
   width: 2rem;
   height: 2rem;
+  flex: none;
   place-items: center;
   border-radius: 0.6rem;
   color: #ffffff;
@@ -187,27 +192,35 @@ ol {
   box-shadow: 0 7px 18px rgb(66 94 216 / 35%);
 }
 
-.primary-nav {
+.app-bar-sections {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 1rem;
-  margin-left: auto;
+  min-width: 0;
+  overflow: hidden;
   font-size: 0.92rem;
 }
 
-.primary-nav a {
+.app-bar-sections a {
   color: var(--muted);
   text-decoration: none;
+  white-space: nowrap;
 }
 
-.primary-nav a:hover {
+.app-bar-sections a:hover {
   color: var(--text);
 }
 
-.github-link {
-  display: inline-flex;
+.app-bar-actions {
+  display: flex;
   align-items: center;
-  gap: 0.42rem;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.app-bar-github {
   padding: 0.38rem 0.58rem;
   border-radius: 0.65rem;
   color: var(--muted);
@@ -217,18 +230,12 @@ ol {
   white-space: nowrap;
 }
 
-.github-link:hover {
+.app-bar-github:hover {
   color: var(--text);
   background: var(--surface-soft);
 }
 
-.github-link svg {
-  width: 1.3rem;
-  height: 1.3rem;
-  flex: none;
-}
-
-.language-switch {
+.app-bar-languages {
   display: inline-flex;
   padding: 0.2rem;
   border: 1px solid var(--line);
@@ -236,7 +243,7 @@ ol {
   background: var(--surface);
 }
 
-.language-switch a {
+.app-bar-languages a {
   padding: 0.26rem 0.6rem;
   border-radius: 99rem;
   color: var(--muted);
@@ -245,7 +252,8 @@ ol {
   text-decoration: none;
 }
 
-.language-switch a[aria-current="page"] {
+.app-bar-languages a:hover,
+.app-bar-languages a[aria-current="page"] {
   color: var(--text);
   background: var(--brand-soft);
 }
@@ -688,7 +696,7 @@ details > div {
 }
 
 @media (max-width: 56rem) {
-  .primary-nav > a {
+  .app-bar-sections {
     display: none;
   }
 
@@ -750,22 +758,29 @@ details > div {
 }
 
 @media (max-width: 40rem) {
-  .header-inner,
+  .app-bar-inner,
   .page-shell,
   .footer-inner {
     width: min(100% - 1.2rem, 72rem);
   }
 
-  .brand-text {
+  .app-bar-inner {
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 0.5rem;
+  }
+
+  .app-bar-label,
+  .app-bar-github {
     display: none;
   }
 
-  .github-link {
-    padding: 0.38rem;
+  .app-bar-actions {
+    grid-column: 2;
   }
 
-  .github-label {
-    display: none;
+  .app-bar-languages a {
+    padding-inline: 0.5rem;
+    font-size: 0.78rem;
   }
 
   .hero {
