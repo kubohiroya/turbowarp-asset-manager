@@ -1,7 +1,12 @@
 import {
   createAssetManagerComposition,
+  createBinaryBundleStore,
   createVerifiedRemoteCacheDatabaseName,
   type AssetManagerComposition,
+  type BinaryBundlePutInput,
+  type BinaryBundleRegistration,
+  type BinaryBundleResult,
+  type BinaryBundleStore,
   type EmbeddedAssetBytesInput,
   type EmbeddedAssetRegistration,
   type VerifiedRemoteBinaryInput,
@@ -51,6 +56,26 @@ const storyDelete: Promise<VerifiedRemoteStoryCacheDeleteResult> =
   composition.deleteVerifiedRemoteStoryCache(databaseName);
 const storyLeaseRenewal: Promise<void> = composition.renewVerifiedRemoteStoryCacheLease();
 const storyLeaseRelease: Promise<void> = composition.releaseVerifiedRemoteStoryCacheLease();
+const binaryBundle: BinaryBundlePutInput = {
+  namespace: 'story-0001/source-integrity',
+  name: 'RescuePose',
+  integrity: `sha256-${'1'.repeat(64)}`,
+  files: [
+    {
+      path: 'weights.bin',
+      size: 1,
+      integrity: `sha256-${'2'.repeat(64)}`,
+      bytes: new Uint8Array([0])
+    }
+  ]
+};
+const binaryStore: BinaryBundleStore = createBinaryBundleStore();
+const binaryRegistration: Promise<BinaryBundleRegistration> = composition.putBinaryBundle(
+  binaryBundle
+);
+const binaryResult: Promise<BinaryBundleResult> = composition.getBinaryBundle(binaryBundle);
+const binaryDelete: Promise<void> = composition.deleteBinaryBundle(binaryBundle);
+const binaryStoreRelease: Promise<void> = composition.releaseBinaryStore();
 
 void registration;
 void remote;
@@ -61,3 +86,8 @@ void storyPrune;
 void storyDelete;
 void storyLeaseRenewal;
 void storyLeaseRelease;
+void binaryStore;
+void binaryRegistration;
+void binaryResult;
+void binaryDelete;
+void binaryStoreRelease;

@@ -193,6 +193,55 @@ bytes from IndexedDB, and clearing IndexedDB does not invalidate a resource that
 materialized in memory. JavaScript references are dropped so bytes and platform resources can be
 garbage-collected, but immediate physical memory erasure is not guaranteed.
 
+### Transactional binary bundles
+
+Composition hosts that receive a self-contained multi-file asset can persist it without adding a
+block or treating the files as external image/audio cache entries. Configure a story-specific
+database name and bind every operation to the story/source namespace, asset name, and manifest
+bundle integrity:
+
+```js
+const assets = createAssetManagerComposition(undefined, {
+  binaryBundleStore: {
+    databaseName: `${storyManifest.cacheDatabaseName}--bundles-v1`
+  }
+});
+
+await assets.putBinaryBundle({
+  namespace: `${storyManifest.id}/${storySource.integrity}`,
+  name: 'RescuePose',
+  integrity: poseAsset.bundleIntegrity,
+  files: [
+    {path: 'model.json', size: model.size, integrity: model.integrity, bytes: model.bytes},
+    {path: 'metadata.json', size: metadata.size, integrity: metadata.integrity, bytes: metadata.bytes},
+    {path: 'weights.bin', size: weights.size, integrity: weights.integrity, bytes: weights.bytes}
+  ]
+});
+
+const stored = await assets.getBinaryBundle({
+  namespace: `${storyManifest.id}/${storySource.integrity}`,
+  name: 'RescuePose',
+  integrity: poseAsset.bundleIntegrity
+});
+```
+
+`putBinaryBundle` copies and verifies each file before writing one bundle record and lightweight
+metadata in the same IndexedDB transaction. It resolves only after `IDBTransaction.oncomplete`, so
+the host keeps its one-shot source provider reachable until the promise fulfills. The bundle
+integrity is the caller-validated manifest identity and forms part of the scoped key; the store
+independently verifies every declared file size and SHA-256 on put and again on get. Canonical
+lowercase hexadecimal and standard padded base64 SHA-256 forms are accepted. A partial, expired,
+or corrupt record is never returned.
+
+The store is separate from the Standalone `assets` database and the verified remote binary cache.
+Its default limits are 256 files and 256 MiB per bundle, 1024 bundles and 256 MiB per database, and
+a 30-day last-use TTL. A put removes expired and least-recently-used bundles in the same transaction
+before committing the replacement. Hosts can lower these limits through `binaryBundleStore`.
+`deleteBinaryBundle` removes both the bundle and metadata atomically. `releaseBinaryStore` aborts
+pending operations and prevents later use of that instance without deleting persistent records.
+Missing, unavailable, blocked, aborted, quota, corrupt, and integrity-failure paths expose stable
+`ASSET_BINARY_BUNDLE_*` error codes without including payload bytes in diagnostics.
+
 ## Extension ID compatibility
 
 This migration release uses the standards-compliant ID `kubohiroyaassetmanager`. Existing projects

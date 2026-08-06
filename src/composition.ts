@@ -1,6 +1,16 @@
 import {AssetManagerExtension, normalizeName} from './extension.js';
 import {type AssetManagerFeatureFlags} from './feature-flags.js';
 import {
+  createBinaryBundleStore,
+  type BinaryBundleKeyInput,
+  type BinaryBundleOperationOptions,
+  type BinaryBundlePutInput,
+  type BinaryBundleRegistration,
+  type BinaryBundleResult,
+  type BinaryBundleStore,
+  type BinaryBundleStoreOptions
+} from './binary-bundle-store.js';
+import {
   createVerifiedRemoteBinaryCache,
   type VerifiedRemoteBinaryCache,
   type VerifiedRemoteBinaryCacheOptions,
@@ -14,6 +24,20 @@ import {
   type VerifiedRemoteStoryCacheInfo,
   type VerifiedRemoteStoryCachePruneResult
 } from './verified-remote-cache.js';
+
+export {
+  createBinaryBundleStore,
+  type BinaryBundleFileInput,
+  type BinaryBundleFileRegistration,
+  type BinaryBundleFileResult,
+  type BinaryBundleKeyInput,
+  type BinaryBundleOperationOptions,
+  type BinaryBundlePutInput,
+  type BinaryBundleRegistration,
+  type BinaryBundleResult,
+  type BinaryBundleStore,
+  type BinaryBundleStoreOptions
+} from './binary-bundle-store.js';
 
 export {
   createVerifiedRemoteBinaryCache,
@@ -59,6 +83,7 @@ export interface AssetManagerCompositionTarget {
 
 export interface AssetManagerCompositionOptions {
   readonly verifiedRemoteCache?: VerifiedRemoteBinaryCacheOptions;
+  readonly binaryBundleStore?: BinaryBundleStoreOptions;
 }
 
 export interface AssetManagerComposition {
@@ -87,6 +112,19 @@ export interface AssetManagerComposition {
   ): Promise<VerifiedRemoteStoryCacheDeleteResult>;
   renewVerifiedRemoteStoryCacheLease(): Promise<void>;
   releaseVerifiedRemoteStoryCacheLease(): Promise<void>;
+  putBinaryBundle(
+    input: BinaryBundlePutInput,
+    options?: BinaryBundleOperationOptions
+  ): Promise<BinaryBundleRegistration>;
+  getBinaryBundle(
+    input: BinaryBundleKeyInput,
+    options?: BinaryBundleOperationOptions
+  ): Promise<BinaryBundleResult>;
+  deleteBinaryBundle(
+    input: BinaryBundleKeyInput,
+    options?: BinaryBundleOperationOptions
+  ): Promise<void>;
+  releaseBinaryStore(): Promise<void>;
 }
 
 export function createAssetManagerComposition(
@@ -101,10 +139,16 @@ export function createAssetManagerComposition(
     : new AssetManagerExtension();
   const ownedNames = new Set<string>();
   let verifiedRemoteCache: VerifiedRemoteBinaryCache | null = null;
+  let binaryBundleStore: BinaryBundleStore | null = null;
 
   function remoteCache(): VerifiedRemoteBinaryCache {
     verifiedRemoteCache ??= createVerifiedRemoteBinaryCache(options.verifiedRemoteCache);
     return verifiedRemoteCache;
+  }
+
+  function bundleStore(): BinaryBundleStore {
+    binaryBundleStore ??= createBinaryBundleStore(options.binaryBundleStore);
+    return binaryBundleStore;
   }
 
   function cancelledRegistration(name: string): Error {
@@ -231,6 +275,18 @@ export function createAssetManagerComposition(
     },
     releaseVerifiedRemoteStoryCacheLease() {
       return remoteCache().releaseStoryCacheLease();
+    },
+    putBinaryBundle(input, operationOptions) {
+      return bundleStore().put(input, operationOptions);
+    },
+    getBinaryBundle(input, operationOptions) {
+      return bundleStore().get(input, operationOptions);
+    },
+    deleteBinaryBundle(input, operationOptions) {
+      return bundleStore().delete(input, operationOptions);
+    },
+    releaseBinaryStore() {
+      return bundleStore().release();
     }
   };
   return Object.freeze(composition);
