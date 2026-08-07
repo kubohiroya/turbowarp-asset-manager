@@ -1,5 +1,7 @@
 import { type AssetManagerFeatureFlags } from './feature-flags.js';
+import { type BinaryBundleKeyInput, type BinaryBundleOperationOptions, type BinaryBundlePutInput, type BinaryBundleRegistration, type BinaryBundleResult, type BinaryBundleStoreOptions } from './binary-bundle-store.js';
 import { type VerifiedRemoteBinaryCacheOptions, type VerifiedRemoteBinaryInput, type VerifiedRemoteBinaryResolveOptions, type VerifiedRemoteBinaryResult, type VerifiedRemoteCachePruneResult, type VerifiedRemoteCacheStats, type VerifiedRemoteStoryCacheDeleteResult, type VerifiedRemoteStoryCacheInfo, type VerifiedRemoteStoryCachePruneResult } from './verified-remote-cache.js';
+export { createBinaryBundleStore, type BinaryBundleFileInput, type BinaryBundleFileRegistration, type BinaryBundleFileResult, type BinaryBundleKeyInput, type BinaryBundleOperationOptions, type BinaryBundlePutInput, type BinaryBundleRegistration, type BinaryBundleResult, type BinaryBundleStore, type BinaryBundleStoreOptions } from './binary-bundle-store.js';
 export { createVerifiedRemoteBinaryCache, createVerifiedRemoteCacheDatabaseName, type NormalizedVerifiedRemoteBinaryInput, type VerifiedRemoteBinaryCache, type VerifiedRemoteBinaryCacheOptions, type VerifiedRemoteBinaryInput, type VerifiedRemoteBinaryLoadResult, type VerifiedRemoteBinaryResolveOptions, type VerifiedRemoteBinaryResult, type VerifiedRemoteCacheWarning, type VerifiedRemoteCacheIdentity, type VerifiedRemoteCacheIdentityInput, type VerifiedRemoteCachePruneResult, type VerifiedRemoteCacheStats, type VerifiedRemoteStoryCacheDeleteResult, type VerifiedRemoteStoryCacheInfo, type VerifiedRemoteStoryCachePruneResult } from './verified-remote-cache.js';
 export interface EmbeddedAssetBytesInput {
     name: unknown;
@@ -21,6 +23,7 @@ export interface AssetManagerCompositionTarget {
 }
 export interface AssetManagerCompositionOptions {
     readonly verifiedRemoteCache?: VerifiedRemoteBinaryCacheOptions;
+    readonly binaryBundleStore?: BinaryBundleStoreOptions;
 }
 export interface AssetManagerComposition {
     registerProjectAsset(input: ProjectAssetRegistrationInput): Promise<EmbeddedAssetRegistration>;
@@ -45,5 +48,9 @@ export interface AssetManagerComposition {
     deleteVerifiedRemoteStoryCache(databaseName: unknown): Promise<VerifiedRemoteStoryCacheDeleteResult>;
     renewVerifiedRemoteStoryCacheLease(): Promise<void>;
     releaseVerifiedRemoteStoryCacheLease(): Promise<void>;
+    putBinaryBundle(input: BinaryBundlePutInput, options?: BinaryBundleOperationOptions): Promise<BinaryBundleRegistration>;
+    getBinaryBundle(input: BinaryBundleKeyInput, options?: BinaryBundleOperationOptions): Promise<BinaryBundleResult>;
+    deleteBinaryBundle(input: BinaryBundleKeyInput, options?: BinaryBundleOperationOptions): Promise<void>;
+    releaseBinaryStore(): Promise<void>;
 }
 export declare function createAssetManagerComposition(featureFlags?: AssetManagerFeatureFlags, options?: AssetManagerCompositionOptions): AssetManagerComposition;

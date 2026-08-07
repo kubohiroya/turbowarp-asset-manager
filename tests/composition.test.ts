@@ -177,4 +177,21 @@ describe('Asset Manager composition API', () => {
     expect(assets.isRegistered('Late')).toBe(false);
     expect(createSVGSkin).not.toHaveBeenCalled();
   });
+
+  it('keeps the binary bundle store lazy and releases it explicitly', async () => {
+    const assets = createAssetManagerComposition(undefined, {
+      binaryBundleStore: {indexedDB: {open: openDatabase} as unknown as IDBFactory}
+    });
+    await assets.releaseBinaryStore();
+    expect(openDatabase).not.toHaveBeenCalled();
+
+    await expect(
+      assets.getBinaryBundle({
+        namespace: 'story-001/source-integrity',
+        name: 'RescuePose',
+        integrity: `sha256-${'0'.repeat(64)}`
+      })
+    ).rejects.toMatchObject({code: 'ASSET_BINARY_BUNDLE_RELEASED'});
+    expect(registerExtension).not.toHaveBeenCalled();
+  });
 });
