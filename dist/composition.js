@@ -1950,7 +1950,14 @@ function normalizeIntegrity(value, label) {
 function integrityIsCanonical(value) {
   if (!value.startsWith("sha256-")) return false;
   const payload = value.slice("sha256-".length);
-  return /^[0-9a-f]{64}$/u.test(payload) || /^[A-Za-z0-9+/]{43}=$/u.test(payload);
+  if (/^[0-9a-f]{64}$/u.test(payload)) return true;
+  if (!/^[A-Za-z0-9+/]{43}=$/u.test(payload)) return false;
+  try {
+    const decoded = Uint8Array.from(atob(payload), (character) => character.charCodeAt(0));
+    return decoded.byteLength === 32 && toBase64(decoded) === payload;
+  } catch {
+    return false;
+  }
 }
 function safePath(value) {
   const path = requireString(value, "binary bundle file path", MAX_PATH_LENGTH);

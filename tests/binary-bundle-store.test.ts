@@ -8,6 +8,7 @@ import {
 } from '../src/binary-bundle-store.js';
 
 const DATABASE_NAME = 'test-binary-bundles';
+const BASE64_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 
 async function sha256Integrity(bytes: Uint8Array, encoding: 'hex' | 'base64' = 'hex') {
   const owned = Uint8Array.from(bytes);
@@ -30,6 +31,15 @@ async function file(path: string, values: number[], encoding: 'hex' | 'base64' =
     integrity: await sha256Integrity(bytes, encoding),
     bytes
   } satisfies BinaryBundleFileInput;
+}
+
+function nonCanonicalBase64Alias(integrity: string): string {
+  const finalCharacterIndex = integrity.length - 2;
+  const alphabetIndex = BASE64_ALPHABET.indexOf(integrity[finalCharacterIndex]!);
+  if (alphabetIndex < 0 || alphabetIndex % 4 !== 0) {
+    throw new Error('Expected canonical padded SHA-256 base64.');
+  }
+  return `${integrity.slice(0, finalCharacterIndex)}${BASE64_ALPHABET[alphabetIndex + 1]}=`;
 }
 
 async function poseBundle(
@@ -260,6 +270,38 @@ describe('binary bundle store', () => {
       }
     ];
     for (const input of invalid) await expect(store.put(input as never)).rejects.toHaveProperty('code');
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  it('accepts canonical base64 and rejects non-canonical pad-bit aliases before opening IndexedDB', async () => {
+    const canonicalBundleIntegrity = await sha256Integrity(Uint8Array.from([7, 8, 9]), 'base64');
+    const valid = {...(await poseBundle()), integrity: canonicalBundleIntegrity};
+    const indexedDB = new IDBFactory();
+    const store = createBinaryBundleStore({indexedDB, databaseName: DATABASE_NAME});
+    await expect(store.put(valid)).resolves.toMatchObject({integrity: canonicalBundleIntegrity});
+
+    const open = vi.fn(() => {
+      throw new Error('must not open');
+    });
+    const rejectingStore = createBinaryBundleStore({
+      indexedDB: {open} as unknown as IDBFactory,
+      databaseName: `${DATABASE_NAME}-non-canonical`
+    });
+    const modelIndex = valid.files.findIndex(({path}) => path === 'model.json');
+    const nonCanonicalBundleIntegrity = nonCanonicalBase64Alias(canonicalBundleIntegrity);
+    const nonCanonicalFileIntegrity = nonCanonicalBase64Alias(
+      String(valid.files[modelIndex]!.integrity)
+    );
+    const files = valid.files.map((candidate, index) =>
+      index === modelIndex ? {...candidate, integrity: nonCanonicalFileIntegrity} : candidate
+    );
+
+    await expect(
+      rejectingStore.put({...valid, integrity: nonCanonicalBundleIntegrity})
+    ).rejects.toMatchObject({code: 'ASSET_BINARY_BUNDLE_INPUT_INVALID'});
+    await expect(rejectingStore.put({...valid, files})).rejects.toMatchObject({
+      code: 'ASSET_BINARY_BUNDLE_INPUT_INVALID'
+    });
     expect(open).not.toHaveBeenCalled();
   });
 
