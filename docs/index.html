@@ -40,7 +40,7 @@
   <main id="main" class="page-shell">
     <section class="hero" aria-labelledby="hero-title">
       <div>
-        <p class="eyebrow">TurboWarp custom extension</p>
+        <p class="eyebrow">TurboWarp custom extension · v0.7.0</p>
         <h1 id="hero-title">Use every project asset through one name.</h1>
         <p class="hero-copy">
           Asset Manager registers web images and audio, project costumes, backdrops, sounds,
@@ -78,7 +78,7 @@
         <li>
           <h3>Load the extension</h3>
           <p>In TurboWarp, choose <strong>Add Extension → Custom Extension</strong> and paste:</p>
-          <pre><code>https://cdn.jsdelivr.net/npm/@kubohiroya/turbowarp-asset-manager@0.6.0/dist/asset-manager.js</code></pre>
+          <pre><code>https://cdn.jsdelivr.net/npm/@kubohiroya/turbowarp-asset-manager@0.7.0/dist/asset-manager.js</code></pre>
           <p>Enable <strong>Run extension without sandbox</strong>.</p>
         </li>
         <li>
@@ -314,6 +314,60 @@ const result = await assets.resolveVerifiedRemoteBinary(model, {
         Do not cache credentials or secret material. Releasing JavaScript references permits
         garbage collection, but browsers do not guarantee immediate physical memory erasure.
       </aside>
+
+      <h3 id="composition-bundles">Transactional multi-file bundles</h3>
+      <p>
+        Version 0.7.0 adds a block-free binary bundle store for self-contained assets such as a
+        Teachable Machine Pose model. Import the composition subpath, choose a story-specific
+        database, and bind every operation to the story/source namespace, asset name, and manifest
+        bundle integrity.
+      </p>
+      <pre><code>const assets = createAssetManagerComposition(undefined, {
+  binaryBundleStore: {
+    databaseName: `${story.cacheDatabaseName}--bundles-v1`
+  }
+});
+
+await assets.putBinaryBundle({
+  namespace: `${story.id}/${story.sourceIntegrity}`,
+  name: 'RescuePose',
+  integrity: pose.bundleIntegrity,
+  files: [
+    {path: 'model.json', size: model.size, integrity: model.integrity, bytes: model.bytes},
+    {path: 'metadata.json', size: metadata.size, integrity: metadata.integrity, bytes: metadata.bytes},
+    {path: 'weights.bin', size: weights.size, integrity: weights.integrity, bytes: weights.bytes}
+  ]
+});
+
+const stored = await assets.getBinaryBundle({
+  namespace: `${story.id}/${story.sourceIntegrity}`,
+  name: 'RescuePose',
+  integrity: pose.bundleIntegrity
+});</code></pre>
+      <figure class="diagram" aria-describedby="composition-bundles-description">
+        <figcaption>A complete bundle becomes visible only after one transaction commits</figcaption>
+        <p id="composition-bundles-description" class="sr-only">
+          The host supplies a story-scoped key and all bundle files. Asset Manager verifies every
+          declared size and SHA-256, commits the bundle and metadata in one IndexedDB transaction,
+          and returns the complete verified bundle on a later read. Missing, partial, or corrupt
+          records fail closed.
+        </p>
+        <ol class="flow-list" style="--flow-columns: 4" aria-hidden="true">
+          <li class="diagram-node"><strong>Scoped identity</strong><span>story + source + asset</span></li>
+          <li class="diagram-node"><strong>Verify every file</strong><span>size + SHA-256</span></li>
+          <li class="diagram-node diagram-node-primary"><strong>Atomic commit</strong><span>bundle + metadata</span></li>
+          <li class="diagram-node diagram-node-accent"><strong>Verified read</strong><span>complete bundle only</span></li>
+        </ol>
+      </figure>
+      <p>
+        <code>putBinaryBundle</code> resolves only after <code>IDBTransaction.oncomplete</code> and
+        defensively owns the supplied bytes. <code>getBinaryBundle</code> rechecks file paths, sizes,
+        and canonical SHA-256 values before returning data. <code>deleteBinaryBundle</code> removes
+        data and metadata atomically; <code>releaseBinaryStore</code> aborts that store instance
+        without deleting persistent records. TTL, LRU, bundle-count, and byte limits are enforced
+        independently from the verified remote cache and the Standalone asset database. Failures
+        expose stable <code>ASSET_BINARY_BUNDLE_*</code> codes without payload bytes.
+      </p>
 
       <h3 id="replacement-flow">How safe same-name replacement works</h3>
       <p>

@@ -40,7 +40,7 @@
   <main id="main" class="page-shell">
     <section class="hero" aria-labelledby="hero-title">
       <div>
-        <p class="eyebrow">TurboWarp カスタム拡張機能</p>
+        <p class="eyebrow">TurboWarp カスタム拡張機能 · v0.7.0</p>
         <h1 id="hero-title">すべての素材を、ひとつの名前で扱う。</h1>
         <p class="hero-copy">
           Asset Manager は、Web 上の画像・音声、プロジェクト内のコスチューム・背景・音、
@@ -78,7 +78,7 @@
         <li>
           <h3>拡張機能を読み込む</h3>
           <p>TurboWarp で <strong>拡張機能を追加 → カスタム拡張機能</strong>を選び、次の URL を貼り付けます。</p>
-          <pre><code>https://cdn.jsdelivr.net/npm/@kubohiroya/turbowarp-asset-manager@0.6.0/dist/asset-manager.js</code></pre>
+          <pre><code>https://cdn.jsdelivr.net/npm/@kubohiroya/turbowarp-asset-manager@0.7.0/dist/asset-manager.js</code></pre>
           <p><strong>サンドボックスなしで実行</strong>を有効にします。</p>
         </li>
         <li>
@@ -310,6 +310,58 @@ const result = await assets.resolveVerifiedRemoteBinary(model, {
         認証情報や秘密データをキャッシュしないでください。JavaScript の参照を外すと garbage collection
         の対象になりますが、ブラウザーは物理メモリーからの即時消去を保証しません。
       </aside>
+
+      <h3 id="composition-bundles">複数ファイルを一括保存するtransactional bundle</h3>
+      <p>
+        バージョン 0.7.0 では、Teachable Machine Pose modelのようなself-contained assetを扱う
+        block非公開のbinary bundle storeを追加しました。composition subpathをimportし、台本専用DBを
+        指定した上で、台本／source namespace、asset名、manifestのbundle integrityをすべての操作へ
+        結び付けます。
+      </p>
+      <pre><code>const assets = createAssetManagerComposition(undefined, {
+  binaryBundleStore: {
+    databaseName: `${story.cacheDatabaseName}--bundles-v1`
+  }
+});
+
+await assets.putBinaryBundle({
+  namespace: `${story.id}/${story.sourceIntegrity}`,
+  name: 'RescuePose',
+  integrity: pose.bundleIntegrity,
+  files: [
+    {path: 'model.json', size: model.size, integrity: model.integrity, bytes: model.bytes},
+    {path: 'metadata.json', size: metadata.size, integrity: metadata.integrity, bytes: metadata.bytes},
+    {path: 'weights.bin', size: weights.size, integrity: weights.integrity, bytes: weights.bytes}
+  ]
+});
+
+const stored = await assets.getBinaryBundle({
+  namespace: `${story.id}/${story.sourceIntegrity}`,
+  name: 'RescuePose',
+  integrity: pose.bundleIntegrity
+});</code></pre>
+      <figure class="diagram" aria-describedby="composition-bundles-description">
+        <figcaption>1 transactionのcommit後にだけ完全なbundleを公開する</figcaption>
+        <p id="composition-bundles-description" class="sr-only">
+          ホストが台本単位のkeyとbundle全fileを渡します。Asset Managerは宣言されたsizeとSHA-256を
+          fileごとに検証し、bundleとmetadataを1つのIndexedDB transactionでcommitします。後のreadでも
+          bundle全体を再検証し、missing、partial、corruptなrecordは返しません。
+        </p>
+        <ol class="flow-list" style="--flow-columns: 4" aria-hidden="true">
+          <li class="diagram-node"><strong>scope付きidentity</strong><span>台本 + source + asset</span></li>
+          <li class="diagram-node"><strong>全fileを検証</strong><span>size + SHA-256</span></li>
+          <li class="diagram-node diagram-node-primary"><strong>atomic commit</strong><span>bundle + metadata</span></li>
+          <li class="diagram-node diagram-node-accent"><strong>検証済みread</strong><span>完全なbundleだけ</span></li>
+        </ol>
+      </figure>
+      <p>
+        <code>putBinaryBundle</code> は <code>IDBTransaction.oncomplete</code> 後にだけ完了し、入力bytesを
+        defensive copyします。<code>getBinaryBundle</code> はfile path、size、canonical SHA-256を再検証して
+        返します。<code>deleteBinaryBundle</code> はdataとmetadataをatomicに削除し、
+        <code>releaseBinaryStore</code> は永続recordを消さずにstore instanceの処理を中止します。
+        TTL、LRU、bundle数、byte数の制限は、verified remote cacheやStandalone asset DBとは独立です。
+        失敗はpayload bytesを含めず、安定した <code>ASSET_BINARY_BUNDLE_*</code> codeで通知します。
+      </p>
 
       <h3 id="replacement-flow">同名アセットを安全に置き換える仕組み</h3>
       <p>
