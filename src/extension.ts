@@ -20,7 +20,7 @@ import {
 } from './text-style.js';
 
 export const EXTENSION_ID = 'kubohiroyaassetmanager';
-export const EXTENSION_VERSION = '0.5.0';
+export const EXTENSION_VERSION = '0.7.0';
 export const EXTENSION_DOCS_URI = 'https://kubohiroya.github.io/turbowarp-asset-manager/';
 
 const DB_NAME = 'tw-asset-manager';

@@ -164,7 +164,7 @@ function resolveTextStyle(name, stageWidth, getRuntimeVariable) {
   };
 }
 const EXTENSION_ID = "kubohiroyaassetmanager";
-const EXTENSION_VERSION = "0.5.0";
+const EXTENSION_VERSION = "0.7.0";
 const EXTENSION_DOCS_URI = "https://kubohiroya.github.io/turbowarp-asset-manager/";
 const DB_NAME = "tw-asset-manager";
 const DB_VERSION = 1;

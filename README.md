@@ -15,14 +15,14 @@ The built JavaScript file is committed to this repository so that users do not n
 The versioned npm package contains the same reviewed build:
 
 ```bash
-pnpm add --save-exact @kubohiroya/turbowarp-asset-manager@0.6.0
+pnpm add --save-exact @kubohiroya/turbowarp-asset-manager@0.7.0
 ```
 
 Load `node_modules/@kubohiroya/turbowarp-asset-manager/dist/asset-manager.js`, or use the
 version-pinned CDN URL:
 
 ```text
-https://cdn.jsdelivr.net/npm/@kubohiroya/turbowarp-asset-manager@0.6.0/dist/asset-manager.js
+https://cdn.jsdelivr.net/npm/@kubohiroya/turbowarp-asset-manager@0.7.0/dist/asset-manager.js
 ```
 
 ## Composition API
@@ -195,7 +195,7 @@ garbage-collected, but immediate physical memory erasure is not guaranteed.
 
 ### Transactional binary bundles
 
-Composition hosts that receive a self-contained multi-file asset can persist it without adding a
+Version 0.7.0 lets composition hosts persist a self-contained multi-file asset without adding a
 block or treating the files as external image/audio cache entries. Configure a story-specific
 database name and bind every operation to the story/source namespace, asset name, and manifest
 bundle integrity:
