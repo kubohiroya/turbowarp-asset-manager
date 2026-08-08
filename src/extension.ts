@@ -219,6 +219,11 @@ export type ParsedResourceIdentifier =
   | {kind: 'sound'; spriteName: string; soundName: string}
   | {kind: 'text'; runtimeVariableName: string};
 
+export type ProjectAssetLocator =
+  | Readonly<{kind: 'backdrop'; name: string}>
+  | Readonly<{kind: 'costume'; target: string; name: string}>
+  | Readonly<{kind: 'sound'; name: string; target?: string}>;
+
 export type ProjectAssetAddressValidation =
   | {
       ok: true;
@@ -234,6 +239,53 @@ export type ProjectAssetAddressValidation =
 
 export function normalizeName(value: unknown): string {
   return String(value ?? '').trim();
+}
+
+function literalProjectName(value: unknown, label: string): string {
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new Error(`${label} must be a non-empty literal string.`);
+  }
+  return value;
+}
+
+export function parseProjectAssetLocator(value: unknown): ProjectAssetLocator {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Project asset locator must be an object.');
+  }
+  const input = value as Record<string, unknown>;
+  const kind = input.kind;
+  const allowed = kind === 'costume'
+    ? new Set(['kind', 'name', 'target'])
+    : kind === 'sound'
+      ? new Set(['kind', 'name', 'target'])
+      : new Set(['kind', 'name']);
+  if (Object.keys(input).some((key) => !allowed.has(key))) {
+    throw new Error('Project asset locator contains an unknown field.');
+  }
+  const name = literalProjectName(input.name, 'Project asset source name');
+  if (kind === 'backdrop') {
+    if (Object.hasOwn(input, 'target')) {
+      throw new Error('Backdrop locator must not provide target.');
+    }
+    return Object.freeze({kind, name});
+  }
+  if (kind === 'costume') {
+    return Object.freeze({
+      kind,
+      name,
+      target: literalProjectName(input.target, 'Costume target name')
+    });
+  }
+  if (kind === 'sound') {
+    return Object.freeze({
+      kind,
+      name,
+      ...(Object.hasOwn(input, 'target')
+        ? {target: literalProjectName(input.target, 'Sound target name')}
+        : {})
+    });
+  }
+  throw new Error('Project asset locator kind must be backdrop, costume, or sound.');
 }
 
 export function guessMimeType(value: unknown): string {
@@ -560,6 +612,52 @@ function resolveSoundAddress(
   return {target, sound, isStage};
 }
 
+function resolveLiteralSoundAddress(
+  runtime: TurboWarpRuntime,
+  targetName: string | undefined,
+  soundName: string,
+  assetName: string
+): {target: TurboWarpTarget; sound: TurboWarpSound; isStage: boolean; targetName: string} {
+  const isStage = targetName === undefined;
+  const target = isStage
+    ? findStageTarget(runtime)
+    : findProjectTargetByName(runtime, targetName);
+  if (!target) {
+    const candidates = suggestNames(
+      targetName ?? STAGE_RESOURCE_NAME,
+      runtime.targets.flatMap((candidate) =>
+        !candidate.isStage && candidate.sprite?.name ? [candidate.sprite.name] : []
+      )
+    );
+    throw new AssetManagerError('SPRITE_NOT_FOUND', 'Structured sound target was not found.', {
+      operation: 'registerProjectAsset',
+      assetName,
+      actorName: targetName,
+      candidates,
+      hint: suggestionHint(candidates)
+    });
+  }
+  const sound = findProjectSound(target, soundName, null);
+  if (!sound) {
+    const candidates = suggestNames(
+      soundName,
+      (target.sprite?.sounds ?? []).map((candidate) => candidate.name)
+    );
+    throw new AssetManagerError(
+      'SOURCE_ASSET_NOT_FOUND',
+      'Structured project sound was not found.',
+      {
+        operation: 'registerProjectAsset',
+        assetName,
+        actorName: targetName,
+        candidates,
+        hint: suggestionHint(candidates)
+      }
+    );
+  }
+  return {target, sound, isStage, targetName: targetName ?? STAGE_RESOURCE_NAME};
+}
+
 export function validateProjectAssetAddress(
   runtime: TurboWarpRuntime,
   assetName: unknown,
@@ -730,6 +828,32 @@ export class AssetManagerExtension {
     return JSON.stringify(
       validateProjectAssetAddress(this.runtime, args.NAME, args.RESOURCE_ID)
     );
+  }
+
+  async registerProjectAssetLiteral(assetName: unknown, locatorInput: unknown): Promise<void> {
+    const name = requireAssetNameValue(assetName, 'registerProjectAsset');
+    let locator: ProjectAssetLocator;
+    try {
+      locator = parseProjectAssetLocator(locatorInput);
+    } catch (error) {
+      throw new AssetManagerError('RESOURCE_ID_INVALID', errorMessage(error), {
+        operation: 'registerProjectAsset',
+        assetName: name,
+        hint: 'Pass a structured backdrop, costume, or sound locator.',
+        cause: error
+      });
+    }
+    switch (locator.kind) {
+      case 'backdrop':
+        await this.registerBackdropReference(name, locator.name);
+        return;
+      case 'costume':
+        await this.registerCostumeReference(name, locator.target, locator.name);
+        return;
+      case 'sound':
+        await this.registerLiteralSoundReference(name, locator.target, locator.name);
+        return;
+    }
   }
 
   async registerAsset(args: BlockArgs): Promise<void> {
@@ -1246,6 +1370,25 @@ export class AssetManagerExtension {
       isStage,
       soundName,
       assetId: sound.assetId ?? null
+    }, token);
+  }
+
+  private async registerLiteralSoundReference(
+    name: string,
+    targetName: string | undefined,
+    soundName: string
+  ): Promise<void> {
+    const token = this.beginRegistration(name);
+    const resolved = resolveLiteralSoundAddress(this.runtime, targetName, soundName, name);
+    if (!this.isRegistrationCancellationCurrent(name, token)) return;
+    await this.commitPreparedAsset(name, 'sound', {
+      kind: 'sound',
+      name,
+      targetId: resolved.target.id,
+      targetName: resolved.targetName,
+      isStage: resolved.isStage,
+      soundName,
+      assetId: resolved.sound.assetId ?? null
     }, token);
   }
 

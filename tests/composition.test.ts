@@ -24,8 +24,14 @@ describe('Asset Manager composition API', () => {
     setSize: vi.fn(),
     sprite: {
       name: 'Stage',
-      costumes: [{name: 'Beach', assetId: 'beach', skinId: 10, dataFormat: 'svg'}],
-      sounds: [{name: 'Opening', assetId: 'opening', soundId: 'opening-sound', dataFormat: 'wav'}],
+      costumes: [
+        {name: 'Beach', assetId: 'beach', skinId: 10, dataFormat: 'svg'},
+        {name: ' Back.drop/\u0001: ', assetId: 'literal-backdrop', skinId: 11, dataFormat: 'svg'}
+      ],
+      sounds: [
+        {name: 'Opening', assetId: 'opening', soundId: 'opening-sound', dataFormat: 'wav'},
+        {name: ' Sound/\n: ', assetId: 'literal-sound', soundId: 'literal-sound', dataFormat: 'wav'}
+      ],
       soundBank: {
         playSound: playProjectSound,
         stop: stopProjectSound,
@@ -40,7 +46,13 @@ describe('Asset Manager composition API', () => {
     drawableID: 7,
     size: 100,
     setSize: vi.fn(),
-    sprite: {name: 'Actor', costumes: [], sounds: []}
+    sprite: {
+      name: ' Actor/\u0001: ',
+      costumes: [
+        {name: ' Cost.ume/\u0001: ', assetId: 'literal-costume', skinId: 12, dataFormat: 'svg'}
+      ],
+      sounds: []
+    }
   };
 
   beforeEach(() => {
@@ -112,6 +124,72 @@ describe('Asset Manager composition API', () => {
     expect(stopProjectSound).toHaveBeenCalledWith(stage, 'opening-sound');
     expect(stopAllProjectSounds).not.toHaveBeenCalled();
     expect(assets.isRegistered('Opening')).toBe(false);
+  });
+
+  it('keeps literal logical names and structured project locators byte-for-byte', async () => {
+    const assets = createAssetManagerComposition();
+    const backdropId = ' Backdrop ID/\u0001: ';
+    const costumeId = ' Costume ID/\n: ';
+    const soundId = ' Sound ID/\u007f: ';
+
+    await expect(assets.registerProjectAsset({
+      name: backdropId,
+      locator: {kind: 'backdrop', name: ' Back.drop/\u0001: '}
+    })).resolves.toEqual({name: backdropId, mimeType: 'image/svg+xml'});
+    await assets.applyToStage(backdropId);
+    expect(updateDrawableSkinId).toHaveBeenLastCalledWith(0, 11);
+
+    await expect(assets.registerProjectAsset({
+      name: costumeId,
+      locator: {
+        kind: 'costume',
+        target: ' Actor/\u0001: ',
+        name: ' Cost.ume/\u0001: '
+      }
+    })).resolves.toEqual({name: costumeId, mimeType: 'image/svg+xml'});
+    await assets.applyToTarget(costumeId, actor);
+    expect(updateDrawableSkinId).toHaveBeenLastCalledWith(7, 12);
+
+    await expect(assets.registerProjectAsset({
+      name: soundId,
+      locator: {kind: 'sound', name: ' Sound/\n: '}
+    })).resolves.toEqual({name: soundId, mimeType: 'audio/wav'});
+    await assets.playSound(soundId, {untilDone: true});
+    expect(playProjectSound).toHaveBeenLastCalledWith(stage, 'literal-sound');
+
+    expect(assets.isRegistered(backdropId)).toBe(true);
+    expect(assets.isRegistered(backdropId.trim())).toBe(false);
+    assets.releaseAll();
+    expect(assets.isRegistered(backdropId)).toBe(false);
+  });
+
+  it('supports literal embedded asset IDs without changing the trimmed default', async () => {
+    const assets = createAssetManagerComposition();
+    const literalId = ' Embedded/\u0001: ';
+    await expect(assets.registerEmbeddedAsset({
+      name: literalId,
+      nameMode: 'literal',
+      sourceName: 'literal.svg',
+      mimeType: 'image/svg+xml',
+      bytes: new TextEncoder().encode('<svg/>')
+    })).resolves.toEqual({name: literalId, mimeType: 'image/svg+xml'});
+    expect(assets.isRegistered(literalId)).toBe(true);
+    expect(assets.isRegistered(literalId.trim())).toBe(false);
+    assets.releaseAsset(literalId);
+    expect(assets.isRegistered(literalId)).toBe(false);
+  });
+
+  it('rejects malformed structured locators before publishing a registration', async () => {
+    const assets = createAssetManagerComposition();
+    for (const input of [
+      {name: 'Missing', locator: {kind: 'costume', name: 'Costume'}},
+      {name: 'Unknown', locator: {kind: 'image', name: 'Image'}},
+      {name: 'Extra', locator: {kind: 'backdrop', name: 'Beach', target: 'Stage'}},
+      {name: 'Both', locator: {kind: 'backdrop', name: 'Beach'}, resourceId: 'backdrop:Beach'}
+    ]) {
+      await expect(assets.registerProjectAsset(input as never)).rejects.toThrow();
+      expect(assets.isRegistered(input.name)).toBe(false);
+    }
   });
 
   it('copies embedded SVG bytes without fetch or IndexedDB and releases its owned skin once', async () => {

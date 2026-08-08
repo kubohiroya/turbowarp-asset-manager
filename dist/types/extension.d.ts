@@ -39,6 +39,18 @@ export type ParsedResourceIdentifier = {
     kind: 'text';
     runtimeVariableName: string;
 };
+export type ProjectAssetLocator = Readonly<{
+    kind: 'backdrop';
+    name: string;
+}> | Readonly<{
+    kind: 'costume';
+    target: string;
+    name: string;
+}> | Readonly<{
+    kind: 'sound';
+    name: string;
+    target?: string;
+}>;
 export type ProjectAssetAddressValidation = {
     ok: true;
     kind: ParsedResourceIdentifier['kind'];
@@ -50,6 +62,7 @@ export type ProjectAssetAddressValidation = {
     message: string;
 };
 export declare function normalizeName(value: unknown): string;
+export declare function parseProjectAssetLocator(value: unknown): ProjectAssetLocator;
 export declare function guessMimeType(value: unknown): string;
 export declare function normalizeMimeType(mimeType: unknown, urlOrName: unknown): string;
 export declare function parseResourceIdentifier(value: unknown, fallbackAssetName?: unknown): ParsedResourceIdentifier;
@@ -93,6 +106,7 @@ export declare class AssetManagerExtension {
         blocks: Record<string, unknown>[];
     };
     validateProjectAssetAddress(args: BlockArgs): string;
+    registerProjectAssetLiteral(assetName: unknown, locatorInput: unknown): Promise<void>;
     registerAsset(args: BlockArgs): Promise<void>;
     registerEmbeddedAsset(input: EmbeddedAssetBytesInput): Promise<EmbeddedAssetRegistration>;
     assetErrorType(): string;
@@ -128,6 +142,7 @@ export declare class AssetManagerExtension {
     private registerCostumeReference;
     private registerBackdropReference;
     private registerSoundReference;
+    private registerLiteralSoundReference;
     private registerTextReference;
     private unregisterAsset;
     private commitPreparedAsset;
