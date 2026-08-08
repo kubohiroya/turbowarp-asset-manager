@@ -40,7 +40,7 @@
   <main id="main" class="page-shell">
     <section class="hero" aria-labelledby="hero-title">
       <div>
-        <p class="eyebrow">TurboWarp カスタム拡張機能 · v0.7.0</p>
+        <p class="eyebrow">TurboWarp カスタム拡張機能 · v0.8.0</p>
         <h1 id="hero-title">すべての素材を、ひとつの名前で扱う。</h1>
         <p class="hero-copy">
           Asset Manager は、Web 上の画像・音声、プロジェクト内のコスチューム・背景・音、
@@ -78,7 +78,7 @@
         <li>
           <h3>拡張機能を読み込む</h3>
           <p>TurboWarp で <strong>拡張機能を追加 → カスタム拡張機能</strong>を選び、次の URL を貼り付けます。</p>
-          <pre><code>https://cdn.jsdelivr.net/npm/@kubohiroya/turbowarp-asset-manager@0.7.0/dist/asset-manager.js</code></pre>
+          <pre><code>https://cdn.jsdelivr.net/npm/@kubohiroya/turbowarp-asset-manager@0.8.0/dist/asset-manager.js</code></pre>
           <p><strong>サンドボックスなしで実行</strong>を有効にします。</p>
         </li>
         <li>
@@ -212,6 +212,27 @@
           </div>
         </div>
       </figure>
+
+      <h3 id="composition-project-locators">Compositionホスト向けの正確なプロジェクト素材locator</h3>
+      <p>
+        バージョン0.8.0では、compositionホストがコスチューム、背景、音をstructured
+        <code>locator</code>で登録できます。前後の空白、<code>.</code>、<code>/</code>、<code>:</code>、
+        制御文字を含むScratch名をそのまま照合します。structured locatorでは、登録に使う論理名も
+        既定でliteralに保持します。
+      </p>
+      <pre><code>await assets.registerProjectAsset({
+  name: 'Costume.1 / presentation',
+  locator: {
+    kind: 'costume',
+    target: 'Actor / presenter',
+    name: 'Costume.1 / source'
+  }
+});</code></pre>
+      <p>
+        音のlocatorで<code>target</code>を省略するとStageを選びます。既存の文字列
+        <code>resourceId</code>形式には互換性があり、従来のtrimとcolon grammarを維持します。
+        embedded assetで論理名をliteralにする場合は<code>nameMode: 'literal'</code>を指定します。
+      </p>
 
       <h3 id="composition-cache">Composition ホスト向け検証済みリモートキャッシュ</h3>
       <p>
