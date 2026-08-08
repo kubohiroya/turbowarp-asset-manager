@@ -61,6 +61,7 @@ export {
 
 export interface EmbeddedAssetBytesInput {
   name: unknown;
+  nameMode?: AssetNameMode;
   bytes: ArrayBuffer | Uint8Array;
   mimeType: unknown;
   sourceName?: unknown;
@@ -71,10 +72,26 @@ export interface EmbeddedAssetRegistration {
   readonly mimeType: string;
 }
 
-export interface ProjectAssetRegistrationInput {
-  name: unknown;
-  resourceId: unknown;
-}
+export type AssetNameMode = 'trimmed' | 'literal';
+
+export type ProjectAssetLocator =
+  | Readonly<{kind: 'backdrop'; name: string}>
+  | Readonly<{kind: 'costume'; target: string; name: string}>
+  | Readonly<{kind: 'sound'; name: string; target?: string}>;
+
+export type ProjectAssetRegistrationInput =
+  | Readonly<{
+      name: unknown;
+      nameMode?: AssetNameMode;
+      resourceId: unknown;
+      locator?: never;
+    }>
+  | Readonly<{
+      name: unknown;
+      nameMode?: AssetNameMode;
+      locator: ProjectAssetLocator;
+      resourceId?: never;
+    }>;
 
 export interface AssetManagerCompositionTarget {
   readonly id: string;
@@ -137,7 +154,8 @@ export function createAssetManagerComposition(
   const extension = featureFlags
     ? new AssetManagerExtension(featureFlags)
     : new AssetManagerExtension();
-  const ownedNames = new Set<string>();
+  const ownedNames = new Map<string, string>();
+  let literalNameSequence = 0;
   let verifiedRemoteCache: VerifiedRemoteBinaryCache | null = null;
   let binaryBundleStore: BinaryBundleStore | null = null;
 
@@ -152,69 +170,121 @@ export function createAssetManagerComposition(
   }
 
   function cancelledRegistration(name: string): Error {
-    const error = new Error(`Asset registration was cancelled: ${name}`);
+    const error = new Error(`Asset registration was cancelled: ${JSON.stringify(name)}`);
     error.name = 'AbortError';
     return error;
   }
 
+  function externalName(value: unknown, mode: AssetNameMode): string {
+    if (mode === 'trimmed') return normalizeName(value);
+    if (mode !== 'literal') throw new TypeError('Asset nameMode must be trimmed or literal.');
+    if (typeof value !== 'string' || value.length === 0) {
+      throw new TypeError('A literal asset name must be a non-empty string.');
+    }
+    return value;
+  }
+
+  function claimName(value: unknown, mode: AssetNameMode) {
+    const external = externalName(value, mode);
+    const existing = ownedNames.get(external);
+    if (existing !== undefined) {
+      return {external, internal: existing, previouslyOwned: true};
+    }
+    const internal = mode === 'literal'
+      ? `\u0000asset-manager-composition:${++literalNameSequence}`
+      : external;
+    ownedNames.set(external, internal);
+    return {external, internal, previouslyOwned: false};
+  }
+
+  function ownedName(value: unknown): {external: string; internal: string} | null {
+    if (typeof value === 'string') {
+      const exact = ownedNames.get(value);
+      if (exact !== undefined) return {external: value, internal: exact};
+    }
+    const normalized = normalizeName(value);
+    const legacy = ownedNames.get(normalized);
+    return legacy === undefined ? null : {external: normalized, internal: legacy};
+  }
+
   async function trackRegistration(
-    name: unknown,
-    operation: Promise<EmbeddedAssetRegistration>
+    claimed: ReturnType<typeof claimName>,
+    operation: Promise<unknown>
   ): Promise<EmbeddedAssetRegistration> {
-    const normalizedName = normalizeName(name);
-    const previouslyOwned = ownedNames.has(normalizedName);
-    ownedNames.add(normalizedName);
     try {
-      const result = await operation;
-      if (!ownedNames.has(normalizedName) || !extension.isLoaded({NAME: normalizedName})) {
-        throw cancelledRegistration(normalizedName);
+      await operation;
+      if (
+        ownedNames.get(claimed.external) !== claimed.internal ||
+        !extension.isLoaded({NAME: claimed.internal})
+      ) {
+        throw cancelledRegistration(claimed.external);
       }
-      return result;
+      return registration(claimed.external, claimed.internal);
     } catch (error) {
-      if (!previouslyOwned && !extension.isLoaded({NAME: normalizedName})) {
-        ownedNames.delete(normalizedName);
+      if (!claimed.previouslyOwned && !extension.isLoaded({NAME: claimed.internal})) {
+        ownedNames.delete(claimed.external);
       }
       throw error;
     }
   }
 
-  function registration(name: unknown): EmbeddedAssetRegistration {
-    const normalizedName = normalizeName(name);
+  function registration(external: string, internal: string): EmbeddedAssetRegistration {
     return Object.freeze({
-      name: normalizedName,
-      mimeType: extension.getAssetMimeType({NAME: normalizedName})
+      name: external,
+      mimeType: extension.getAssetMimeType({NAME: internal})
     });
   }
 
   function releaseAsset(name: unknown): void {
-    const normalizedName = normalizeName(name);
-    if (!ownedNames.delete(normalizedName)) return;
+    const owned = ownedName(name);
+    if (!owned) return;
+    ownedNames.delete(owned.external);
     let stopError: unknown;
-    if (extension.getAssetMimeType({NAME: normalizedName}).startsWith('audio/')) {
+    if (extension.getAssetMimeType({NAME: owned.internal}).startsWith('audio/')) {
       try {
-        extension.stopSound({NAME: normalizedName});
+        extension.stopSound({NAME: owned.internal});
       } catch (error) {
         stopError = error;
       }
     }
-    extension.deleteMemoryAsset({NAME: normalizedName});
+    extension.deleteMemoryAsset({NAME: owned.internal});
     if (stopError) throw stopError;
   }
 
   const composition: AssetManagerComposition = {
     async registerProjectAsset(input) {
-      const operation = extension
-        .registerAsset({NAME: input.name, RESOURCE_ID: input.resourceId})
-        .then(() => registration(input.name));
-      return trackRegistration(input.name, operation);
+      if (!input || typeof input !== 'object' || Array.isArray(input)) {
+        throw new TypeError('Project asset registration input must be an object.');
+      }
+      const hasLocator = Object.hasOwn(input, 'locator');
+      if (hasLocator === Object.hasOwn(input, 'resourceId')) {
+        throw new TypeError('Provide exactly one project asset locator or resourceId.');
+      }
+      const claimed = claimName(input.name, input.nameMode ?? (hasLocator ? 'literal' : 'trimmed'));
+      const operation = hasLocator
+        ? extension.registerProjectAssetLiteral(claimed.internal, input.locator)
+        : extension.registerAsset({NAME: claimed.internal, RESOURCE_ID: input.resourceId});
+      return trackRegistration(claimed, operation);
     },
     async registerEmbeddedAsset(input) {
-      return trackRegistration(input.name, extension.registerEmbeddedAsset(input));
+      if (!input || typeof input !== 'object' || Array.isArray(input)) {
+        throw new TypeError('Embedded asset registration input must be an object.');
+      }
+      const claimed = claimName(input.name, input.nameMode ?? 'trimmed');
+      return trackRegistration(
+        claimed,
+        extension.registerEmbeddedAsset({
+          name: claimed.internal,
+          bytes: input.bytes,
+          mimeType: input.mimeType,
+          ...(input.sourceName === undefined ? {} : {sourceName: input.sourceName})
+        })
+      );
     },
     releaseAsset,
     releaseAll() {
       const errors: unknown[] = [];
-      for (const name of [...ownedNames].reverse()) {
+      for (const name of [...ownedNames.keys()].reverse()) {
         try {
           releaseAsset(name);
         } catch (error) {
@@ -224,27 +294,29 @@ export function createAssetManagerComposition(
       if (errors.length > 0) throw new AggregateError(errors, 'Failed to release assets');
     },
     isRegistered(name) {
-      return ownedNames.has(normalizeName(name)) && extension.isLoaded({NAME: name});
+      const owned = ownedName(name);
+      return owned !== null && extension.isLoaded({NAME: owned.internal});
     },
     getMimeType(name) {
-      return ownedNames.has(normalizeName(name)) ? extension.getAssetMimeType({NAME: name}) : '';
+      const owned = ownedName(name);
+      return owned ? extension.getAssetMimeType({NAME: owned.internal}) : '';
     },
     applyToStage(name) {
-      return extension.setStageSkin({NAME: name});
+      return extension.setStageSkin({NAME: ownedName(name)?.internal ?? name});
     },
     applyToTarget(name, target) {
       return extension.setThisSpriteSkin(
-        {NAME: name},
+        {NAME: ownedName(name)?.internal ?? name},
         {target: target as TurboWarpTarget, runtime: Scratch.vm.runtime}
       );
     },
     playSound(name, options = {}) {
       return options.untilDone
-        ? extension.playSoundUntilDone({NAME: name})
-        : extension.playSound({NAME: name});
+        ? extension.playSoundUntilDone({NAME: ownedName(name)?.internal ?? name})
+        : extension.playSound({NAME: ownedName(name)?.internal ?? name});
     },
     stopSound(name) {
-      extension.stopSound({NAME: name});
+      extension.stopSound({NAME: ownedName(name)?.internal ?? name});
     },
     stopAllSounds() {
       extension.stopAllSounds();

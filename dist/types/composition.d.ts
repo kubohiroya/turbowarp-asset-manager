@@ -5,6 +5,7 @@ export { createBinaryBundleStore, type BinaryBundleFileInput, type BinaryBundleF
 export { createVerifiedRemoteBinaryCache, createVerifiedRemoteCacheDatabaseName, type NormalizedVerifiedRemoteBinaryInput, type VerifiedRemoteBinaryCache, type VerifiedRemoteBinaryCacheOptions, type VerifiedRemoteBinaryInput, type VerifiedRemoteBinaryLoadResult, type VerifiedRemoteBinaryResolveOptions, type VerifiedRemoteBinaryResult, type VerifiedRemoteCacheWarning, type VerifiedRemoteCacheIdentity, type VerifiedRemoteCacheIdentityInput, type VerifiedRemoteCachePruneResult, type VerifiedRemoteCacheStats, type VerifiedRemoteStoryCacheDeleteResult, type VerifiedRemoteStoryCacheInfo, type VerifiedRemoteStoryCachePruneResult } from './verified-remote-cache.js';
 export interface EmbeddedAssetBytesInput {
     name: unknown;
+    nameMode?: AssetNameMode;
     bytes: ArrayBuffer | Uint8Array;
     mimeType: unknown;
     sourceName?: unknown;
@@ -13,10 +14,30 @@ export interface EmbeddedAssetRegistration {
     readonly name: string;
     readonly mimeType: string;
 }
-export interface ProjectAssetRegistrationInput {
+export type AssetNameMode = 'trimmed' | 'literal';
+export type ProjectAssetLocator = Readonly<{
+    kind: 'backdrop';
+    name: string;
+}> | Readonly<{
+    kind: 'costume';
+    target: string;
+    name: string;
+}> | Readonly<{
+    kind: 'sound';
+    name: string;
+    target?: string;
+}>;
+export type ProjectAssetRegistrationInput = Readonly<{
     name: unknown;
+    nameMode?: AssetNameMode;
     resourceId: unknown;
-}
+    locator?: never;
+}> | Readonly<{
+    name: unknown;
+    nameMode?: AssetNameMode;
+    locator: ProjectAssetLocator;
+    resourceId?: never;
+}>;
 export interface AssetManagerCompositionTarget {
     readonly id: string;
     readonly isStage: boolean;

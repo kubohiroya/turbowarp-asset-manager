@@ -9,6 +9,7 @@ import {
   type BinaryBundleStore,
   type EmbeddedAssetBytesInput,
   type EmbeddedAssetRegistration,
+  type ProjectAssetLocator,
   type VerifiedRemoteBinaryInput,
   type VerifiedRemoteBinaryResult,
   type VerifiedRemoteCacheWarning,
@@ -24,6 +25,15 @@ const input: EmbeddedAssetBytesInput = {
   bytes: new Uint8Array([60, 115, 118, 103, 47, 62])
 };
 const composition: AssetManagerComposition = createAssetManagerComposition();
+const projectLocator: ProjectAssetLocator = {
+  kind: 'costume',
+  target: ' Actor/\u0001: ',
+  name: ' Costume/\u0001: '
+};
+const projectRegistration: Promise<EmbeddedAssetRegistration> = composition.registerProjectAsset({
+  name: ' Costume ID/\u0001: ',
+  locator: projectLocator
+});
 const databaseName: string = createVerifiedRemoteCacheDatabaseName({
   id: 'story-0001',
   label: 'opening.kamishibai.yaml'
@@ -78,6 +88,8 @@ const binaryDelete: Promise<void> = composition.deleteBinaryBundle(binaryBundle)
 const binaryStoreRelease: Promise<void> = composition.releaseBinaryStore();
 
 void registration;
+void projectRegistration;
+void projectLocator;
 void remote;
 void warning;
 void databaseName;
