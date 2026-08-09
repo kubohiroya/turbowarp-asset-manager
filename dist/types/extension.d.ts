@@ -10,6 +10,7 @@ export interface EmbeddedAssetBytesInput {
     bytes: ArrayBuffer | Uint8Array;
     mimeType: unknown;
     sourceName?: unknown;
+    bitmapResolution?: 1 | 2;
 }
 export interface EmbeddedAssetRegistration {
     readonly name: string;

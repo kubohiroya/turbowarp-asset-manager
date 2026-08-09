@@ -453,6 +453,34 @@
     }
     return Uint8Array.from(bytes).buffer;
   }
+  function embeddedBitmapResolution(value, mimeType, assetName) {
+    if (value === void 0) return 1;
+    if (!mimeType.startsWith("image/") || mimeType === "image/svg+xml") {
+      throw new AssetManagerError(
+        "ASSET_TYPE_MISMATCH",
+        `Embedded asset "${assetName}" can specify bitmapResolution only for bitmap images.`,
+        {
+          operation: "registerEmbeddedAsset",
+          assetName,
+          expectedKind: "bitmap image",
+          actualKind: mimeType,
+          hint: "Remove bitmapResolution or use a bitmap image MIME type."
+        }
+      );
+    }
+    if (value !== 1 && value !== 2) {
+      throw new AssetManagerError(
+        "RESOURCE_ID_INVALID",
+        `Embedded bitmap asset "${assetName}" must use bitmapResolution 1 or 2.`,
+        {
+          operation: "registerEmbeddedAsset",
+          assetName,
+          hint: "Use Scratch bitmap resolution 1 or 2."
+        }
+      );
+    }
+    return value;
+  }
   function findStageTarget(runtime) {
     const stage = runtime.targets.find((target) => target.isStage);
     if (!stage) {
@@ -883,6 +911,7 @@
           }
         );
       }
+      const bitmapResolution = embeddedBitmapResolution(input.bitmapResolution, mimeType, name);
       const data = copyEmbeddedBytes(input.bytes, name);
       const token = this.beginRegistration(name);
       const prepared = {
@@ -892,7 +921,8 @@
         mimeType,
         data,
         cachedAt: Date.now(),
-        skinId: null
+        skinId: null,
+        ...mediaKind === "image" && mimeType !== "image/svg+xml" ? { bitmapResolution } : {}
       };
       await this.commitPreparedAsset(name, "external", prepared, token);
       return Object.freeze({ name, mimeType });
@@ -1765,7 +1795,7 @@
       }
       if (asset.skinId !== null) return asset.skinId;
       const blob = new Blob([asset.data], { type: asset.mimeType });
-      asset.skinId = asset.mimeType === "image/svg+xml" ? this.renderer.createSVGSkin(await blob.text()) : this.renderer.createBitmapSkin(await createImageBitmap(blob), 1);
+      asset.skinId = asset.mimeType === "image/svg+xml" ? this.renderer.createSVGSkin(await blob.text()) : this.renderer.createBitmapSkin(await createImageBitmap(blob), asset.bitmapResolution ?? 1);
       return asset.skinId;
     }
     async resolveSkinFromAsset(name, kind, asset) {

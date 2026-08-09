@@ -4,7 +4,7 @@ import {createAssetManagerComposition} from '../src/composition.js';
 
 describe('Asset Manager composition API', () => {
   const createSVGSkin = vi.fn(() => 41);
-  const createBitmapSkin = vi.fn(() => 42);
+  const createBitmapSkin = vi.fn((_bitmap: ImageBitmap, _resolution: number) => 42);
   const destroySkin = vi.fn();
   const updateDrawableSkinId = vi.fn();
   const playProjectSound = vi.fn(() => Promise.resolve());
@@ -215,6 +215,62 @@ describe('Asset Manager composition API', () => {
     assets.releaseAsset('OpeningImage');
     expect(destroySkin).toHaveBeenCalledTimes(1);
     expect(destroySkin).toHaveBeenCalledWith(41);
+  });
+
+  it('preserves explicit embedded bitmap resolution and defaults it to one', async () => {
+    const assets = createAssetManagerComposition();
+    await assets.registerEmbeddedAsset({
+      name: 'RetinaCostume',
+      sourceName: 'retina.png',
+      mimeType: 'image/png',
+      bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
+      bitmapResolution: 2
+    });
+    await assets.applyToTarget('RetinaCostume', actor);
+    expect(createBitmapSkin.mock.calls.at(-1)?.[1]).toBe(2);
+
+    await assets.registerEmbeddedAsset({
+      name: 'DefaultCostume',
+      sourceName: 'default.png',
+      mimeType: 'image/png',
+      bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47])
+    });
+    await assets.applyToTarget('DefaultCostume', actor);
+    expect(createBitmapSkin.mock.calls.at(-1)?.[1]).toBe(1);
+  });
+
+  it('rejects invalid or non-bitmap resolution without replacing an existing asset', async () => {
+    const assets = createAssetManagerComposition();
+    await assets.registerEmbeddedAsset({
+      name: 'Kept',
+      sourceName: 'kept.svg',
+      mimeType: 'image/svg+xml',
+      bytes: new TextEncoder().encode('<svg/>')
+    });
+
+    for (const input of [
+      {name: 'Zero', sourceName: 'zero.png', mimeType: 'image/png', bitmapResolution: 0},
+      {name: 'Three', sourceName: 'three.png', mimeType: 'image/png', bitmapResolution: 3},
+      {name: 'Fraction', sourceName: 'fraction.png', mimeType: 'image/png', bitmapResolution: 1.5},
+      {name: 'String', sourceName: 'string.png', mimeType: 'image/png', bitmapResolution: '2'},
+      {name: 'Vector', sourceName: 'vector.svg', mimeType: 'image/svg+xml', bitmapResolution: 2},
+      {name: 'Audio', sourceName: 'audio.wav', mimeType: 'audio/wav', bitmapResolution: 2},
+      {name: 'Kept', sourceName: 'kept.png', mimeType: 'image/png', bitmapResolution: 3}
+    ]) {
+      await expect(assets.registerEmbeddedAsset({
+        ...input,
+        bytes: new Uint8Array([1])
+      } as never)).rejects.toMatchObject({
+        code: input.name === 'Vector' || input.name === 'Audio'
+          ? 'ASSET_TYPE_MISMATCH'
+          : 'RESOURCE_ID_INVALID'
+      });
+    }
+
+    for (const name of ['Zero', 'Three', 'Fraction', 'String', 'Vector', 'Audio']) {
+      expect(assets.isRegistered(name)).toBe(false);
+    }
+    expect(assets.getMimeType('Kept')).toBe('image/svg+xml');
   });
 
   it('registers embedded audio in memory and rejects invalid input without registration', async () => {

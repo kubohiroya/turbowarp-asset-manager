@@ -49,6 +49,10 @@ and audio MIME types are accepted. Project-local costume, backdrop, and sound id
 registered with `registerProjectAsset`. Importing the module does not register a Standalone
 extension or add blocks to a palette.
 
+Raster images may set `bitmapResolution: 2` to preserve the logical size of a Scratch high-density
+costume; omitting it keeps the existing resolution-1 behavior. SVG and audio registrations must not
+specify `bitmapResolution`.
+
 Composition hosts that already have structured project metadata should pass a `locator` instead
 of joining names into a colon-delimited `resourceId`. Locator fields use exact Scratch names, so
 spaces, `.`, `/`, `:`, and control characters are preserved. A structured locator also makes the
