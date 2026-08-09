@@ -17,6 +17,7 @@ interface TestExternalAsset {
   data: ArrayBuffer;
   cachedAt: number;
   skinId: number | null;
+  bitmapResolution?: 1 | 2;
 }
 
 type TestCacheRecord = Omit<TestExternalAsset, 'kind' | 'skinId'> & {generation?: number};
@@ -355,13 +356,32 @@ describe('project-local assets', () => {
     expect(blocks.find((block) => block.opcode === 'stopAllSounds')).toBeDefined();
   });
 
+  it('creates embedded bitmap skins at their declared Scratch resolution', async () => {
+    const extension = new AssetManagerExtension(ALL_FEATURES);
+    const createBitmapSkin = vi.mocked(Scratch.vm.runtime.renderer.createBitmapSkin);
+    const createBitmap = vi.fn(async () => ({} as ImageBitmap));
+    vi.stubGlobal('createImageBitmap', createBitmap);
+
+    await extension.registerEmbeddedAsset({
+      name: 'retina-costume',
+      sourceName: 'retina.png',
+      mimeType: 'image/png',
+      bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
+      bitmapResolution: 2
+    });
+    await extension.setThisSpriteSkin({NAME: 'retina-costume'}, {target: sprite});
+
+    expect(createBitmap).toHaveBeenCalledOnce();
+    expect(createBitmapSkin).toHaveBeenCalledWith(expect.anything(), 2);
+  });
+
   it('links the default English user guide from the extension palette', () => {
     const extension = new AssetManagerExtension();
 
     expect(extension.getInfo().docsURI).toBe(EXTENSION_DOCS_URI);
     expect(EXTENSION_DOCS_URI).toBe('https://kubohiroya.github.io/turbowarp-asset-manager/');
     expect(extension.getVersion()).toBe(EXTENSION_VERSION);
-    expect(EXTENSION_VERSION).toBe('0.8.0');
+    expect(EXTENSION_VERSION).toBe('0.9.0');
   });
 
   it('validates project asset addresses without registration side effects', () => {

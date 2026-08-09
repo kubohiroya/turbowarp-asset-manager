@@ -65,6 +65,7 @@ export interface EmbeddedAssetBytesInput {
   bytes: ArrayBuffer | Uint8Array;
   mimeType: unknown;
   sourceName?: unknown;
+  bitmapResolution?: 1 | 2;
 }
 
 export interface EmbeddedAssetRegistration {
@@ -277,7 +278,10 @@ export function createAssetManagerComposition(
           name: claimed.internal,
           bytes: input.bytes,
           mimeType: input.mimeType,
-          ...(input.sourceName === undefined ? {} : {sourceName: input.sourceName})
+          ...(input.sourceName === undefined ? {} : {sourceName: input.sourceName}),
+          ...(input.bitmapResolution === undefined
+            ? {}
+            : {bitmapResolution: input.bitmapResolution})
         })
       );
     },

@@ -15,14 +15,14 @@ The built JavaScript file is committed to this repository so that users do not n
 The versioned npm package contains the same reviewed build:
 
 ```bash
-pnpm add --save-exact @kubohiroya/turbowarp-asset-manager@0.8.0
+pnpm add --save-exact @kubohiroya/turbowarp-asset-manager@0.9.0
 ```
 
 Load `node_modules/@kubohiroya/turbowarp-asset-manager/dist/asset-manager.js`, or use the
 version-pinned CDN URL:
 
 ```text
-https://cdn.jsdelivr.net/npm/@kubohiroya/turbowarp-asset-manager@0.8.0/dist/asset-manager.js
+https://cdn.jsdelivr.net/npm/@kubohiroya/turbowarp-asset-manager@0.9.0/dist/asset-manager.js
 ```
 
 ## Composition API
@@ -48,6 +48,10 @@ Embedded bytes are copied into memory and are not fetched or persisted in Indexe
 and audio MIME types are accepted. Project-local costume, backdrop, and sound identifiers can be
 registered with `registerProjectAsset`. Importing the module does not register a Standalone
 extension or add blocks to a palette.
+
+Raster images may set `bitmapResolution: 2` to preserve the logical size of a Scratch high-density
+costume; omitting it keeps the existing resolution-1 behavior. SVG and audio registrations must not
+specify `bitmapResolution`.
 
 Composition hosts that already have structured project metadata should pass a `locator` instead
 of joining names into a colon-delimited `resourceId`. Locator fields use exact Scratch names, so

@@ -1,7 +1,7 @@
 import { AssetManagerError } from './asset-manager-error.js';
 import { type AssetManagerFeatureFlags } from './feature-flags.js';
 export declare const EXTENSION_ID = "kubohiroyaassetmanager";
-export declare const EXTENSION_VERSION = "0.8.0";
+export declare const EXTENSION_VERSION = "0.9.0";
 export declare const EXTENSION_DOCS_URI = "https://kubohiroya.github.io/turbowarp-asset-manager/";
 type BlockArgs = Record<string, unknown>;
 export type AssetKind = 'external' | 'costume' | 'backdrop' | 'sound' | 'text';
@@ -10,6 +10,7 @@ export interface EmbeddedAssetBytesInput {
     bytes: ArrayBuffer | Uint8Array;
     mimeType: unknown;
     sourceName?: unknown;
+    bitmapResolution?: 1 | 2;
 }
 export interface EmbeddedAssetRegistration {
     readonly name: string;
