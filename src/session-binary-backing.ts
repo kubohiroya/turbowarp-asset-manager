@@ -18,8 +18,8 @@ const DEFAULT_MAX_FILES_PER_ASSET = 256;
 const DEFAULT_MAX_ASSET_BYTES = 256 * 1024 * 1024;
 const DEFAULT_MAX_SESSION_ASSETS = 4096;
 const DEFAULT_MAX_SESSION_BYTES = 512 * 1024 * 1024;
-const DEFAULT_LEASE_TTL_MS = 60_000;
-const DEFAULT_HEARTBEAT_INTERVAL_MS = 20_000;
+const DEFAULT_LEASE_TTL_MS = 5 * 60_000;
+const DEFAULT_HEARTBEAT_INTERVAL_MS = 60_000;
 const DEFAULT_ORPHAN_CLEANUP_BATCH_SIZE = 8;
 const MAX_SESSION_ID_LENGTH = 256;
 const MAX_NAMESPACE_LENGTH = 512;
@@ -558,7 +558,16 @@ async function verifyIntegrity(
       'SHA-256 is not available for session binary verification.'
     );
   }
-  const digest = new Uint8Array(await subtleCrypto.digest('SHA-256', bytes));
+  let digest: Uint8Array;
+  try {
+    digest = new Uint8Array(await subtleCrypto.digest('SHA-256', bytes));
+  } catch (error) {
+    throw sessionError(
+      'ASSET_SESSION_BINARY_CRYPTO_FAILED',
+      'SHA-256 verification failed for session binary bytes.',
+      error
+    );
+  }
   const expected = integrity.slice('sha256-'.length);
   const actual = isLowerHexSha256(expected) ? toHex(digest) : toBase64(digest);
   if (actual !== expected) {
