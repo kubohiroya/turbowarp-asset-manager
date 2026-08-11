@@ -40,7 +40,7 @@
   <main id="main" class="page-shell">
     <section class="hero" aria-labelledby="hero-title">
       <div>
-        <p class="eyebrow">TurboWarp カスタム拡張機能 · v0.9.0</p>
+        <p class="eyebrow">TurboWarp カスタム拡張機能 · v0.10.0</p>
         <h1 id="hero-title">すべての素材を、ひとつの名前で扱う。</h1>
         <p class="hero-copy">
           Asset Manager は、Web 上の画像・音声、プロジェクト内のコスチューム・背景・音、
@@ -78,7 +78,7 @@
         <li>
           <h3>拡張機能を読み込む</h3>
           <p>TurboWarp で <strong>拡張機能を追加 → カスタム拡張機能</strong>を選び、次の URL を貼り付けます。</p>
-          <pre><code>https://cdn.jsdelivr.net/npm/@kubohiroya/turbowarp-asset-manager@0.9.0/dist/asset-manager.js</code></pre>
+          <pre><code>https://cdn.jsdelivr.net/npm/@kubohiroya/turbowarp-asset-manager@0.10.0/dist/asset-manager.js</code></pre>
           <p><strong>サンドボックスなしで実行</strong>を有効にします。</p>
         </li>
         <li>
@@ -382,6 +382,51 @@ const stored = await assets.getBinaryBundle({
         <code>releaseBinaryStore</code> は永続recordを消さずにstore instanceの処理を中止します。
         TTL、LRU、bundle数、byte数の制限は、verified remote cacheやStandalone asset DBとは独立です。
         失敗はpayload bytesを含めず、安定した <code>ASSET_BINARY_BUNDLE_*</code> codeで通知します。
+      </p>
+
+      <h3 id="composition-session-backing">埋め込みpackage用のsession限定backing</h3>
+      <p>
+        バージョン0.10.0では、現在のapplication package内にすでに含まれる大容量binary向けに、
+        別のcomposition契約を追加しました。上のpersistent bundle storeとは異なり、次回起動時に
+        recordを再利用しません。1つの共有versioned DBを使い、全compound keyへ起動ごとのsession IDを
+        含め、正常disposeではそのsessionだけを削除します。verified remote cacheは変更しません。
+      </p>
+      <pre><code>const backing = await assets.createSessionBinaryBacking({
+  policy: 'prefer',
+  sessionId: crypto.randomUUID(),
+  assets: embeddedManifest.assets,
+  source: embeddedPackageSource,
+  onFatalError(error) {
+    stopRuntimeAndShowDiagnostic(error);
+  }
+});
+
+const pose = await backing.get(poseAssetKey);
+await backing.dispose();</code></pre>
+      <figure class="diagram" aria-describedby="composition-session-backing-description">
+        <figcaption>起動時にmodeを一度だけ選び、session中は変更しない</figcaption>
+        <p id="composition-session-backing-description" class="sr-only">
+          disabled modeはIndexedDBを開かず元sourceを読みます。preferとrequiredはassetを一件ずつ書き、
+          commit済みrecordを検証します。preferがdirect modeを選べるのは、確立前のstorage availability
+          failure後にpartial recordを削除できた場合だけです。session mode確立後のread失敗はすべてfatalで、
+          sourceを途中変更しません。
+        </p>
+        <ol class="flow-list" style="--flow-columns: 4" aria-hidden="true">
+          <li class="diagram-node"><strong>一度だけ選択</strong><span>prefer · required · disabled</span></li>
+          <li class="diagram-node"><strong>順次commit</strong><span>assetを一件ずつ</span></li>
+          <li class="diagram-node diagram-node-primary"><strong>read-back</strong><span>metadata + SHA-256</span></li>
+          <li class="diagram-node diagram-node-accent"><strong>mode固定</strong><span>session / direct</span></li>
+        </ol>
+      </figure>
+      <p>
+        <code>disabled</code>はIndexedDBを一度も開きません。<code>required</code>はbackingを確立できなければ
+        起動失敗にします。<code>prefer</code>がwarning付きdirect readへ移れるのは、確立前にIndexedDBが
+        unavailable、blocked、quota不足、abortとなり、partial recordを削除できた場合だけです。
+        descriptor、size、SHA-256の不一致は常にfail closedです。session modeでは全assetのcommitと
+        read-back成功後にだけsourceを解放します。その後のmissing、corrupt、integrity、abort、connection
+        closeはfatalとなり、source再読込、暗黙再書込み、mode途中変更は行いません。短いheartbeat leaseと
+        bounded startup cleanupにより、未期限の別tabを残してcrash sessionを回収します。renderer、audio
+        decoder、model loaderの失敗はmaterialize診断としてstorage／source errorと分離します。
       </p>
 
       <h3 id="replacement-flow">同名アセットを安全に置き換える仕組み</h3>

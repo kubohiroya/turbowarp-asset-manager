@@ -40,7 +40,7 @@
   <main id="main" class="page-shell">
     <section class="hero" aria-labelledby="hero-title">
       <div>
-        <p class="eyebrow">TurboWarp custom extension · v0.9.0</p>
+        <p class="eyebrow">TurboWarp custom extension · v0.10.0</p>
         <h1 id="hero-title">Use every project asset through one name.</h1>
         <p class="hero-copy">
           Asset Manager registers web images and audio, project costumes, backdrops, sounds,
@@ -78,7 +78,7 @@
         <li>
           <h3>Load the extension</h3>
           <p>In TurboWarp, choose <strong>Add Extension → Custom Extension</strong> and paste:</p>
-          <pre><code>https://cdn.jsdelivr.net/npm/@kubohiroya/turbowarp-asset-manager@0.9.0/dist/asset-manager.js</code></pre>
+          <pre><code>https://cdn.jsdelivr.net/npm/@kubohiroya/turbowarp-asset-manager@0.10.0/dist/asset-manager.js</code></pre>
           <p>Enable <strong>Run extension without sandbox</strong>.</p>
         </li>
         <li>
@@ -389,6 +389,53 @@ const stored = await assets.getBinaryBundle({
         without deleting persistent records. TTL, LRU, bundle-count, and byte limits are enforced
         independently from the verified remote cache and the Standalone asset database. Failures
         expose stable <code>ASSET_BINARY_BUNDLE_*</code> codes without payload bytes.
+      </p>
+
+      <h3 id="composition-session-backing">Session-only backing for embedded packages</h3>
+      <p>
+        Version 0.10.0 adds a separate composition contract for large binaries that already ship
+        inside the current application package. Unlike the persistent bundle store above, session
+        backing never reuses records at the next startup. It uses one shared versioned database,
+        includes a fresh session ID in every compound key, and removes only that session on normal
+        disposal. The verified remote cache remains unchanged.
+      </p>
+      <pre><code>const backing = await assets.createSessionBinaryBacking({
+  policy: 'prefer',
+  sessionId: crypto.randomUUID(),
+  assets: embeddedManifest.assets,
+  source: embeddedPackageSource,
+  onFatalError(error) {
+    stopRuntimeAndShowDiagnostic(error);
+  }
+});
+
+const pose = await backing.get(poseAssetKey);
+await backing.dispose();</code></pre>
+      <figure class="diagram" aria-describedby="composition-session-backing-description">
+        <figcaption>The startup mode is selected once and never changes during the session</figcaption>
+        <p id="composition-session-backing-description" class="sr-only">
+          Disabled mode reads the original source without opening IndexedDB. Prefer and required
+          modes write one asset at a time and verify each committed record. Prefer can select direct
+          mode only after a pre-establishment storage availability failure and clean partial records.
+          After session mode is established, every read failure is fatal and never switches source.
+        </p>
+        <ol class="flow-list" style="--flow-columns: 4" aria-hidden="true">
+          <li class="diagram-node"><strong>Choose once</strong><span>prefer · required · disabled</span></li>
+          <li class="diagram-node"><strong>Commit in sequence</strong><span>one asset at a time</span></li>
+          <li class="diagram-node diagram-node-primary"><strong>Read back</strong><span>metadata + SHA-256</span></li>
+          <li class="diagram-node diagram-node-accent"><strong>Fixed mode</strong><span>session or direct</span></li>
+        </ol>
+      </figure>
+      <p>
+        <code>disabled</code> never opens IndexedDB. <code>required</code> fails startup when backing
+        cannot be established. <code>prefer</code> reports a warning and keeps the same source for
+        direct reads only when IndexedDB is unavailable, blocked, out of quota, or aborted before
+        establishment; descriptor, size, and SHA-256 failures always fail closed. Session mode
+        releases the source only after every asset commit and read-back succeeds. A later missing,
+        corrupt, integrity-failing, aborted, or closed-connection read is fatal and never triggers a
+        source reread, implicit rewrite, or mode change. Short heartbeat leases and bounded startup
+        cleanup reclaim crashed sessions without deleting an unexpired sibling tab. Renderer,
+        audio-decoder, and model-loader failures remain separate materialization diagnostics.
       </p>
 
       <h3 id="replacement-flow">How safe same-name replacement works</h3>
