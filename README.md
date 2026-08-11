@@ -266,6 +266,74 @@ pending operations and prevents later use of that instance without deleting pers
 Missing, unavailable, blocked, aborted, quota, corrupt, and integrity-failure paths expose stable
 `ASSET_BINARY_BUNDLE_*` error codes without including payload bytes in diagnostics.
 
+### Session-only binary backing
+
+Composition hosts that embed large binaries in their current application package can use a
+separate session-only contract. It does not reuse the persistent binary bundle store above and
+does not modify the verified remote cache:
+
+```js
+const assets = createAssetManagerComposition(undefined, {
+  sessionBinaryBacking: {
+    maxSessionBytes: 512 * 1024 * 1024
+  }
+});
+
+const backing = await assets.createSessionBinaryBacking({
+  policy: 'prefer',
+  sessionId: crypto.randomUUID(),
+  assets: [{
+    namespace: `${story.id}/${story.sourceIntegrity}`,
+    name: 'RescuePose',
+    integrity: poseAsset.bundleIntegrity,
+    files: poseAsset.files.map(({path, size, integrity}) => ({path, size, integrity}))
+  }],
+  source: {
+    async read(asset, {signal} = {}) {
+      return readValidatedEmbeddedAsset(asset, {signal});
+    },
+    async release() {
+      releaseEmbeddedPackageReader();
+    }
+  },
+  onFatalError(error) {
+    stopRuntimeAndShowDiagnostic(error);
+  }
+});
+
+const poseFiles = await backing.get({
+  namespace: `${story.id}/${story.sourceIntegrity}`,
+  name: 'RescuePose',
+  integrity: poseAsset.bundleIntegrity
+});
+
+await backing.dispose();
+```
+
+The startup policy is fixed for the returned backing. `disabled` never opens IndexedDB and keeps
+the supplied source for direct reads. `required` fails startup when session storage cannot be
+established. `prefer` falls back to direct reads only for IndexedDB unavailable, blocked, quota, or
+transaction-abort failures that happen before establishment; it reports
+`ASSET_SESSION_BINARY_DIRECT_FALLBACK` and its `causeCode`. Source metadata, size, or SHA-256
+failures never select that fallback.
+
+Session mode uses one versioned origin-wide database and includes the caller's session ID in each
+bundle compound key. It reads and commits one asset at a time, verifies every file again from the
+committed record, activates the session only after all read-backs succeed, and then releases the
+source. Once activated, a missing, corrupt, integrity-failing, aborted, or closed-connection read is
+fatal: the backing never rereads the source, rewrites IndexedDB, or changes to direct mode.
+`onFatalError` lets the host stop its runtime while preserving the authoritative error code.
+Renderer, audio decoder, or model-loader failures after `get` returns are materialization errors;
+Asset Manager does not relabel them as storage or source failures.
+
+Each active backing renews a short lease. New sessions clean only a bounded number of expired
+session records and leave unexpired sibling-tab sessions intact. Normal `dispose` removes only its
+own session records. The database name, per-asset and per-session byte/file limits, lease TTL,
+heartbeat interval, and cleanup batch size are configurable through `sessionBinaryBacking`; byte
+limits may be raised to any positive safe integer after the host applies its own resource policy.
+The source must remain readable until Asset Manager calls `release`, including when `prefer`
+selects direct mode.
+
 ## Extension ID compatibility
 
 This migration release uses the standards-compliant ID `kubohiroyaassetmanager`. Existing projects

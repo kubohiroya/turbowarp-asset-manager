@@ -1,6 +1,7 @@
 import {
   createAssetManagerComposition,
   createBinaryBundleStore,
+  createSessionBinaryBacking,
   createVerifiedRemoteCacheDatabaseName,
   type AssetManagerComposition,
   type BinaryBundlePutInput,
@@ -10,6 +11,9 @@ import {
   type EmbeddedAssetBytesInput,
   type EmbeddedAssetRegistration,
   type ProjectAssetLocator,
+  type SessionBinaryBacking,
+  type SessionBinaryBackingAssetInput,
+  type SessionBinaryBackingSource,
   type VerifiedRemoteBinaryInput,
   type VerifiedRemoteBinaryResult,
   type VerifiedRemoteCacheWarning,
@@ -95,6 +99,41 @@ const binaryRegistration: Promise<BinaryBundleRegistration> = composition.putBin
 const binaryResult: Promise<BinaryBundleResult> = composition.getBinaryBundle(binaryBundle);
 const binaryDelete: Promise<void> = composition.deleteBinaryBundle(binaryBundle);
 const binaryStoreRelease: Promise<void> = composition.releaseBinaryStore();
+const sessionAsset: SessionBinaryBackingAssetInput = {
+  namespace: 'story-0001/source-integrity',
+  name: 'RescuePose',
+  integrity: `sha256-${'3'.repeat(64)}`,
+  files: [
+    {
+      path: 'weights.bin',
+      size: 1,
+      integrity: `sha256-${'2'.repeat(64)}`
+    }
+  ]
+};
+const sessionSource: SessionBinaryBackingSource = {
+  async read(asset) {
+    return {
+      namespace: asset.namespace,
+      name: asset.name,
+      integrity: asset.integrity,
+      files: [{...asset.files[0]!, bytes: new Uint8Array([0])}]
+    };
+  },
+  release() {}
+};
+const directSession: Promise<SessionBinaryBacking> = createSessionBinaryBacking({
+  policy: 'disabled',
+  sessionId: 'runtime-session-1',
+  assets: [sessionAsset],
+  source: sessionSource
+});
+const compositionSession: Promise<SessionBinaryBacking> = composition.createSessionBinaryBacking({
+  policy: 'disabled',
+  sessionId: 'runtime-session-2',
+  assets: [sessionAsset],
+  source: sessionSource
+});
 
 void registration;
 void bitmapRegistration;
@@ -113,3 +152,5 @@ void binaryRegistration;
 void binaryResult;
 void binaryDelete;
 void binaryStoreRelease;
+void directSession;
+void compositionSession;

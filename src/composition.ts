@@ -24,6 +24,12 @@ import {
   type VerifiedRemoteStoryCacheInfo,
   type VerifiedRemoteStoryCachePruneResult
 } from './verified-remote-cache.js';
+import {
+  createSessionBinaryBacking as createSessionBinaryBackingStore,
+  type SessionBinaryBacking,
+  type SessionBinaryBackingInput,
+  type SessionBinaryBackingOptions
+} from './session-binary-backing.js';
 
 export {
   createBinaryBundleStore,
@@ -58,6 +64,19 @@ export {
   type VerifiedRemoteStoryCacheInfo,
   type VerifiedRemoteStoryCachePruneResult
 } from './verified-remote-cache.js';
+
+export {
+  createSessionBinaryBacking,
+  type SessionBinaryBacking,
+  type SessionBinaryBackingAssetInput,
+  type SessionBinaryBackingInput,
+  type SessionBinaryBackingMode,
+  type SessionBinaryBackingOptions,
+  type SessionBinaryBackingPolicy,
+  type SessionBinaryBackingSource,
+  type SessionBinaryBackingSourceAsset,
+  type SessionBinaryBackingWarning
+} from './session-binary-backing.js';
 
 export interface EmbeddedAssetBytesInput {
   name: unknown;
@@ -102,6 +121,7 @@ export interface AssetManagerCompositionTarget {
 export interface AssetManagerCompositionOptions {
   readonly verifiedRemoteCache?: VerifiedRemoteBinaryCacheOptions;
   readonly binaryBundleStore?: BinaryBundleStoreOptions;
+  readonly sessionBinaryBacking?: SessionBinaryBackingOptions;
 }
 
 export interface AssetManagerComposition {
@@ -143,6 +163,10 @@ export interface AssetManagerComposition {
     options?: BinaryBundleOperationOptions
   ): Promise<void>;
   releaseBinaryStore(): Promise<void>;
+  createSessionBinaryBacking(
+    input: SessionBinaryBackingInput,
+    options?: BinaryBundleOperationOptions
+  ): Promise<SessionBinaryBacking>;
 }
 
 export function createAssetManagerComposition(
@@ -363,6 +387,13 @@ export function createAssetManagerComposition(
     },
     releaseBinaryStore() {
       return bundleStore().release();
+    },
+    createSessionBinaryBacking(input, operationOptions) {
+      return createSessionBinaryBackingStore(
+        input,
+        options.sessionBinaryBacking,
+        operationOptions
+      );
     }
   };
   return Object.freeze(composition);

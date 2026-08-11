@@ -1,8 +1,10 @@
 import { type AssetManagerFeatureFlags } from './feature-flags.js';
 import { type BinaryBundleKeyInput, type BinaryBundleOperationOptions, type BinaryBundlePutInput, type BinaryBundleRegistration, type BinaryBundleResult, type BinaryBundleStoreOptions } from './binary-bundle-store.js';
 import { type VerifiedRemoteBinaryCacheOptions, type VerifiedRemoteBinaryInput, type VerifiedRemoteBinaryResolveOptions, type VerifiedRemoteBinaryResult, type VerifiedRemoteCachePruneResult, type VerifiedRemoteCacheStats, type VerifiedRemoteStoryCacheDeleteResult, type VerifiedRemoteStoryCacheInfo, type VerifiedRemoteStoryCachePruneResult } from './verified-remote-cache.js';
+import { type SessionBinaryBacking, type SessionBinaryBackingInput, type SessionBinaryBackingOptions } from './session-binary-backing.js';
 export { createBinaryBundleStore, type BinaryBundleFileInput, type BinaryBundleFileRegistration, type BinaryBundleFileResult, type BinaryBundleKeyInput, type BinaryBundleOperationOptions, type BinaryBundlePutInput, type BinaryBundleRegistration, type BinaryBundleResult, type BinaryBundleStore, type BinaryBundleStoreOptions } from './binary-bundle-store.js';
 export { createVerifiedRemoteBinaryCache, createVerifiedRemoteCacheDatabaseName, type NormalizedVerifiedRemoteBinaryInput, type VerifiedRemoteBinaryCache, type VerifiedRemoteBinaryCacheOptions, type VerifiedRemoteBinaryInput, type VerifiedRemoteBinaryLoadResult, type VerifiedRemoteBinaryResolveOptions, type VerifiedRemoteBinaryResult, type VerifiedRemoteCacheWarning, type VerifiedRemoteCacheIdentity, type VerifiedRemoteCacheIdentityInput, type VerifiedRemoteCachePruneResult, type VerifiedRemoteCacheStats, type VerifiedRemoteStoryCacheDeleteResult, type VerifiedRemoteStoryCacheInfo, type VerifiedRemoteStoryCachePruneResult } from './verified-remote-cache.js';
+export { createSessionBinaryBacking, type SessionBinaryBacking, type SessionBinaryBackingAssetInput, type SessionBinaryBackingInput, type SessionBinaryBackingMode, type SessionBinaryBackingOptions, type SessionBinaryBackingPolicy, type SessionBinaryBackingSource, type SessionBinaryBackingSourceAsset, type SessionBinaryBackingWarning } from './session-binary-backing.js';
 export interface EmbeddedAssetBytesInput {
     name: unknown;
     nameMode?: AssetNameMode;
@@ -46,6 +48,7 @@ export interface AssetManagerCompositionTarget {
 export interface AssetManagerCompositionOptions {
     readonly verifiedRemoteCache?: VerifiedRemoteBinaryCacheOptions;
     readonly binaryBundleStore?: BinaryBundleStoreOptions;
+    readonly sessionBinaryBacking?: SessionBinaryBackingOptions;
 }
 export interface AssetManagerComposition {
     registerProjectAsset(input: ProjectAssetRegistrationInput): Promise<EmbeddedAssetRegistration>;
@@ -74,5 +77,6 @@ export interface AssetManagerComposition {
     getBinaryBundle(input: BinaryBundleKeyInput, options?: BinaryBundleOperationOptions): Promise<BinaryBundleResult>;
     deleteBinaryBundle(input: BinaryBundleKeyInput, options?: BinaryBundleOperationOptions): Promise<void>;
     releaseBinaryStore(): Promise<void>;
+    createSessionBinaryBacking(input: SessionBinaryBackingInput, options?: BinaryBundleOperationOptions): Promise<SessionBinaryBacking>;
 }
 export declare function createAssetManagerComposition(featureFlags?: AssetManagerFeatureFlags, options?: AssetManagerCompositionOptions): AssetManagerComposition;
