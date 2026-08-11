@@ -2014,21 +2014,21 @@ class AssetManagerExtension {
     return kind === "image" ? "image/x-scratch-costume" : "audio/x-scratch-sound";
   }
 }
-const DEFAULT_DATABASE_NAME = "tw-asset-manager-binary-bundles-v1";
-const DATABASE_VERSION$1 = 1;
-const BUNDLE_STORE = "bundles";
+const DEFAULT_DATABASE_NAME$1 = "tw-asset-manager-binary-bundles-v1";
+const DATABASE_VERSION$2 = 1;
+const BUNDLE_STORE$1 = "bundles";
 const METADATA_STORE$1 = "bundleMetadata";
 const LAST_ACCESSED_INDEX = "lastAccessedAt";
-const FORMAT_VERSION = 1;
+const FORMAT_VERSION$1 = 1;
 const DEFAULT_MAX_FILES_PER_BUNDLE = 256;
 const DEFAULT_MAX_BUNDLE_BYTES = 256 * 1024 * 1024;
 const DEFAULT_MAX_STORED_BUNDLES = 1024;
 const DEFAULT_MAX_STORE_BYTES = 256 * 1024 * 1024;
 const DEFAULT_TTL_MS$1 = 30 * 24 * 60 * 60 * 1e3;
-const MAX_NAMESPACE_LENGTH = 512;
-const MAX_NAME_LENGTH = 256;
-const MAX_PATH_LENGTH = 1024;
-const MAX_DATABASE_NAME_LENGTH$2 = 256;
+const MAX_NAMESPACE_LENGTH$1 = 512;
+const MAX_NAME_LENGTH$1 = 256;
+const MAX_PATH_LENGTH$1 = 1024;
+const MAX_DATABASE_NAME_LENGTH$3 = 256;
 const ABSOLUTE_MAX_FILES_PER_BUNDLE = 4096;
 const ABSOLUTE_MAX_STORED_BUNDLES = 65536;
 function bundleError(code, message, cause) {
@@ -2036,7 +2036,7 @@ function bundleError(code, message, cause) {
   Object.defineProperty(error, "code", { value: code, enumerable: true });
   return error;
 }
-function abortError$1() {
+function abortError$2() {
   const error = bundleError("ASSET_BINARY_BUNDLE_ABORTED", "Binary bundle operation was aborted.");
   error.name = "AbortError";
   return error;
@@ -2047,10 +2047,10 @@ function releasedError() {
     "The binary bundle store has been released."
   );
 }
-function assertNotAborted$1(signal) {
-  if (signal?.aborted) throw abortError$1();
+function assertNotAborted$2(signal) {
+  if (signal?.aborted) throw abortError$2();
 }
-function operationSignal(options) {
+function operationSignal$1(options) {
   if (!options || typeof options !== "object" || Array.isArray(options)) {
     throw bundleError(
       "ASSET_BINARY_BUNDLE_INPUT_INVALID",
@@ -2067,7 +2067,7 @@ function operationSignal(options) {
   }
   return signal;
 }
-function requireString(value, label, maxLength) {
+function requireString$1(value, label, maxLength) {
   if (typeof value !== "string" || value.length === 0 || value.length > maxLength || value.includes("\0")) {
     throw bundleError(
       "ASSET_BINARY_BUNDLE_INPUT_INVALID",
@@ -2076,16 +2076,16 @@ function requireString(value, label, maxLength) {
   }
   return value;
 }
-function requireLimit(value, fallback, label, maximum = Number.MAX_SAFE_INTEGER) {
+function requireLimit$1(value, fallback, label, maximum = Number.MAX_SAFE_INTEGER) {
   const normalized = value ?? fallback;
   if (!Number.isSafeInteger(normalized) || normalized <= 0 || normalized > maximum) {
     throw new TypeError(`${label} must be a positive safe integer no greater than ${maximum}.`);
   }
   return normalized;
 }
-function normalizeIntegrity(value, label) {
-  const integrity = requireString(value, label, 96);
-  if (!integrityIsCanonical(integrity)) {
+function normalizeIntegrity$1(value, label) {
+  const integrity = requireString$1(value, label, 96);
+  if (!integrityIsCanonical$1(integrity)) {
     throw bundleError(
       "ASSET_BINARY_BUNDLE_INPUT_INVALID",
       `${label} must contain canonical SHA-256 hex or base64.`
@@ -2093,21 +2093,21 @@ function normalizeIntegrity(value, label) {
   }
   return integrity;
 }
-function integrityIsCanonical(value) {
+function integrityIsCanonical$1(value) {
   if (!value.startsWith("sha256-")) return false;
   const payload = value.slice("sha256-".length);
   if (/^[0-9a-f]{64}$/u.test(payload)) return true;
   if (!/^[A-Za-z0-9+/]{43}=$/u.test(payload)) return false;
   try {
     const decoded = Uint8Array.from(atob(payload), (character) => character.charCodeAt(0));
-    return decoded.byteLength === 32 && toBase64(decoded) === payload;
+    return decoded.byteLength === 32 && toBase64$1(decoded) === payload;
   } catch {
     return false;
   }
 }
 function safePath(value) {
-  const path = requireString(value, "binary bundle file path", MAX_PATH_LENGTH);
-  if (!pathIsSafe(path)) {
+  const path = requireString$1(value, "binary bundle file path", MAX_PATH_LENGTH$1);
+  if (!pathIsSafe$1(path)) {
     throw bundleError(
       "ASSET_BINARY_BUNDLE_INPUT_INVALID",
       "Binary bundle file path must be a safe relative path."
@@ -2115,26 +2115,26 @@ function safePath(value) {
   }
   return path;
 }
-function pathIsSafe(path) {
+function pathIsSafe$1(path) {
   return Boolean(
-    path.length > 0 && path.length <= MAX_PATH_LENGTH && !path.startsWith("/") && !path.startsWith("\\") && !path.includes("\\") && !path.split("/").some((part) => part.length === 0 || part === "." || part === "..")
+    path.length > 0 && path.length <= MAX_PATH_LENGTH$1 && !path.startsWith("/") && !path.startsWith("\\") && !path.includes("\\") && !path.split("/").some((part) => part.length === 0 || part === "." || part === "..")
   );
 }
-function normalizeKey(input) {
+function normalizeKey$1(input) {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
     throw bundleError("ASSET_BINARY_BUNDLE_INPUT_INVALID", "Binary bundle key must be an object.");
   }
-  const namespace = requireString(input.namespace, "binary bundle namespace", MAX_NAMESPACE_LENGTH);
-  const name = requireString(input.name, "binary bundle name", MAX_NAME_LENGTH);
-  const integrity = normalizeIntegrity(input.integrity, "binary bundle integrity");
+  const namespace = requireString$1(input.namespace, "binary bundle namespace", MAX_NAMESPACE_LENGTH$1);
+  const name = requireString$1(input.name, "binary bundle name", MAX_NAME_LENGTH$1);
+  const integrity = normalizeIntegrity$1(input.integrity, "binary bundle integrity");
   return {
     namespace,
     name,
     integrity,
-    key: JSON.stringify([FORMAT_VERSION, namespace, name, integrity])
+    key: JSON.stringify([FORMAT_VERSION$1, namespace, name, integrity])
   };
 }
-function ownBytes(value) {
+function ownBytes$1(value) {
   if (value instanceof ArrayBuffer) return new Uint8Array(value.slice(0));
   if (value instanceof Uint8Array) return Uint8Array.from(value);
   throw bundleError(
@@ -2142,18 +2142,18 @@ function ownBytes(value) {
     "Binary bundle file bytes must be an ArrayBuffer or Uint8Array."
   );
 }
-function toHex(bytes) {
+function toHex$1(bytes) {
   return [...bytes].map((value) => value.toString(16).padStart(2, "0")).join("");
 }
-function toBase64(bytes) {
+function toBase64$1(bytes) {
   let binary = "";
   for (const value of bytes) binary += String.fromCharCode(value);
   return btoa(binary);
 }
-async function verifyIntegrity(bytes, integrity, subtleCrypto) {
+async function verifyIntegrity$1(bytes, integrity, subtleCrypto) {
   const digest = new Uint8Array(await subtleCrypto.digest("SHA-256", bytes));
   const payload = integrity.slice("sha256-".length);
-  const actual = /^[0-9a-f]{64}$/u.test(payload) ? toHex(digest) : toBase64(digest);
+  const actual = /^[0-9a-f]{64}$/u.test(payload) ? toHex$1(digest) : toBase64$1(digest);
   if (actual !== payload) {
     throw bundleError(
       "ASSET_BINARY_BUNDLE_INTEGRITY_MISMATCH",
@@ -2164,8 +2164,8 @@ async function verifyIntegrity(bytes, integrity, subtleCrypto) {
 function metadataIsValid(value, key) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const candidate = value;
-  if (!(candidate.formatVersion === FORMAT_VERSION && candidate.key === key && typeof candidate.namespace === "string" && candidate.namespace.length > 0 && candidate.namespace.length <= MAX_NAMESPACE_LENGTH && typeof candidate.name === "string" && candidate.name.length > 0 && candidate.name.length <= MAX_NAME_LENGTH && typeof candidate.integrity === "string" && integrityIsCanonical(candidate.integrity) && JSON.stringify([
-    FORMAT_VERSION,
+  if (!(candidate.formatVersion === FORMAT_VERSION$1 && candidate.key === key && typeof candidate.namespace === "string" && candidate.namespace.length > 0 && candidate.namespace.length <= MAX_NAMESPACE_LENGTH$1 && typeof candidate.name === "string" && candidate.name.length > 0 && candidate.name.length <= MAX_NAME_LENGTH$1 && typeof candidate.integrity === "string" && integrityIsCanonical$1(candidate.integrity) && JSON.stringify([
+    FORMAT_VERSION$1,
     candidate.namespace,
     candidate.name,
     candidate.integrity
@@ -2175,7 +2175,7 @@ function metadataIsValid(value, key) {
   let totalBytes = 0;
   let previousPath = null;
   for (const file of candidate.files) {
-    if (!file || typeof file !== "object" || typeof file.path !== "string" || !pathIsSafe(file.path) || previousPath !== null && file.path <= previousPath || !Number.isSafeInteger(file.size) || file.size < 0 || typeof file.integrity !== "string" || !integrityIsCanonical(file.integrity)) {
+    if (!file || typeof file !== "object" || typeof file.path !== "string" || !pathIsSafe$1(file.path) || previousPath !== null && file.path <= previousPath || !Number.isSafeInteger(file.size) || file.size < 0 || typeof file.integrity !== "string" || !integrityIsCanonical$1(file.integrity)) {
       return false;
     }
     totalBytes += file.size;
@@ -2187,7 +2187,7 @@ function metadataIsValid(value, key) {
 function storedRecordIsValid(value, metadata, key) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const candidate = value;
-  if (candidate.formatVersion !== FORMAT_VERSION || candidate.key !== key || candidate.namespace !== metadata.namespace || candidate.name !== metadata.name || candidate.integrity !== metadata.integrity || candidate.totalBytes !== metadata.totalBytes || candidate.writeToken !== metadata.writeToken || !Array.isArray(candidate.files) || candidate.files.length !== metadata.files.length) {
+  if (candidate.formatVersion !== FORMAT_VERSION$1 || candidate.key !== key || candidate.namespace !== metadata.namespace || candidate.name !== metadata.name || candidate.integrity !== metadata.integrity || candidate.totalBytes !== metadata.totalBytes || candidate.writeToken !== metadata.writeToken || !Array.isArray(candidate.files) || candidate.files.length !== metadata.files.length) {
     return false;
   }
   return candidate.files.every((file, index) => {
@@ -2197,13 +2197,13 @@ function storedRecordIsValid(value, metadata, key) {
     );
   });
 }
-function requestResult$1(request) {
+function requestResult$2(request) {
   return new Promise((resolve, reject) => {
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error ?? new Error("IndexedDB request failed."));
   });
 }
-function transactionComplete$2(transaction) {
+function transactionComplete$3(transaction) {
   return new Promise((resolve, reject) => {
     transaction.oncomplete = () => resolve();
     transaction.onerror = () => reject(transaction.error ?? new Error("IndexedDB transaction failed."));
@@ -2212,7 +2212,7 @@ function transactionComplete$2(transaction) {
 }
 function mappedStoreError(error, operation, signal) {
   if (signal?.aborted || error instanceof DOMException && error.name === "AbortError") {
-    return abortError$1();
+    return abortError$2();
   }
   if (error instanceof Error && "code" in error && typeof error.code === "string" && error.code.startsWith("ASSET_BINARY_BUNDLE_")) {
     return error;
@@ -2245,37 +2245,37 @@ function createBinaryBundleStore(options = {}) {
   }
   const indexedDB2 = options.indexedDB ?? globalThis.indexedDB;
   const subtleCrypto = options.subtleCrypto ?? globalThis.crypto?.subtle;
-  const databaseName = requireString(
-    options.databaseName ?? DEFAULT_DATABASE_NAME,
+  const databaseName = requireString$1(
+    options.databaseName ?? DEFAULT_DATABASE_NAME$1,
     "binary bundle databaseName",
-    MAX_DATABASE_NAME_LENGTH$2
+    MAX_DATABASE_NAME_LENGTH$3
   );
   const now = options.now ?? Date.now;
   if (typeof now !== "function") throw new TypeError("now must be a function.");
   const limits = {
-    maxFilesPerBundle: requireLimit(
+    maxFilesPerBundle: requireLimit$1(
       options.maxFilesPerBundle,
       DEFAULT_MAX_FILES_PER_BUNDLE,
       "maxFilesPerBundle",
       ABSOLUTE_MAX_FILES_PER_BUNDLE
     ),
-    maxBundleBytes: requireLimit(
+    maxBundleBytes: requireLimit$1(
       options.maxBundleBytes,
       DEFAULT_MAX_BUNDLE_BYTES,
       "maxBundleBytes"
     ),
-    maxStoredBundles: requireLimit(
+    maxStoredBundles: requireLimit$1(
       options.maxStoredBundles,
       DEFAULT_MAX_STORED_BUNDLES,
       "maxStoredBundles",
       ABSOLUTE_MAX_STORED_BUNDLES
     ),
-    maxStoreBytes: requireLimit(
+    maxStoreBytes: requireLimit$1(
       options.maxStoreBytes,
       DEFAULT_MAX_STORE_BYTES,
       "maxStoreBytes"
     ),
-    ttlMs: requireLimit(options.ttlMs, DEFAULT_TTL_MS$1, "ttlMs")
+    ttlMs: requireLimit$1(options.ttlMs, DEFAULT_TTL_MS$1, "ttlMs")
   };
   let released = false;
   let releasePromise = null;
@@ -2304,7 +2304,7 @@ function createBinaryBundleStore(options = {}) {
   }
   function ensureGeneration(key, generation) {
     ensureActive();
-    if (currentGeneration(key) !== generation) throw abortError$1();
+    if (currentGeneration(key) !== generation) throw abortError$2();
   }
   function nextWriteToken(generation) {
     tokenCounter += 1;
@@ -2319,24 +2319,24 @@ function createBinaryBundleStore(options = {}) {
     return operation;
   }
   async function verifyWithCancellation(bytes, integrity, signal) {
-    assertNotAborted$1(signal);
+    assertNotAborted$2(signal);
     ensureActive();
     let rejectExternal = null;
     let rejectRelease = null;
     const cancellation = new Promise((_resolve, reject) => {
-      rejectExternal = () => reject(abortError$1());
+      rejectExternal = () => reject(abortError$2());
       rejectRelease = () => reject(releasedError());
       signal?.addEventListener("abort", rejectExternal, { once: true });
       releaseController.signal.addEventListener("abort", rejectRelease, { once: true });
     });
     try {
-      await Promise.race([verifyIntegrity(bytes, integrity, subtleCrypto), cancellation]);
+      await Promise.race([verifyIntegrity$1(bytes, integrity, subtleCrypto), cancellation]);
     } finally {
       if (rejectExternal) signal?.removeEventListener("abort", rejectExternal);
       if (rejectRelease) releaseController.signal.removeEventListener("abort", rejectRelease);
     }
   }
-  async function openDatabase() {
+  async function openDatabase2() {
     ensureActive();
     if (!indexedDB2 || typeof indexedDB2.open !== "function") {
       throw bundleError(
@@ -2346,7 +2346,7 @@ function createBinaryBundleStore(options = {}) {
     }
     let request;
     try {
-      request = indexedDB2.open(databaseName, DATABASE_VERSION$1);
+      request = indexedDB2.open(databaseName, DATABASE_VERSION$2);
     } catch (error) {
       throw bundleError(
         "ASSET_BINARY_BUNDLE_INDEXEDDB_UNAVAILABLE",
@@ -2363,8 +2363,8 @@ function createBinaryBundleStore(options = {}) {
       };
       request.onupgradeneeded = () => {
         const database = request.result;
-        if (!database.objectStoreNames.contains(BUNDLE_STORE)) {
-          database.createObjectStore(BUNDLE_STORE, { keyPath: "key" });
+        if (!database.objectStoreNames.contains(BUNDLE_STORE$1)) {
+          database.createObjectStore(BUNDLE_STORE$1, { keyPath: "key" });
         }
         let metadata;
         if (!database.objectStoreNames.contains(METADATA_STORE$1)) {
@@ -2427,7 +2427,7 @@ function createBinaryBundleStore(options = {}) {
     return () => signal?.removeEventListener("abort", abort);
   }
   async function normalizeFiles(input, signal) {
-    const key = normalizeKey(input);
+    const key = normalizeKey$1(input);
     if (!Array.isArray(input.files) || input.files.length === 0) {
       throw bundleError(
         "ASSET_BINARY_BUNDLE_INPUT_INVALID",
@@ -2444,7 +2444,7 @@ function createBinaryBundleStore(options = {}) {
     const files = [];
     let totalBytes = 0;
     for (const inputFile of input.files) {
-      assertNotAborted$1(signal);
+      assertNotAborted$2(signal);
       if (!inputFile || typeof inputFile !== "object" || Array.isArray(inputFile)) {
         throw bundleError(
           "ASSET_BINARY_BUNDLE_INPUT_INVALID",
@@ -2459,14 +2459,14 @@ function createBinaryBundleStore(options = {}) {
         );
       }
       paths.add(path);
-      const bytes = ownBytes(inputFile.bytes);
+      const bytes = ownBytes$1(inputFile.bytes);
       if (!Number.isSafeInteger(inputFile.size) || Number(inputFile.size) !== bytes.byteLength) {
         throw bundleError(
           "ASSET_BINARY_BUNDLE_INPUT_INVALID",
           `Binary bundle file size does not match: ${path}`
         );
       }
-      const integrity = normalizeIntegrity(inputFile.integrity, `integrity for ${path}`);
+      const integrity = normalizeIntegrity$1(inputFile.integrity, `integrity for ${path}`);
       totalBytes += bytes.byteLength;
       if (!Number.isSafeInteger(totalBytes) || totalBytes > limits.maxBundleBytes) {
         throw bundleError(
@@ -2489,7 +2489,7 @@ function createBinaryBundleStore(options = {}) {
       );
     }
     for (const file of files) {
-      assertNotAborted$1(signal);
+      assertNotAborted$2(signal);
       await verifyWithCancellation(file.bytes, file.integrity, signal);
     }
     files.sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0);
@@ -2497,13 +2497,13 @@ function createBinaryBundleStore(options = {}) {
   }
   async function put(input, operationOptions = {}) {
     ensureActive();
-    const signal = operationSignal(operationOptions);
-    assertNotAborted$1(signal);
-    const normalizedKey = normalizeKey(input);
+    const signal = operationSignal$1(operationOptions);
+    assertNotAborted$2(signal);
+    const normalizedKey = normalizeKey$1(input);
     const generation = advanceGeneration(normalizedKey.key);
     const normalized = await normalizeFiles(input, signal);
     ensureGeneration(normalized.key.key, generation);
-    const database = await openDatabase();
+    const database = await openDatabase2();
     let transaction = null;
     let untrack = () => {
     };
@@ -2511,11 +2511,11 @@ function createBinaryBundleStore(options = {}) {
     };
     try {
       ensureGeneration(normalized.key.key, generation);
-      assertNotAborted$1(signal);
-      transaction = database.transaction([BUNDLE_STORE, METADATA_STORE$1], "readwrite");
+      assertNotAborted$2(signal);
+      transaction = database.transaction([BUNDLE_STORE$1, METADATA_STORE$1], "readwrite");
       untrack = trackTransaction(normalized.key.key, transaction);
       removeAbort = abortWithSignal(transaction, signal);
-      const bundles = transaction.objectStore(BUNDLE_STORE);
+      const bundles = transaction.objectStore(BUNDLE_STORE$1);
       const metadataStore = transaction.objectStore(METADATA_STORE$1);
       const metadataRequest = metadataStore.openCursor();
       const bundleKeyRequest = bundles.openKeyCursor();
@@ -2535,7 +2535,7 @@ function createBinaryBundleStore(options = {}) {
       }));
       const record = {
         ...normalized.key,
-        formatVersion: FORMAT_VERSION,
+        formatVersion: FORMAT_VERSION$1,
         files: normalized.files.map(({ path, size, integrity, bytes }) => ({
           path,
           size,
@@ -2547,7 +2547,7 @@ function createBinaryBundleStore(options = {}) {
       };
       const metadata = {
         ...normalized.key,
-        formatVersion: FORMAT_VERSION,
+        formatVersion: FORMAT_VERSION$1,
         files: publicFiles,
         totalBytes: normalized.totalBytes,
         createdAt,
@@ -2566,10 +2566,10 @@ function createBinaryBundleStore(options = {}) {
         finalized = true;
         try {
           if (signal?.aborted || currentGeneration(normalized.key.key) !== generation || released) {
-            failTransaction(abortError$1());
+            failTransaction(abortError$2());
             return;
           }
-          const currentTime = now();
+          const currentTime2 = now();
           const metadataKeys = new Set(metadataRecords.map(({ key }) => key));
           for (const bundleKey of bundleKeys) {
             if (!metadataKeys.has(bundleKey)) bundles.delete(bundleKey);
@@ -2585,7 +2585,7 @@ function createBinaryBundleStore(options = {}) {
           let retainedBytes = retained.reduce((sum, candidate) => sum + candidate.totalBytes, 0);
           let retainedCount = retained.length;
           for (const candidate of retained) {
-            const expired = currentTime < candidate.lastAccessedAt || currentTime - candidate.lastAccessedAt > limits.ttlMs;
+            const expired = currentTime2 < candidate.lastAccessedAt || currentTime2 - candidate.lastAccessedAt > limits.ttlMs;
             const overBudget = retainedBytes + normalized.totalBytes > limits.maxStoreBytes;
             const overCount = retainedCount + 1 > limits.maxStoredBundles;
             if (!expired && !overBudget && !overCount) continue;
@@ -2643,7 +2643,7 @@ function createBinaryBundleStore(options = {}) {
         }
       };
       try {
-        await transactionComplete$2(transaction);
+        await transactionComplete$3(transaction);
       } catch (error) {
         throw mappedStoreError(operationError ?? error, "put", signal);
       }
@@ -2657,21 +2657,21 @@ function createBinaryBundleStore(options = {}) {
   }
   async function deleteIfToken(key, writeToken) {
     if (released) return;
-    const database = await openDatabase();
+    const database = await openDatabase2();
     let untrack = () => {
     };
     try {
-      const transaction = database.transaction([BUNDLE_STORE, METADATA_STORE$1], "readwrite");
+      const transaction = database.transaction([BUNDLE_STORE$1, METADATA_STORE$1], "readwrite");
       untrack = trackTransaction(key, transaction);
       const metadataStore = transaction.objectStore(METADATA_STORE$1);
       const request = metadataStore.get(key);
       request.onsuccess = () => {
         if (!metadataIsValid(request.result, key) || request.result.writeToken !== writeToken) return;
-        transaction.objectStore(BUNDLE_STORE).delete(key);
+        transaction.objectStore(BUNDLE_STORE$1).delete(key);
         metadataStore.delete(key);
       };
       try {
-        await transactionComplete$2(transaction);
+        await transactionComplete$3(transaction);
       } catch (error) {
         throw mappedStoreError(error, "conditional delete");
       }
@@ -2682,7 +2682,7 @@ function createBinaryBundleStore(options = {}) {
   }
   async function touch(key, writeToken) {
     if (released) return;
-    const database = await openDatabase();
+    const database = await openDatabase2();
     let untrack = () => {
     };
     try {
@@ -2695,7 +2695,7 @@ function createBinaryBundleStore(options = {}) {
         store2.put({ ...request.result, lastAccessedAt: now() });
       };
       try {
-        await transactionComplete$2(transaction);
+        await transactionComplete$3(transaction);
       } catch (error) {
         throw mappedStoreError(error, "touch");
       }
@@ -2706,11 +2706,11 @@ function createBinaryBundleStore(options = {}) {
   }
   async function get(input, operationOptions = {}) {
     ensureActive();
-    const signal = operationSignal(operationOptions);
-    assertNotAborted$1(signal);
-    const key = normalizeKey(input);
+    const signal = operationSignal$1(operationOptions);
+    assertNotAborted$2(signal);
+    const key = normalizeKey$1(input);
     const generation = currentGeneration(key.key);
-    const database = await openDatabase();
+    const database = await openDatabase2();
     let untrack = () => {
     };
     let removeAbort = () => {
@@ -2718,17 +2718,17 @@ function createBinaryBundleStore(options = {}) {
     let bundle;
     let metadata;
     try {
-      assertNotAborted$1(signal);
-      const transaction = database.transaction([BUNDLE_STORE, METADATA_STORE$1], "readonly");
+      assertNotAborted$2(signal);
+      const transaction = database.transaction([BUNDLE_STORE$1, METADATA_STORE$1], "readonly");
       untrack = trackTransaction(key.key, transaction);
       removeAbort = abortWithSignal(transaction, signal);
-      const bundleRequest = transaction.objectStore(BUNDLE_STORE).get(key.key);
+      const bundleRequest = transaction.objectStore(BUNDLE_STORE$1).get(key.key);
       const metadataRequest = transaction.objectStore(METADATA_STORE$1).get(key.key);
       try {
         [bundle, metadata] = await Promise.all([
-          requestResult$1(bundleRequest),
-          requestResult$1(metadataRequest),
-          transactionComplete$2(transaction)
+          requestResult$2(bundleRequest),
+          requestResult$2(metadataRequest),
+          transactionComplete$3(transaction)
         ]);
       } catch (error) {
         throw mappedStoreError(error, "get", signal);
@@ -2746,8 +2746,8 @@ function createBinaryBundleStore(options = {}) {
       if (metadataIsValid(metadata, key.key)) await deleteIfToken(key.key, metadata.writeToken);
       throw bundleError("ASSET_BINARY_BUNDLE_CORRUPT", "Binary bundle record is incomplete or corrupt.");
     }
-    const currentTime = now();
-    if (currentTime < metadata.lastAccessedAt || currentTime - metadata.lastAccessedAt > limits.ttlMs) {
+    const currentTime2 = now();
+    if (currentTime2 < metadata.lastAccessedAt || currentTime2 - metadata.lastAccessedAt > limits.ttlMs) {
       await deleteIfToken(key.key, metadata.writeToken);
       throw bundleError("ASSET_BINARY_BUNDLE_NOT_FOUND", "Binary bundle has expired.");
     }
@@ -2760,7 +2760,7 @@ function createBinaryBundleStore(options = {}) {
     const files = [];
     try {
       for (const file of bundle.files) {
-        assertNotAborted$1(signal);
+        assertNotAborted$2(signal);
         ensureGeneration(key.key, generation);
         const bytes = new Uint8Array(file.data);
         await verifyWithCancellation(bytes, file.integrity, signal);
@@ -2775,7 +2775,7 @@ function createBinaryBundleStore(options = {}) {
     ensureGeneration(key.key, generation);
     await touch(key.key, metadata.writeToken);
     ensureGeneration(key.key, generation);
-    assertNotAborted$1(signal);
+    assertNotAborted$2(signal);
     return Object.freeze({
       namespace: key.namespace,
       name: key.name,
@@ -2786,25 +2786,25 @@ function createBinaryBundleStore(options = {}) {
   }
   async function deleteBundle(input, operationOptions = {}) {
     ensureActive();
-    const signal = operationSignal(operationOptions);
-    assertNotAborted$1(signal);
-    const key = normalizeKey(input);
+    const signal = operationSignal$1(operationOptions);
+    assertNotAborted$2(signal);
+    const key = normalizeKey$1(input);
     const generation = advanceGeneration(key.key);
-    const database = await openDatabase();
+    const database = await openDatabase2();
     let untrack = () => {
     };
     let removeAbort = () => {
     };
     try {
       ensureGeneration(key.key, generation);
-      assertNotAborted$1(signal);
-      const transaction = database.transaction([BUNDLE_STORE, METADATA_STORE$1], "readwrite");
+      assertNotAborted$2(signal);
+      const transaction = database.transaction([BUNDLE_STORE$1, METADATA_STORE$1], "readwrite");
       untrack = trackTransaction(key.key, transaction);
       removeAbort = abortWithSignal(transaction, signal);
-      transaction.objectStore(BUNDLE_STORE).delete(key.key);
+      transaction.objectStore(BUNDLE_STORE$1).delete(key.key);
       transaction.objectStore(METADATA_STORE$1).delete(key.key);
       try {
-        await transactionComplete$2(transaction);
+        await transactionComplete$3(transaction);
       } catch (error) {
         throw mappedStoreError(error, "delete", signal);
       }
@@ -2852,14 +2852,14 @@ const STORY_STORE = "stories";
 const LEASE_STORE = "leases";
 const CATALOG_FORMAT_VERSION = 1;
 const STORY_DATABASE_PREFIX$1 = "tw-kamishibai-assets-v1--";
-const MAX_DATABASE_NAME_LENGTH$1 = 160;
+const MAX_DATABASE_NAME_LENGTH$2 = 160;
 const DELETION_MARKER_TTL_MS = 30 * 60 * 1e3;
 function catalogError(code, message, cause) {
   const error = new Error(message, cause === void 0 ? void 0 : { cause });
   Object.defineProperty(error, "code", { value: code });
   return error;
 }
-function transactionComplete$1(transaction) {
+function transactionComplete$2(transaction) {
   return new Promise((resolve, reject) => {
     transaction.oncomplete = () => resolve();
     transaction.onerror = () => reject(transaction.error ?? new Error("IndexedDB transaction failed."));
@@ -2873,12 +2873,12 @@ function isCatalogRecord(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const record = value;
   return Boolean(
-    record.formatVersion === CATALOG_FORMAT_VERSION && typeof record.key === "string" && record.key === record.databaseName && typeof record.databaseName === "string" && record.databaseName.length <= MAX_DATABASE_NAME_LENGTH$1 && record.databaseName.startsWith(STORY_DATABASE_PREFIX$1) && /^[\p{Letter}\p{Number}._-]+$/u.test(record.databaseName) && typeof record.id === "string" && /^[a-z0-9][a-z0-9_-]{7,63}$/u.test(record.id) && record.databaseName.endsWith(`--${record.id}`) && typeof record.label === "string" && record.label.length > 0 && record.label.length <= 256 && !/[\u0000-\u001f\u007f]/u.test(record.label) && isNonNegativeSafeInteger(record.entries) && isNonNegativeSafeInteger(record.bytes) && Number.isFinite(record.lastOpenedAt) && Number(record.lastOpenedAt) >= 0 && Number.isFinite(record.lastAccessedAt) && Number(record.lastAccessedAt) >= 0 && (record.lastCleanupAt === null || Number.isFinite(record.lastCleanupAt) && Number(record.lastCleanupAt) >= 0) && Number.isFinite(record.updatedAt) && Number(record.updatedAt) >= 0 && (record.statsRevision === void 0 || isNonNegativeSafeInteger(record.statsRevision)) && (record.deletingToken === void 0 || record.deletingToken === null || typeof record.deletingToken === "string" && record.deletingToken.length >= 16) && (record.deletingStartedAt === void 0 || record.deletingStartedAt === null || Number.isFinite(record.deletingStartedAt) && Number(record.deletingStartedAt) >= 0)
+    record.formatVersion === CATALOG_FORMAT_VERSION && typeof record.key === "string" && record.key === record.databaseName && typeof record.databaseName === "string" && record.databaseName.length <= MAX_DATABASE_NAME_LENGTH$2 && record.databaseName.startsWith(STORY_DATABASE_PREFIX$1) && /^[\p{Letter}\p{Number}._-]+$/u.test(record.databaseName) && typeof record.id === "string" && /^[a-z0-9][a-z0-9_-]{7,63}$/u.test(record.id) && record.databaseName.endsWith(`--${record.id}`) && typeof record.label === "string" && record.label.length > 0 && record.label.length <= 256 && !/[\u0000-\u001f\u007f]/u.test(record.label) && isNonNegativeSafeInteger(record.entries) && isNonNegativeSafeInteger(record.bytes) && Number.isFinite(record.lastOpenedAt) && Number(record.lastOpenedAt) >= 0 && Number.isFinite(record.lastAccessedAt) && Number(record.lastAccessedAt) >= 0 && (record.lastCleanupAt === null || Number.isFinite(record.lastCleanupAt) && Number(record.lastCleanupAt) >= 0) && Number.isFinite(record.updatedAt) && Number(record.updatedAt) >= 0 && (record.statsRevision === void 0 || isNonNegativeSafeInteger(record.statsRevision)) && (record.deletingToken === void 0 || record.deletingToken === null || typeof record.deletingToken === "string" && record.deletingToken.length >= 16) && (record.deletingStartedAt === void 0 || record.deletingStartedAt === null || Number.isFinite(record.deletingStartedAt) && Number(record.deletingStartedAt) >= 0)
   );
 }
-function deletionIsStale(record, currentTime) {
+function deletionIsStale(record, currentTime2) {
   return Boolean(
-    record.deletingToken && (record.deletingStartedAt === void 0 || record.deletingStartedAt === null || currentTime - record.deletingStartedAt > DELETION_MARKER_TTL_MS)
+    record.deletingToken && (record.deletingStartedAt === void 0 || record.deletingStartedAt === null || currentTime2 - record.deletingStartedAt > DELETION_MARKER_TTL_MS)
   );
 }
 function isLeaseRecord(value) {
@@ -2982,7 +2982,7 @@ class StoryCacheCatalog {
           transaction.abort();
           return;
         }
-        const currentTime = this.#now();
+        const currentTime2 = this.#now();
         const previousRevision = previous?.statsRevision ?? 0;
         const acceptStats = stats !== null && (!previous || stats.revision >= previousRevision);
         const record = {
@@ -2993,10 +2993,10 @@ class StoryCacheCatalog {
           label: identity.label,
           entries: acceptStats ? stats.entries : previous?.entries ?? 0,
           bytes: acceptStats ? stats.bytes : previous?.bytes ?? 0,
-          lastOpenedAt: Math.max(previous?.lastOpenedAt ?? 0, currentTime),
+          lastOpenedAt: Math.max(previous?.lastOpenedAt ?? 0, currentTime2),
           lastAccessedAt: Math.max(previous?.lastAccessedAt ?? 0, accessedAt),
           lastCleanupAt: acceptStats ? stats.lastCleanupAt : previous?.lastCleanupAt ?? null,
-          updatedAt: currentTime,
+          updatedAt: currentTime2,
           statsRevision: acceptStats ? stats.revision : previousRevision,
           deletingToken: null,
           deletingStartedAt: null
@@ -3011,7 +3011,7 @@ class StoryCacheCatalog {
         transaction.objectStore(LEASE_STORE).put(lease);
       };
       try {
-        await transactionComplete$1(transaction);
+        await transactionComplete$2(transaction);
       } catch (error) {
         throw semanticError ?? error;
       }
@@ -3067,7 +3067,7 @@ class StoryCacheCatalog {
           cursor.continue();
         };
       });
-      await Promise.all([cursorComplete, leasesComplete, transactionComplete$1(transaction)]);
+      await Promise.all([cursorComplete, leasesComplete, transactionComplete$2(transaction)]);
       records.sort(
         (left, right) => left.lastAccessedAt - right.lastAccessedAt || left.databaseName.localeCompare(right.databaseName, "en-US")
       );
@@ -3099,7 +3099,7 @@ class StoryCacheCatalog {
         }
         cursor.continue();
       };
-      await transactionComplete$1(transaction);
+      await transactionComplete$2(transaction);
     } finally {
       database.close();
     }
@@ -3133,12 +3133,12 @@ class StoryCacheCatalog {
           transaction.abort();
           return;
         }
-        const currentTime = this.#now();
+        const currentTime2 = this.#now();
         stories.put({
           ...record,
           deletingToken: deletionToken,
-          deletingStartedAt: currentTime,
-          updatedAt: currentTime
+          deletingStartedAt: currentTime2,
+          updatedAt: currentTime2
         });
       };
       storyRequest.onsuccess = () => {
@@ -3163,7 +3163,7 @@ class StoryCacheCatalog {
         cursor.continue();
       };
       try {
-        await transactionComplete$1(transaction);
+        await transactionComplete$2(transaction);
       } catch (error) {
         throw semanticError ?? error;
       }
@@ -3188,7 +3188,7 @@ class StoryCacheCatalog {
           });
         }
       };
-      await transactionComplete$1(transaction);
+      await transactionComplete$2(transaction);
     } finally {
       database.close();
     }
@@ -3246,7 +3246,7 @@ class StoryCacheCatalog {
     try {
       const transaction = database.transaction(LEASE_STORE, "readwrite");
       transaction.objectStore(LEASE_STORE).delete(`${databaseName}:${token}`);
-      await transactionComplete$1(transaction);
+      await transactionComplete$2(transaction);
     } finally {
       database.close();
     }
@@ -3271,11 +3271,11 @@ class StoryCacheCatalog {
         return false;
       }
     };
-    const currentTime = this.#now();
+    const currentTime2 = this.#now();
     for (const record of records) {
       if (record.databaseName === options.pinnedDatabaseName) continue;
       if (record.active) continue;
-      if (currentTime - record.lastAccessedAt <= options.ttlMs) continue;
+      if (currentTime2 - record.lastAccessedAt <= options.ttlMs) continue;
       await remove(record);
     }
     records = [...await this.list()];
@@ -3305,32 +3305,32 @@ class StoryCacheCatalog {
   }
 }
 const DATABASE_NAME = "tw-asset-manager-verified-binary-v1";
-const DATABASE_VERSION = 2;
+const DATABASE_VERSION$1 = 2;
 const ENTRY_STORE = "entries";
 const METADATA_STORE = "metadata";
 const INFO_STORE = "info";
 const CACHE_FORMAT_VERSION = 1;
 const STORY_DATABASE_PREFIX = "tw-kamishibai-assets-v1--";
-const MAX_DATABASE_NAME_LENGTH = 160;
+const MAX_DATABASE_NAME_LENGTH$1 = 160;
 const DEFAULT_MAX_CACHE_BYTES = 256 * 1024 * 1024;
 const DEFAULT_QUOTA_FRACTION = 0.2;
 const DEFAULT_LOW_WATER_RATIO = 0.8;
 const DEFAULT_TTL_MS = 30 * 24 * 60 * 60 * 1e3;
 const DEFAULT_TOUCH_INTERVAL_MS = 60 * 60 * 1e3;
 const DEFAULT_CLEANUP_BATCH_SIZE = 64;
-const DEFAULT_LEASE_TTL_MS = 5 * 60 * 1e3;
+const DEFAULT_LEASE_TTL_MS$1 = 5 * 60 * 1e3;
 function cacheError(code, message, cause) {
   const error = new Error(message, cause === void 0 ? void 0 : { cause });
   Object.defineProperty(error, "code", { value: code });
   return error;
 }
-function abortError() {
+function abortError$1() {
   const error = new Error("Verified remote binary resolution was cancelled.");
   error.name = "AbortError";
   return error;
 }
-function assertNotAborted(signal) {
-  if (signal?.aborted) throw abortError();
+function assertNotAborted$1(signal) {
+  if (signal?.aborted) throw abortError$1();
 }
 function isAbortError(error) {
   return Boolean(error && typeof error === "object" && "name" in error && error.name === "AbortError");
@@ -3366,7 +3366,7 @@ function normalizeContentType(value) {
   if (typeof value !== "string") return "";
   return value.split(";", 1)[0].trim().toLowerCase();
 }
-function normalizeInput(input) {
+function normalizeInput$1(input) {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
     throw cacheError("ASSET_CACHE_INPUT_INVALID", "Remote binary input must be an object.");
   }
@@ -3446,7 +3446,7 @@ function createVerifiedRemoteCacheDatabaseName(input) {
   }
   const id = normalizeCacheIdentityId(input.id);
   const label = normalizeCacheIdentityLabel(input.label);
-  const slugBudget = MAX_DATABASE_NAME_LENGTH - STORY_DATABASE_PREFIX.length - 2 - id.length;
+  const slugBudget = MAX_DATABASE_NAME_LENGTH$1 - STORY_DATABASE_PREFIX.length - 2 - id.length;
   return `${STORY_DATABASE_PREFIX}${cacheLabelSlug(label, slugBudget)}--${id}`;
 }
 function normalizeCacheIdentity(input) {
@@ -3464,7 +3464,7 @@ function normalizeCacheIdentity(input) {
     throw cacheError("ASSET_CACHE_IDENTITY_INVALID", "Cache database name must be a string.");
   }
   const databaseName = input.databaseName.normalize("NFKC");
-  if (databaseName.length > MAX_DATABASE_NAME_LENGTH || !databaseName.startsWith(STORY_DATABASE_PREFIX) || !databaseName.endsWith(`--${id}`) || !/^[\p{Letter}\p{Number}._-]+$/u.test(databaseName)) {
+  if (databaseName.length > MAX_DATABASE_NAME_LENGTH$1 || !databaseName.startsWith(STORY_DATABASE_PREFIX) || !databaseName.endsWith(`--${id}`) || !/^[\p{Letter}\p{Number}._-]+$/u.test(databaseName)) {
     throw cacheError(
       "ASSET_CACHE_IDENTITY_INVALID",
       "Cache database name must be a generated Kamishibai story database name for the same id."
@@ -3477,7 +3477,7 @@ function normalizeStoryDatabaseName(value) {
     throw cacheError("ASSET_CACHE_IDENTITY_INVALID", "Story cache database name must be a string.");
   }
   const databaseName = value.normalize("NFKC");
-  if (databaseName.length > MAX_DATABASE_NAME_LENGTH || !databaseName.startsWith(STORY_DATABASE_PREFIX) || !/^[\p{Letter}\p{Number}._-]+$/u.test(databaseName)) {
+  if (databaseName.length > MAX_DATABASE_NAME_LENGTH$1 || !databaseName.startsWith(STORY_DATABASE_PREFIX) || !/^[\p{Letter}\p{Number}._-]+$/u.test(databaseName)) {
     throw cacheError("ASSET_CACHE_IDENTITY_INVALID", "Story cache database name is invalid.");
   }
   return databaseName;
@@ -3497,13 +3497,13 @@ function takeBytes(value, transferOwnership) {
     "Remote binary loader must return an ArrayBuffer or Uint8Array."
   );
 }
-function requestResult(request) {
+function requestResult$1(request) {
   return new Promise((resolve, reject) => {
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error ?? new Error("IndexedDB request failed."));
   });
 }
-function transactionComplete(transaction) {
+function transactionComplete$1(transaction) {
   return new Promise((resolve, reject) => {
     transaction.oncomplete = () => resolve();
     transaction.onerror = () => reject(transaction.error ?? new Error("IndexedDB transaction failed."));
@@ -3532,17 +3532,17 @@ function entryBytes(entry, key) {
   if (candidate.key !== key || !(candidate.data instanceof ArrayBuffer)) return null;
   return new Uint8Array(candidate.data);
 }
-function recordIsUsable(record, currentTime, ttlMs) {
+function recordIsUsable(record, currentTime2, ttlMs) {
   if (!metadataIsStructurallyValid(record.metadata)) return false;
   const bytes = entryBytes(record.entry, record.key);
   return Boolean(
-    bytes && bytes.byteLength === record.metadata.size && currentTime >= record.metadata.createdAt && currentTime >= record.metadata.lastAccessedAt && currentTime - record.metadata.lastAccessedAt <= ttlMs
+    bytes && bytes.byteLength === record.metadata.size && currentTime2 >= record.metadata.createdAt && currentTime2 >= record.metadata.lastAccessedAt && currentTime2 - record.metadata.lastAccessedAt <= ttlMs
   );
 }
-function scanRecordIsUsable(record, currentTime, ttlMs) {
+function scanRecordIsUsable(record, currentTime2, ttlMs) {
   if (!record.entryPresent || !metadataIsStructurallyValid(record.metadata)) return false;
   return Boolean(
-    currentTime >= record.metadata.createdAt && currentTime >= record.metadata.lastAccessedAt && currentTime - record.metadata.lastAccessedAt <= ttlMs
+    currentTime2 >= record.metadata.createdAt && currentTime2 >= record.metadata.lastAccessedAt && currentTime2 - record.metadata.lastAccessedAt <= ttlMs
   );
 }
 function candidateFor(record) {
@@ -3599,7 +3599,7 @@ class IndexedDBVerifiedRemoteStore {
     }
     let request;
     try {
-      request = this.#indexedDB.open(this.#databaseName, DATABASE_VERSION);
+      request = this.#indexedDB.open(this.#databaseName, DATABASE_VERSION$1);
     } catch (error) {
       throw cacheError("ASSET_CACHE_INDEXEDDB_UNAVAILABLE", "IndexedDB could not be opened.", error);
     }
@@ -3663,7 +3663,7 @@ class IndexedDBVerifiedRemoteStore {
           );
           return;
         }
-        transactionComplete(transaction).then(
+        transactionComplete$1(transaction).then(
           () => {
             this.#identityStored = true;
             resolve(database);
@@ -3691,9 +3691,9 @@ class IndexedDBVerifiedRemoteStore {
       const entryRequest = transaction.objectStore(ENTRY_STORE).get(key);
       const metadataRequest = transaction.objectStore(METADATA_STORE).get(key);
       const [entry, metadata] = await Promise.all([
-        requestResult(entryRequest),
-        requestResult(metadataRequest),
-        transactionComplete(transaction)
+        requestResult$1(entryRequest),
+        requestResult$1(metadataRequest),
+        transactionComplete$1(transaction)
       ]);
       return entry === void 0 && metadata === void 0 ? null : { key, entry, metadata };
     } finally {
@@ -3707,9 +3707,9 @@ class IndexedDBVerifiedRemoteStore {
       const entryKeyRequest = transaction.objectStore(ENTRY_STORE).getKey(key);
       const metadataRequest = transaction.objectStore(METADATA_STORE).get(key);
       const [entryKey, metadata] = await Promise.all([
-        requestResult(entryKeyRequest),
-        requestResult(metadataRequest),
-        transactionComplete(transaction)
+        requestResult$1(entryKeyRequest),
+        requestResult$1(metadataRequest),
+        transactionComplete$1(transaction)
       ]);
       if (entryKey === void 0 && metadata === void 0) return null;
       return { key, entryPresent: entryKey !== void 0, metadata };
@@ -3718,7 +3718,7 @@ class IndexedDBVerifiedRemoteStore {
     }
   }
   async putIfAbsentValid(record, signal) {
-    assertNotAborted(signal);
+    assertNotAborted$1(signal);
     const database = await this.#open();
     let transaction = null;
     let completed = false;
@@ -3732,7 +3732,7 @@ class IndexedDBVerifiedRemoteStore {
       }
     };
     try {
-      assertNotAborted(signal);
+      assertNotAborted$1(signal);
       transaction = database.transaction([ENTRY_STORE, METADATA_STORE, INFO_STORE], "readwrite");
       signal?.addEventListener("abort", abortTransaction, { once: true });
       const entries = transaction.objectStore(ENTRY_STORE);
@@ -3777,10 +3777,10 @@ class IndexedDBVerifiedRemoteStore {
         decide();
       };
       try {
-        await transactionComplete(transaction);
+        await transactionComplete$1(transaction);
         completed = true;
       } catch (error) {
-        if (signal?.aborted) throw abortError();
+        if (signal?.aborted) throw abortError$1();
         throw synchronousError ?? error;
       }
       if (synchronousError) throw synchronousError;
@@ -3800,7 +3800,7 @@ class IndexedDBVerifiedRemoteStore {
         if (!metadataIsStructurallyValid(request.result)) return;
         store.put({ ...request.result, lastAccessedAt: accessedAt, lastValidatedAt: validatedAt });
       };
-      await transactionComplete(transaction);
+      await transactionComplete$1(transaction);
     } finally {
       database.close();
     }
@@ -3856,7 +3856,7 @@ class IndexedDBVerifiedRemoteStore {
           cursor.continue();
         };
       });
-      await Promise.all([cursorFinished, transactionComplete(transaction)]);
+      await Promise.all([cursorFinished, transactionComplete$1(transaction)]);
       return { records, nextKey, done };
     } finally {
       database.close();
@@ -3897,7 +3897,7 @@ class IndexedDBVerifiedRemoteStore {
           cursor.continue();
         };
       });
-      await Promise.all([cursorFinished, transactionComplete(transaction)]);
+      await Promise.all([cursorFinished, transactionComplete$1(transaction)]);
       return records;
     } finally {
       database.close();
@@ -3959,7 +3959,7 @@ class IndexedDBVerifiedRemoteStore {
           deleteIfStillCandidate();
         };
       }
-      await transactionComplete(transaction);
+      await transactionComplete$1(transaction);
       return { entries: removedEntries, bytes: removedBytes };
     } finally {
       database.close();
@@ -3978,7 +3978,7 @@ class IndexedDBVerifiedRemoteStore {
       };
       transaction.objectStore(ENTRY_STORE).clear();
       transaction.objectStore(METADATA_STORE).clear();
-      await transactionComplete(transaction);
+      await transactionComplete$1(transaction);
       return revision;
     } finally {
       database.close();
@@ -3990,8 +3990,8 @@ class IndexedDBVerifiedRemoteStore {
       const transaction = database.transaction(INFO_STORE, "readonly");
       const request = transaction.objectStore(INFO_STORE).get("revision");
       const [result] = await Promise.all([
-        requestResult(request),
-        transactionComplete(transaction)
+        requestResult$1(request),
+        transactionComplete$1(transaction)
       ]);
       return revisionValue(result);
     } finally {
@@ -4004,8 +4004,8 @@ class IndexedDBVerifiedRemoteStore {
       const transaction = database.transaction(INFO_STORE, "readonly");
       const request = transaction.objectStore(INFO_STORE).get("cleanup");
       const [result] = await Promise.all([
-        requestResult(request),
-        transactionComplete(transaction)
+        requestResult$1(request),
+        transactionComplete$1(transaction)
       ]);
       if (!result || typeof result !== "object" || Array.isArray(result)) return null;
       const candidate = result;
@@ -4022,7 +4022,7 @@ class IndexedDBVerifiedRemoteStore {
     try {
       const transaction = database.transaction(INFO_STORE, "readwrite");
       transaction.objectStore(INFO_STORE).put(record);
-      await transactionComplete(transaction);
+      await transactionComplete$1(transaction);
     } finally {
       database.close();
     }
@@ -4058,7 +4058,7 @@ function createVerifiedRemoteBinaryCache(options = {}) {
     "cleanupBatchSize"
   );
   const leaseTtlMs = positiveSafeInteger(
-    options.leaseTtlMs ?? DEFAULT_LEASE_TTL_MS,
+    options.leaseTtlMs ?? DEFAULT_LEASE_TTL_MS$1,
     "leaseTtlMs"
   );
   const catalogHeartbeatIntervalMs = Math.max(1, Math.floor(leaseTtlMs / 2));
@@ -4107,11 +4107,11 @@ function createVerifiedRemoteBinaryCache(options = {}) {
     }
   }
   async function cleanupInvalid(onlyFirst = false) {
-    const currentTime = now();
+    const currentTime2 = now();
     let removedEntries = 0;
     let removedBytes = 0;
     await forEachMetadataBatch(async (records) => {
-      const candidates = records.filter((record) => !scanRecordIsUsable(record, currentTime, ttlMs)).map(candidateFor);
+      const candidates = records.filter((record) => !scanRecordIsUsable(record, currentTime2, ttlMs)).map(candidateFor);
       const removed = await store.deleteBatch(candidates);
       removedEntries += removed.entries;
       removedBytes += removed.bytes;
@@ -4134,14 +4134,14 @@ function createVerifiedRemoteBinaryCache(options = {}) {
   async function computeStats(warnings = []) {
     for (let attempt = 0; attempt < 4; attempt += 1) {
       const revisionBefore = await store.revision();
-      const currentTime = now();
+      const currentTime2 = now();
       let entries = 0;
       let bytes = 0;
       let oldestAccessedAt = null;
       let newestAccessedAt = null;
       await forEachMetadataBatch((records) => {
         for (const record of records) {
-          if (!scanRecordIsUsable(record, currentTime, ttlMs)) continue;
+          if (!scanRecordIsUsable(record, currentTime2, ttlMs)) continue;
           entries += 1;
           bytes += record.metadata.size;
           oldestAccessedAt = oldestAccessedAt === null ? record.metadata.lastAccessedAt : Math.min(oldestAccessedAt, record.metadata.lastAccessedAt);
@@ -4362,9 +4362,9 @@ function createVerifiedRemoteBinaryCache(options = {}) {
     const key = `${CACHE_FORMAT_VERSION}:${input.integrity}`;
     const record = await store.get(key);
     if (!record) return { status: "miss" };
-    const currentTime = now();
+    const currentTime2 = now();
     const bytes = entryBytes(record.entry, key);
-    const metadataMatches = recordIsUsable(record, currentTime, ttlMs) && record.metadata.integrity === input.integrity && record.metadata.size === input.size && record.metadata.contentType === input.contentType && bytes?.byteLength === input.size;
+    const metadataMatches = recordIsUsable(record, currentTime2, ttlMs) && record.metadata.integrity === input.integrity && record.metadata.size === input.size && record.metadata.contentType === input.contentType && bytes?.byteLength === input.size;
     if (!metadataMatches || !bytes) {
       await store.deleteBatch([candidateFor(record)]);
       return { status: "invalid" };
@@ -4375,8 +4375,8 @@ function createVerifiedRemoteBinaryCache(options = {}) {
       await store.deleteBatch([candidateFor(record)]);
       return { status: "invalid" };
     }
-    if (currentTime - record.metadata.lastAccessedAt >= touchIntervalMs) {
-      await store.touch(key, currentTime, currentTime).catch(() => {
+    if (currentTime2 - record.metadata.lastAccessedAt >= touchIntervalMs) {
+      await store.touch(key, currentTime2, currentTime2).catch(() => {
       });
     }
     return { status: "hit", bytes };
@@ -4393,7 +4393,7 @@ function createVerifiedRemoteBinaryCache(options = {}) {
     }
     const writeToken = `${instanceToken}:${++writeSequence}`;
     const write = async () => {
-      assertNotAborted(signal);
+      assertNotAborted$1(signal);
       const timestamp = now();
       const written = await store.putIfAbsentValid(
         {
@@ -4464,7 +4464,7 @@ function createVerifiedRemoteBinaryCache(options = {}) {
           ]).catch(() => {
           });
         }
-        throw abortError();
+        throw abortError$1();
       }
       const warnings = [...catalogWarnings];
       const retained = await enforcePostWriteBudget(warnings).catch((error) => {
@@ -4532,10 +4532,10 @@ function createVerifiedRemoteBinaryCache(options = {}) {
       if (typeof resolveOptions.load !== "function") {
         throw new TypeError("Verified remote binary resolve options must provide load.");
       }
-      const normalized = normalizeInput(input);
+      const normalized = normalizeInput$1(input);
       const warnings = [];
       let persistentCacheAvailable = true;
-      assertNotAborted(resolveOptions.signal);
+      assertNotAborted$1(resolveOptions.signal);
       if (cacheIdentity) {
         try {
           await ensureCatalog();
@@ -4568,7 +4568,7 @@ function createVerifiedRemoteBinaryCache(options = {}) {
                 );
               });
             }
-            assertNotAborted(resolveOptions.signal);
+            assertNotAborted$1(resolveOptions.signal);
             return Object.freeze({
               bytes: cached.bytes,
               contentType: normalized.contentType,
@@ -4585,20 +4585,20 @@ function createVerifiedRemoteBinaryCache(options = {}) {
           addWarning(warnings, "read", diagnosticCode(error, "ASSET_CACHE_READ_FAILED"));
         }
       }
-      assertNotAborted(resolveOptions.signal);
+      assertNotAborted$1(resolveOptions.signal);
       const loaded = await resolveOptions.load(
         normalized,
         Object.freeze(
           resolveOptions.signal === void 0 ? {} : { signal: resolveOptions.signal }
         )
       );
-      assertNotAborted(resolveOptions.signal);
+      assertNotAborted$1(resolveOptions.signal);
       if (!loaded || typeof loaded !== "object" || Array.isArray(loaded)) {
         throw cacheError("ASSET_CACHE_LOAD_INVALID", "Remote binary loader returned no result.");
       }
       const bytes = takeBytes(loaded.bytes, loaded.transferOwnership === true);
       await verifyBytes(bytes, normalized, loaded.contentType);
-      assertNotAborted(resolveOptions.signal);
+      assertNotAborted$1(resolveOptions.signal);
       const writeResult = persistentCacheAvailable ? await writeCached(normalized, bytes, resolveOptions.signal) : { status: "skipped", writeToken: null, warnings: [] };
       for (const warning of writeResult.warnings) {
         addWarning(warnings, warning.operation, warning.code);
@@ -4616,7 +4616,7 @@ function createVerifiedRemoteBinaryCache(options = {}) {
           ]).catch(() => {
           });
         }
-        throw abortError();
+        throw abortError$1();
       }
       return Object.freeze({
         bytes,
@@ -4697,6 +4697,1177 @@ function createVerifiedRemoteBinaryCache(options = {}) {
     }
   };
   return Object.freeze(cache);
+}
+const DEFAULT_DATABASE_NAME = "tw-asset-manager-session-binary-v1";
+const DATABASE_VERSION = 1;
+const SESSION_STORE = "sessions";
+const BUNDLE_STORE = "sessionBinaryBundles";
+const SESSION_ID_INDEX = "sessionId";
+const EXPIRES_AT_INDEX = "expiresAt";
+const FORMAT_VERSION = 1;
+const DEFAULT_MAX_FILES_PER_ASSET = 256;
+const DEFAULT_MAX_ASSET_BYTES = 256 * 1024 * 1024;
+const DEFAULT_MAX_SESSION_ASSETS = 4096;
+const DEFAULT_MAX_SESSION_BYTES = 512 * 1024 * 1024;
+const DEFAULT_LEASE_TTL_MS = 6e4;
+const DEFAULT_HEARTBEAT_INTERVAL_MS = 2e4;
+const DEFAULT_ORPHAN_CLEANUP_BATCH_SIZE = 8;
+const MAX_SESSION_ID_LENGTH = 256;
+const MAX_NAMESPACE_LENGTH = 512;
+const MAX_NAME_LENGTH = 256;
+const MAX_PATH_LENGTH = 1024;
+const MAX_DATABASE_NAME_LENGTH = 256;
+function sessionError(code, message, cause) {
+  const error = new Error(message, cause === void 0 ? void 0 : { cause });
+  Object.defineProperty(error, "code", { value: code, enumerable: true });
+  return error;
+}
+function errorCode(error) {
+  return error instanceof Error && "code" in error && typeof error.code === "string" ? error.code : "";
+}
+function abortError(cause) {
+  const error = sessionError(
+    "ASSET_SESSION_BINARY_ABORTED",
+    "Session binary backing operation was aborted.",
+    cause
+  );
+  error.name = "AbortError";
+  return error;
+}
+function assertNotAborted(signal) {
+  if (signal?.aborted) throw abortError(signal.reason);
+}
+function requireRecord(value, label) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw sessionError("ASSET_SESSION_BINARY_INPUT_INVALID", `${label} must be an object.`);
+  }
+  return value;
+}
+function requireSourceRecord(value, label) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw sessionError("ASSET_SESSION_BINARY_SOURCE_INVALID", `${label} must be an object.`);
+  }
+  return value;
+}
+function requireString(value, label, maxLength) {
+  if (typeof value !== "string" || value.length === 0 || value.length > maxLength || value.includes("\0")) {
+    throw sessionError(
+      "ASSET_SESSION_BINARY_INPUT_INVALID",
+      `${label} must be a non-empty string of at most ${maxLength} code units.`
+    );
+  }
+  return value;
+}
+function requireLimit(value, fallback, label) {
+  const normalized = value ?? fallback;
+  if (!Number.isSafeInteger(normalized) || normalized <= 0) {
+    throw new TypeError(`${label} must be a positive safe integer.`);
+  }
+  return normalized;
+}
+function currentTime(now) {
+  const value = now();
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw sessionError(
+      "ASSET_SESSION_BINARY_CLOCK_INVALID",
+      "Session binary backing clock must return a non-negative safe integer."
+    );
+  }
+  return value;
+}
+function isLowerHexSha256(value) {
+  if (value.length !== 64) return false;
+  for (const character of value) {
+    const code = character.charCodeAt(0);
+    if (!(code >= 48 && code <= 57 || code >= 97 && code <= 102)) return false;
+  }
+  return true;
+}
+function toBase64(bytes) {
+  let binary = "";
+  for (const value of bytes) binary += String.fromCharCode(value);
+  return btoa(binary);
+}
+function integrityIsCanonical(value) {
+  if (!value.startsWith("sha256-")) return false;
+  const payload = value.slice("sha256-".length);
+  if (isLowerHexSha256(payload)) return true;
+  try {
+    const decoded = Uint8Array.from(atob(payload), (character) => character.charCodeAt(0));
+    return decoded.byteLength === 32 && toBase64(decoded) === payload;
+  } catch {
+    return false;
+  }
+}
+function normalizeIntegrity(value, label) {
+  const integrity = requireString(value, label, 96);
+  if (!integrityIsCanonical(integrity)) {
+    throw sessionError(
+      "ASSET_SESSION_BINARY_INPUT_INVALID",
+      `${label} must contain canonical SHA-256 hex or base64.`
+    );
+  }
+  return integrity;
+}
+function pathIsSafe(path) {
+  return Boolean(
+    path.length > 0 && path.length <= MAX_PATH_LENGTH && !path.startsWith("/") && !path.startsWith("\\") && !path.includes("\\") && !path.split("/").some((part) => part.length === 0 || part === "." || part === "..")
+  );
+}
+function normalizePath(value) {
+  const path = requireString(value, "session binary file path", MAX_PATH_LENGTH);
+  if (!pathIsSafe(path)) {
+    throw sessionError(
+      "ASSET_SESSION_BINARY_INPUT_INVALID",
+      "Session binary file path must be a safe relative path."
+    );
+  }
+  return path;
+}
+function lookupKey(namespace, name, integrity) {
+  return JSON.stringify([namespace, name, integrity]);
+}
+function normalizeKey(input) {
+  requireRecord(input, "session binary asset key");
+  const namespace = requireString(
+    input.namespace,
+    "session binary asset namespace",
+    MAX_NAMESPACE_LENGTH
+  );
+  const name = requireString(input.name, "session binary asset name", MAX_NAME_LENGTH);
+  const integrity = normalizeIntegrity(input.integrity, "session binary asset integrity");
+  return { namespace, name, integrity, lookupKey: lookupKey(namespace, name, integrity) };
+}
+function normalizeFileRegistration(value) {
+  const file = requireRecord(value, "session binary file descriptor");
+  const path = normalizePath(file.path);
+  if (!Number.isSafeInteger(file.size) || Number(file.size) < 0) {
+    throw sessionError(
+      "ASSET_SESSION_BINARY_INPUT_INVALID",
+      `Session binary file size is invalid: ${path}`
+    );
+  }
+  return {
+    path,
+    size: Number(file.size),
+    integrity: normalizeIntegrity(file.integrity, `session binary file integrity for ${path}`)
+  };
+}
+function ownBytes(value) {
+  if (value instanceof ArrayBuffer) return new Uint8Array(value.slice(0));
+  if (value instanceof Uint8Array) return Uint8Array.from(value);
+  throw sessionError(
+    "ASSET_SESSION_BINARY_SOURCE_INVALID",
+    "Session binary source bytes must be an ArrayBuffer or Uint8Array."
+  );
+}
+function normalizeOptions(options) {
+  requireRecord(options, "session binary backing options");
+  const databaseName = requireString(
+    options.databaseName ?? DEFAULT_DATABASE_NAME,
+    "session binary database name",
+    MAX_DATABASE_NAME_LENGTH
+  );
+  const leaseTtlMs = requireLimit(options.leaseTtlMs, DEFAULT_LEASE_TTL_MS, "leaseTtlMs");
+  const heartbeatIntervalMs = requireLimit(
+    options.heartbeatIntervalMs,
+    DEFAULT_HEARTBEAT_INTERVAL_MS,
+    "heartbeatIntervalMs"
+  );
+  if (heartbeatIntervalMs >= leaseTtlMs) {
+    throw new TypeError("heartbeatIntervalMs must be less than leaseTtlMs.");
+  }
+  return {
+    indexedDB: options.indexedDB ?? globalThis.indexedDB,
+    subtleCrypto: options.subtleCrypto ?? globalThis.crypto?.subtle,
+    databaseName,
+    now: options.now ?? Date.now,
+    maxFilesPerAsset: requireLimit(
+      options.maxFilesPerAsset,
+      DEFAULT_MAX_FILES_PER_ASSET,
+      "maxFilesPerAsset"
+    ),
+    maxAssetBytes: requireLimit(
+      options.maxAssetBytes,
+      DEFAULT_MAX_ASSET_BYTES,
+      "maxAssetBytes"
+    ),
+    maxSessionAssets: requireLimit(
+      options.maxSessionAssets,
+      DEFAULT_MAX_SESSION_ASSETS,
+      "maxSessionAssets"
+    ),
+    maxSessionBytes: requireLimit(
+      options.maxSessionBytes,
+      DEFAULT_MAX_SESSION_BYTES,
+      "maxSessionBytes"
+    ),
+    leaseTtlMs,
+    heartbeatIntervalMs,
+    orphanCleanupBatchSize: requireLimit(
+      options.orphanCleanupBatchSize,
+      DEFAULT_ORPHAN_CLEANUP_BATCH_SIZE,
+      "orphanCleanupBatchSize"
+    )
+  };
+}
+function normalizeInput(input, limits) {
+  requireRecord(input, "session binary backing input");
+  if (input.policy !== "prefer" && input.policy !== "required" && input.policy !== "disabled") {
+    throw sessionError(
+      "ASSET_SESSION_BINARY_INPUT_INVALID",
+      "Session binary backing policy must be prefer, required, or disabled."
+    );
+  }
+  const sessionId = requireString(
+    input.sessionId,
+    "session binary session ID",
+    MAX_SESSION_ID_LENGTH
+  );
+  if (!Array.isArray(input.assets) || input.assets.length === 0) {
+    throw sessionError(
+      "ASSET_SESSION_BINARY_INPUT_INVALID",
+      "Session binary backing assets must be a non-empty array."
+    );
+  }
+  if (input.assets.length > limits.maxSessionAssets) {
+    throw sessionError(
+      "ASSET_SESSION_BINARY_LIMIT_EXCEEDED",
+      "Session binary backing exceeds maxSessionAssets."
+    );
+  }
+  if (!input.source || typeof input.source !== "object" || typeof input.source.read !== "function" || typeof input.source.release !== "function") {
+    throw sessionError(
+      "ASSET_SESSION_BINARY_INPUT_INVALID",
+      "Session binary backing source must provide read and release."
+    );
+  }
+  if (input.onFatalError !== void 0 && typeof input.onFatalError !== "function") {
+    throw sessionError(
+      "ASSET_SESSION_BINARY_INPUT_INVALID",
+      "Session binary onFatalError must be a function."
+    );
+  }
+  const assets = [];
+  const assetsByKey = /* @__PURE__ */ new Map();
+  let sessionBytes = 0;
+  for (const inputAsset of input.assets) {
+    const key = normalizeKey(inputAsset);
+    if (!Array.isArray(inputAsset.files) || inputAsset.files.length === 0) {
+      throw sessionError(
+        "ASSET_SESSION_BINARY_INPUT_INVALID",
+        `Session binary asset must contain files: ${key.name}`
+      );
+    }
+    if (inputAsset.files.length > limits.maxFilesPerAsset) {
+      throw sessionError(
+        "ASSET_SESSION_BINARY_LIMIT_EXCEEDED",
+        `Session binary asset exceeds maxFilesPerAsset: ${key.name}`
+      );
+    }
+    const paths = /* @__PURE__ */ new Set();
+    const files = inputAsset.files.map((file) => {
+      const normalized = normalizeFileRegistration(file);
+      if (paths.has(normalized.path)) {
+        throw sessionError(
+          "ASSET_SESSION_BINARY_INPUT_INVALID",
+          `Session binary asset contains a duplicate path: ${normalized.path}`
+        );
+      }
+      paths.add(normalized.path);
+      return normalized;
+    });
+    files.sort(
+      (left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0
+    );
+    const totalBytes = files.reduce(
+      (sum, file) => sum + file.size,
+      0
+    );
+    if (!Number.isSafeInteger(totalBytes) || totalBytes > limits.maxAssetBytes) {
+      throw sessionError(
+        "ASSET_SESSION_BINARY_LIMIT_EXCEEDED",
+        `Session binary asset exceeds maxAssetBytes: ${key.name}`
+      );
+    }
+    sessionBytes += totalBytes;
+    if (!Number.isSafeInteger(sessionBytes) || sessionBytes > limits.maxSessionBytes) {
+      throw sessionError(
+        "ASSET_SESSION_BINARY_LIMIT_EXCEEDED",
+        "Session binary backing exceeds maxSessionBytes."
+      );
+    }
+    if (assetsByKey.has(key.lookupKey)) {
+      throw sessionError(
+        "ASSET_SESSION_BINARY_INPUT_INVALID",
+        `Session binary backing contains a duplicate asset: ${key.name}`
+      );
+    }
+    const asset = { ...key, files, totalBytes };
+    assets.push(asset);
+    assetsByKey.set(key.lookupKey, asset);
+  }
+  assets.sort(
+    (left, right) => left.lookupKey < right.lookupKey ? -1 : left.lookupKey > right.lookupKey ? 1 : 0
+  );
+  return {
+    policy: input.policy,
+    sessionId,
+    assets,
+    assetsByKey,
+    source: input.source,
+    ...input.onFatalError === void 0 ? {} : { onFatalError: input.onFatalError }
+  };
+}
+function operationSignal(options) {
+  requireRecord(options, "session binary operation options");
+  if (options.signal === void 0) return void 0;
+  const signal = options.signal;
+  if (!signal || typeof signal !== "object" || typeof signal.aborted !== "boolean" || typeof signal.addEventListener !== "function" || typeof signal.removeEventListener !== "function") {
+    throw sessionError(
+      "ASSET_SESSION_BINARY_INPUT_INVALID",
+      "Session binary operation signal must be an AbortSignal."
+    );
+  }
+  return signal;
+}
+function linkSignals(external, internal) {
+  if (!external) return { signal: internal, release() {
+  } };
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  external.addEventListener("abort", abort, { once: true });
+  internal.addEventListener("abort", abort, { once: true });
+  if (external.aborted || internal.aborted) abort();
+  return {
+    signal: controller.signal,
+    release() {
+      external.removeEventListener("abort", abort);
+      internal.removeEventListener("abort", abort);
+    }
+  };
+}
+function toHex(bytes) {
+  return [...bytes].map((value) => value.toString(16).padStart(2, "0")).join("");
+}
+async function verifyIntegrity(bytes, integrity, subtleCrypto, code) {
+  if (!subtleCrypto || typeof subtleCrypto.digest !== "function") {
+    throw sessionError(
+      "ASSET_SESSION_BINARY_CRYPTO_UNAVAILABLE",
+      "SHA-256 is not available for session binary verification."
+    );
+  }
+  const digest = new Uint8Array(await subtleCrypto.digest("SHA-256", bytes));
+  const expected = integrity.slice("sha256-".length);
+  const actual = isLowerHexSha256(expected) ? toHex(digest) : toBase64(digest);
+  if (actual !== expected) {
+    throw sessionError(code, "Session binary file integrity does not match its bytes.");
+  }
+}
+async function readSourceAsset(source, asset, subtleCrypto, signal) {
+  assertNotAborted(signal);
+  const publicAsset = Object.freeze({
+    namespace: asset.namespace,
+    name: asset.name,
+    integrity: asset.integrity,
+    files: Object.freeze(asset.files.map((file) => Object.freeze({ ...file })))
+  });
+  let loaded;
+  try {
+    loaded = await source.read(publicAsset, { signal });
+  } catch (error) {
+    if (signal.aborted) throw abortError(error);
+    if (errorCode(error).startsWith("ASSET_SESSION_BINARY_SOURCE_")) throw error;
+    throw sessionError(
+      "ASSET_SESSION_BINARY_SOURCE_READ_FAILED",
+      `Session binary source could not read asset: ${asset.name}`,
+      error
+    );
+  }
+  const loadedRecord = requireSourceRecord(loaded, "session binary source asset");
+  if (loadedRecord.namespace !== asset.namespace || loadedRecord.name !== asset.name || loadedRecord.integrity !== asset.integrity || !Array.isArray(loadedRecord.files) || loadedRecord.files.length !== asset.files.length) {
+    throw sessionError(
+      "ASSET_SESSION_BINARY_SOURCE_INVALID",
+      `Session binary source metadata does not match: ${asset.name}`
+    );
+  }
+  const expectedByPath = new Map(asset.files.map((file) => [file.path, file]));
+  const seen = /* @__PURE__ */ new Set();
+  const files = [];
+  for (const loadedFile of loadedRecord.files) {
+    const record = requireSourceRecord(loadedFile, "session binary source file");
+    const path = typeof record.path === "string" ? record.path : "";
+    const expected = expectedByPath.get(path);
+    if (!expected || seen.has(path) || record.size !== expected.size || record.integrity !== expected.integrity) {
+      throw sessionError(
+        "ASSET_SESSION_BINARY_SOURCE_INVALID",
+        `Session binary source file metadata does not match: ${asset.name}`
+      );
+    }
+    seen.add(path);
+    const bytes = ownBytes(record.bytes);
+    if (bytes.byteLength !== expected.size) {
+      throw sessionError(
+        "ASSET_SESSION_BINARY_SOURCE_INVALID",
+        `Session binary source file size does not match: ${asset.name}/${path}`
+      );
+    }
+    await verifyIntegrity(
+      bytes,
+      expected.integrity,
+      subtleCrypto,
+      "ASSET_SESSION_BINARY_SOURCE_INTEGRITY_MISMATCH"
+    );
+    files.push({ ...expected, bytes });
+  }
+  files.sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0);
+  assertNotAborted(signal);
+  return files;
+}
+function requestResult(request) {
+  return new Promise((resolve, reject) => {
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error ?? new Error("IndexedDB request failed."));
+  });
+}
+function transactionComplete(transaction) {
+  return new Promise((resolve, reject) => {
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error ?? new Error("IndexedDB transaction failed."));
+    transaction.onabort = () => reject(transaction.error ?? new Error("IndexedDB transaction was aborted."));
+  });
+}
+function isDomException(error, name) {
+  return error instanceof DOMException && error.name === name;
+}
+function mapStorageError(error, operation, signal) {
+  if (signal?.aborted || isDomException(error, "AbortError")) return abortError(error);
+  if (errorCode(error).startsWith("ASSET_SESSION_BINARY_")) return error;
+  if (isDomException(error, "QuotaExceededError")) {
+    return sessionError(
+      "ASSET_SESSION_BINARY_QUOTA_EXCEEDED",
+      `Session binary ${operation} exceeded IndexedDB quota.`,
+      error
+    );
+  }
+  if (isDomException(error, "InvalidStateError")) {
+    return sessionError(
+      "ASSET_SESSION_BINARY_CONNECTION_CLOSED",
+      `Session binary ${operation} used a closed IndexedDB connection.`,
+      error
+    );
+  }
+  return sessionError(
+    "ASSET_SESSION_BINARY_TRANSACTION_FAILED",
+    `Session binary ${operation} transaction failed.`,
+    error
+  );
+}
+async function openDatabase(options, signal) {
+  assertNotAborted(signal);
+  const indexedDB2 = options.indexedDB;
+  if (!indexedDB2 || typeof indexedDB2.open !== "function") {
+    throw sessionError(
+      "ASSET_SESSION_BINARY_INDEXEDDB_UNAVAILABLE",
+      "IndexedDB is not available for session binary backing."
+    );
+  }
+  let request;
+  try {
+    request = indexedDB2.open(options.databaseName, DATABASE_VERSION);
+  } catch (error) {
+    throw sessionError(
+      "ASSET_SESSION_BINARY_INDEXEDDB_UNAVAILABLE",
+      "The session binary IndexedDB database could not be opened.",
+      error
+    );
+  }
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const abort = () => rejectOnce(abortError(signal?.reason));
+    const rejectOnce = (error) => {
+      if (settled) return;
+      settled = true;
+      signal?.removeEventListener("abort", abort);
+      reject(error);
+    };
+    signal?.addEventListener("abort", abort, { once: true });
+    if (signal?.aborted) abort();
+    request.onupgradeneeded = () => {
+      const database = request.result;
+      let sessions;
+      if (!database.objectStoreNames.contains(SESSION_STORE)) {
+        sessions = database.createObjectStore(SESSION_STORE, { keyPath: "sessionId" });
+      } else {
+        sessions = request.transaction.objectStore(SESSION_STORE);
+      }
+      if (!sessions.indexNames.contains(EXPIRES_AT_INDEX)) {
+        sessions.createIndex(EXPIRES_AT_INDEX, "expiresAt");
+      }
+      let bundles;
+      if (!database.objectStoreNames.contains(BUNDLE_STORE)) {
+        bundles = database.createObjectStore(BUNDLE_STORE, {
+          keyPath: ["sessionId", "namespace", "name"]
+        });
+      } else {
+        bundles = request.transaction.objectStore(BUNDLE_STORE);
+      }
+      if (!bundles.indexNames.contains(SESSION_ID_INDEX)) {
+        bundles.createIndex(SESSION_ID_INDEX, "sessionId");
+      }
+    };
+    request.onsuccess = () => {
+      if (settled) {
+        request.result.close();
+        return;
+      }
+      settled = true;
+      signal?.removeEventListener("abort", abort);
+      resolve(request.result);
+    };
+    request.onerror = () => rejectOnce(
+      sessionError(
+        "ASSET_SESSION_BINARY_INDEXEDDB_UNAVAILABLE",
+        "The session binary IndexedDB open request failed.",
+        request.error
+      )
+    );
+    request.onblocked = () => rejectOnce(
+      sessionError(
+        "ASSET_SESSION_BINARY_INDEXEDDB_BLOCKED",
+        "The session binary IndexedDB open request was blocked."
+      )
+    );
+  });
+}
+function sessionRecordIsValid(value, sessionId) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value;
+  return Boolean(
+    record.formatVersion === FORMAT_VERSION && typeof record.sessionId === "string" && (sessionId === void 0 || record.sessionId === sessionId) && (record.state === "establishing" || record.state === "active") && Number.isSafeInteger(record.expectedAssets) && Number(record.expectedAssets) > 0 && Number.isSafeInteger(record.committedAssets) && Number(record.committedAssets) >= 0 && Number(record.committedAssets) <= Number(record.expectedAssets) && Number.isSafeInteger(record.committedBytes) && Number(record.committedBytes) >= 0 && Number.isSafeInteger(record.createdAt) && Number(record.createdAt) >= 0 && Number.isSafeInteger(record.heartbeatAt) && Number(record.heartbeatAt) >= Number(record.createdAt) && Number.isSafeInteger(record.expiresAt) && Number(record.expiresAt) > Number(record.heartbeatAt)
+  );
+}
+function storedBundleIsValid(value, sessionId, asset) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value;
+  if (record.formatVersion !== FORMAT_VERSION || record.sessionId !== sessionId || record.namespace !== asset.namespace || record.name !== asset.name || record.integrity !== asset.integrity || record.totalBytes !== asset.totalBytes || !Array.isArray(record.files) || record.files.length !== asset.files.length) {
+    return false;
+  }
+  return record.files.every((file, index) => {
+    const expected = asset.files[index];
+    return Boolean(
+      expected && file && typeof file === "object" && file.path === expected.path && file.size === expected.size && file.integrity === expected.integrity && file.data instanceof ArrayBuffer && file.data.byteLength === expected.size
+    );
+  });
+}
+function createSessionRecord(sessionId, expectedAssets, timestamp, leaseTtlMs) {
+  return {
+    formatVersion: FORMAT_VERSION,
+    sessionId,
+    state: "establishing",
+    expectedAssets,
+    committedAssets: 0,
+    committedBytes: 0,
+    createdAt: timestamp,
+    heartbeatAt: timestamp,
+    expiresAt: timestamp + leaseTtlMs
+  };
+}
+async function addSession(database, record, signal) {
+  assertNotAborted(signal);
+  try {
+    const transaction = database.transaction(SESSION_STORE, "readwrite");
+    const abort = () => transaction.abort();
+    signal.addEventListener("abort", abort, { once: true });
+    transaction.objectStore(SESSION_STORE).add(record);
+    try {
+      await transactionComplete(transaction);
+    } finally {
+      signal.removeEventListener("abort", abort);
+    }
+  } catch (error) {
+    if (isDomException(error, "ConstraintError")) {
+      throw sessionError(
+        "ASSET_SESSION_BINARY_SESSION_CONFLICT",
+        `Session binary session already exists: ${record.sessionId}`,
+        error
+      );
+    }
+    throw mapStorageError(error, "session creation", signal);
+  }
+}
+async function putBundle(database, sessionId, asset, files, signal) {
+  assertNotAborted(signal);
+  let semanticError;
+  let transaction;
+  try {
+    transaction = database.transaction([SESSION_STORE, BUNDLE_STORE], "readwrite");
+  } catch (error) {
+    throw mapStorageError(error, "asset write", signal);
+  }
+  const abort = () => transaction.abort();
+  signal.addEventListener("abort", abort, { once: true });
+  const sessions = transaction.objectStore(SESSION_STORE);
+  const request = sessions.get(sessionId);
+  request.onsuccess = () => {
+    try {
+      if (!sessionRecordIsValid(request.result, sessionId) || request.result.state !== "establishing") {
+        throw sessionError(
+          "ASSET_SESSION_BINARY_CORRUPT",
+          "Session binary metadata is missing or corrupt during establishment."
+        );
+      }
+      const record = {
+        formatVersion: FORMAT_VERSION,
+        sessionId,
+        namespace: asset.namespace,
+        name: asset.name,
+        integrity: asset.integrity,
+        files: files.map(({ path, size, integrity, bytes }) => ({
+          path,
+          size,
+          integrity,
+          data: bytes.buffer
+        })),
+        totalBytes: asset.totalBytes
+      };
+      transaction.objectStore(BUNDLE_STORE).put(record);
+      sessions.put({
+        ...request.result,
+        committedAssets: request.result.committedAssets + 1,
+        committedBytes: request.result.committedBytes + asset.totalBytes
+      });
+    } catch (error) {
+      semanticError = error;
+      try {
+        transaction.abort();
+      } catch {
+      }
+    }
+  };
+  try {
+    await transactionComplete(transaction);
+  } catch (error) {
+    throw mapStorageError(semanticError ?? error, "asset write", signal);
+  } finally {
+    signal.removeEventListener("abort", abort);
+  }
+}
+async function readBundle(database, sessionId, asset, subtleCrypto, signal) {
+  assertNotAborted(signal);
+  let record;
+  let transaction;
+  try {
+    transaction = database.transaction(BUNDLE_STORE, "readonly");
+    const abort = () => transaction.abort();
+    signal.addEventListener("abort", abort, { once: true });
+    try {
+      record = await requestResult(
+        transaction.objectStore(BUNDLE_STORE).get([sessionId, asset.namespace, asset.name])
+      );
+      await transactionComplete(transaction);
+    } finally {
+      signal.removeEventListener("abort", abort);
+    }
+  } catch (error) {
+    throw mapStorageError(error, "asset read", signal);
+  }
+  if (record === void 0) {
+    throw sessionError(
+      "ASSET_SESSION_BINARY_NOT_FOUND",
+      `Session binary asset was not found: ${asset.name}`
+    );
+  }
+  if (!storedBundleIsValid(record, sessionId, asset)) {
+    throw sessionError(
+      "ASSET_SESSION_BINARY_CORRUPT",
+      `Session binary asset is incomplete or corrupt: ${asset.name}`
+    );
+  }
+  const files = [];
+  for (const file of record.files) {
+    assertNotAborted(signal);
+    const bytes = new Uint8Array(file.data);
+    await verifyIntegrity(
+      bytes,
+      file.integrity,
+      subtleCrypto,
+      "ASSET_SESSION_BINARY_INTEGRITY_MISMATCH"
+    );
+    files.push(Object.freeze({
+      path: file.path,
+      size: file.size,
+      integrity: file.integrity,
+      bytes
+    }));
+  }
+  return Object.freeze({
+    namespace: asset.namespace,
+    name: asset.name,
+    integrity: asset.integrity,
+    files: Object.freeze(files),
+    totalBytes: asset.totalBytes
+  });
+}
+async function activateSession(database, sessionId, expectedAssets, expectedBytes, timestamp, leaseTtlMs, signal) {
+  assertNotAborted(signal);
+  let semanticError;
+  let transaction;
+  try {
+    transaction = database.transaction(SESSION_STORE, "readwrite");
+  } catch (error) {
+    throw mapStorageError(error, "session activation", signal);
+  }
+  const abort = () => transaction.abort();
+  signal.addEventListener("abort", abort, { once: true });
+  const store = transaction.objectStore(SESSION_STORE);
+  const request = store.get(sessionId);
+  request.onsuccess = () => {
+    try {
+      if (!sessionRecordIsValid(request.result, sessionId) || request.result.state !== "establishing" || request.result.committedAssets !== expectedAssets || request.result.committedBytes !== expectedBytes) {
+        throw sessionError(
+          "ASSET_SESSION_BINARY_CORRUPT",
+          "Session binary establishment metadata did not pass read-back verification."
+        );
+      }
+      store.put({
+        ...request.result,
+        state: "active",
+        heartbeatAt: timestamp,
+        expiresAt: timestamp + leaseTtlMs
+      });
+    } catch (error) {
+      semanticError = error;
+      try {
+        transaction.abort();
+      } catch {
+      }
+    }
+  };
+  try {
+    await transactionComplete(transaction);
+  } catch (error) {
+    throw mapStorageError(semanticError ?? error, "session activation", signal);
+  } finally {
+    signal.removeEventListener("abort", abort);
+  }
+}
+async function renewSession(database, sessionId, timestamp, leaseTtlMs, signal) {
+  assertNotAborted(signal);
+  let semanticError;
+  let transaction;
+  try {
+    transaction = database.transaction(SESSION_STORE, "readwrite");
+  } catch (error) {
+    throw mapStorageError(error, "lease renewal", signal);
+  }
+  const store = transaction.objectStore(SESSION_STORE);
+  const request = store.get(sessionId);
+  request.onsuccess = () => {
+    try {
+      if (!sessionRecordIsValid(request.result, sessionId) || request.result.state !== "active") {
+        throw sessionError(
+          "ASSET_SESSION_BINARY_NOT_FOUND",
+          "Active session binary lease metadata is missing or corrupt."
+        );
+      }
+      store.put({
+        ...request.result,
+        heartbeatAt: timestamp,
+        expiresAt: timestamp + leaseTtlMs
+      });
+    } catch (error) {
+      semanticError = error;
+      try {
+        transaction.abort();
+      } catch {
+      }
+    }
+  };
+  try {
+    await transactionComplete(transaction);
+  } catch (error) {
+    throw mapStorageError(semanticError ?? error, "lease renewal", signal);
+  }
+}
+async function deleteSessionRecords(database, sessionId, expiredAtOrBefore) {
+  let transaction;
+  try {
+    transaction = database.transaction([SESSION_STORE, BUNDLE_STORE], "readwrite");
+  } catch (error) {
+    throw mapStorageError(error, "session cleanup");
+  }
+  const sessions = transaction.objectStore(SESSION_STORE);
+  const bundles = transaction.objectStore(BUNDLE_STORE);
+  const removeBundles = () => {
+    const cursorRequest = bundles.index(SESSION_ID_INDEX).openCursor(sessionId);
+    cursorRequest.onsuccess = () => {
+      const cursor = cursorRequest.result;
+      if (!cursor) return;
+      cursor.delete();
+      cursor.continue();
+    };
+    sessions.delete(sessionId);
+  };
+  if (expiredAtOrBefore === void 0) {
+    removeBundles();
+  } else {
+    const request = sessions.get(sessionId);
+    request.onsuccess = () => {
+      if (sessionRecordIsValid(request.result, sessionId) && request.result.expiresAt <= expiredAtOrBefore) {
+        removeBundles();
+      }
+    };
+  }
+  try {
+    await transactionComplete(transaction);
+  } catch (error) {
+    throw mapStorageError(error, "session cleanup");
+  }
+}
+async function expiredSessionIds(database, timestamp, limit) {
+  const ids = [];
+  let transaction;
+  try {
+    transaction = database.transaction(SESSION_STORE, "readonly");
+  } catch (error) {
+    throw mapStorageError(error, "orphan scan");
+  }
+  const request = transaction.objectStore(SESSION_STORE).index(EXPIRES_AT_INDEX).openCursor();
+  request.onsuccess = () => {
+    const cursor = request.result;
+    if (!cursor || ids.length >= limit || Number(cursor.key) > timestamp) return;
+    if (sessionRecordIsValid(cursor.value) && cursor.value.expiresAt <= timestamp) {
+      ids.push(cursor.value.sessionId);
+    }
+    cursor.continue();
+  };
+  try {
+    await transactionComplete(transaction);
+  } catch (error) {
+    throw mapStorageError(error, "orphan scan");
+  }
+  return ids;
+}
+async function cleanupOrphans(database, timestamp, limit) {
+  const ids = await expiredSessionIds(database, timestamp, limit);
+  for (const sessionId of ids) {
+    await deleteSessionRecords(database, sessionId, timestamp);
+  }
+}
+function fallbackEligible(error) {
+  return (/* @__PURE__ */ new Set([
+    "ASSET_SESSION_BINARY_INDEXEDDB_UNAVAILABLE",
+    "ASSET_SESSION_BINARY_INDEXEDDB_BLOCKED",
+    "ASSET_SESSION_BINARY_QUOTA_EXCEEDED",
+    "ASSET_SESSION_BINARY_ABORTED"
+  ])).has(errorCode(error));
+}
+async function releaseSource(source) {
+  try {
+    await source.release();
+  } catch (error) {
+    throw sessionError(
+      "ASSET_SESSION_BINARY_SOURCE_RELEASE_FAILED",
+      "Session binary source could not be released.",
+      error
+    );
+  }
+}
+function closeDatabase(database) {
+  database?.close();
+}
+function publicDirectResult(asset, files) {
+  return Object.freeze({
+    namespace: asset.namespace,
+    name: asset.name,
+    integrity: asset.integrity,
+    files: Object.freeze(
+      files.map(
+        ({ path, size, integrity, bytes }) => Object.freeze({ path, size, integrity, bytes })
+      )
+    ),
+    totalBytes: asset.totalBytes
+  });
+}
+function createEstablishedBacking({
+  input,
+  options,
+  mode,
+  database,
+  source,
+  warning
+}) {
+  const controller = new AbortController();
+  const activeOperations = /* @__PURE__ */ new Set();
+  let disposed = false;
+  let disposePromise = null;
+  let fatalError = null;
+  let heartbeat = null;
+  let closingDatabase = false;
+  const notifyFatal = (error) => {
+    if (!fatalError) {
+      fatalError = error;
+      controller.abort();
+      if (heartbeat !== null) {
+        clearInterval(heartbeat);
+        heartbeat = null;
+      }
+      try {
+        input.onFatalError?.(error);
+      } catch {
+      }
+    }
+    return fatalError;
+  };
+  const ensureUsable = () => {
+    if (disposed) {
+      throw sessionError(
+        "ASSET_SESSION_BINARY_RELEASED",
+        "Session binary backing has been disposed."
+      );
+    }
+    if (fatalError) throw fatalError;
+  };
+  if (database) {
+    const closeFailure = () => {
+      if (closingDatabase || disposed) return;
+      notifyFatal(
+        sessionError(
+          "ASSET_SESSION_BINARY_CONNECTION_CLOSED",
+          "The session binary IndexedDB connection closed unexpectedly."
+        )
+      );
+    };
+    database.addEventListener("versionchange", () => {
+      closeFailure();
+      closingDatabase = true;
+      database.close();
+    });
+    database.addEventListener("close", closeFailure);
+  }
+  const track = (operation) => {
+    activeOperations.add(operation);
+    void operation.then(
+      () => activeOperations.delete(operation),
+      () => activeOperations.delete(operation)
+    );
+    return operation;
+  };
+  const assetFor = (value) => {
+    const key = normalizeKey(value);
+    const asset = input.assetsByKey.get(key.lookupKey);
+    if (!asset) {
+      throw sessionError(
+        "ASSET_SESSION_BINARY_NOT_FOUND",
+        `Unknown session binary asset: ${key.name}`
+      );
+    }
+    return asset;
+  };
+  const renew = async () => {
+    ensureUsable();
+    if (mode === "direct") return;
+    try {
+      await renewSession(
+        database,
+        input.sessionId,
+        currentTime(options.now),
+        options.leaseTtlMs,
+        controller.signal
+      );
+    } catch (error) {
+      throw notifyFatal(error instanceof Error ? error : mapStorageError(error, "lease renewal"));
+    }
+  };
+  if (mode === "session") {
+    heartbeat = setInterval(() => {
+      void track(renew()).catch(() => {
+      });
+    }, options.heartbeatIntervalMs);
+  }
+  const backing = {
+    sessionId: input.sessionId,
+    mode,
+    ...warning === void 0 ? {} : { warning },
+    get(value, operationOptions = {}) {
+      const operation = (async () => {
+        ensureUsable();
+        const asset = assetFor(value);
+        const externalSignal = operationSignal(operationOptions);
+        const linked = linkSignals(externalSignal, controller.signal);
+        try {
+          if (mode === "direct") {
+            const files = await readSourceAsset(source, asset, options.subtleCrypto, linked.signal);
+            return publicDirectResult(asset, files);
+          }
+          return await readBundle(
+            database,
+            input.sessionId,
+            asset,
+            options.subtleCrypto,
+            linked.signal
+          );
+        } catch (error) {
+          const normalized = error instanceof Error ? error : sessionError("ASSET_SESSION_BINARY_READ_FAILED", "Session binary read failed.", error);
+          if (disposed) throw normalized;
+          throw notifyFatal(normalized);
+        } finally {
+          linked.release();
+        }
+      })();
+      return track(operation);
+    },
+    renewLease() {
+      return track(renew());
+    },
+    dispose() {
+      if (disposePromise) return disposePromise;
+      disposed = true;
+      controller.abort();
+      if (heartbeat !== null) {
+        clearInterval(heartbeat);
+        heartbeat = null;
+      }
+      disposePromise = (async () => {
+        await Promise.allSettled([...activeOperations]);
+        const errors = [];
+        if (mode === "session" && database) {
+          try {
+            await deleteSessionRecords(database, input.sessionId);
+          } catch (error) {
+            errors.push(error);
+          }
+          closingDatabase = true;
+          database.close();
+        }
+        if (source) {
+          try {
+            await releaseSource(source);
+          } catch (error) {
+            errors.push(error);
+          }
+        }
+        if (errors.length > 0) {
+          throw sessionError(
+            "ASSET_SESSION_BINARY_CLEANUP_FAILED",
+            "Session binary backing disposal failed.",
+            new AggregateError(errors)
+          );
+        }
+      })();
+      return disposePromise;
+    }
+  };
+  return Object.freeze(backing);
+}
+async function createSessionBinaryBacking(inputValue, optionValue = {}, operationOptions = {}) {
+  const options = normalizeOptions(optionValue);
+  const input = normalizeInput(inputValue, options);
+  const externalSignal = operationSignal(operationOptions);
+  const establishmentController = new AbortController();
+  const linked = linkSignals(externalSignal, establishmentController.signal);
+  const signal = linked.signal;
+  let database = null;
+  let sourceReleased = false;
+  let createdSession = false;
+  try {
+    assertNotAborted(signal);
+    if (input.policy === "disabled") {
+      return createEstablishedBacking({
+        input,
+        options,
+        mode: "direct",
+        database: null,
+        source: input.source
+      });
+    }
+    try {
+      database = await openDatabase(options, signal);
+      const timestamp = currentTime(options.now);
+      await cleanupOrphans(database, timestamp, options.orphanCleanupBatchSize);
+      await addSession(
+        database,
+        createSessionRecord(input.sessionId, input.assets.length, timestamp, options.leaseTtlMs),
+        signal
+      );
+      createdSession = true;
+      let expectedBytes = 0;
+      for (const asset of input.assets) {
+        const files = await readSourceAsset(input.source, asset, options.subtleCrypto, signal);
+        await putBundle(database, input.sessionId, asset, files, signal);
+        await readBundle(database, input.sessionId, asset, options.subtleCrypto, signal);
+        expectedBytes += asset.totalBytes;
+      }
+      await activateSession(
+        database,
+        input.sessionId,
+        input.assets.length,
+        expectedBytes,
+        currentTime(options.now),
+        options.leaseTtlMs,
+        signal
+      );
+      await releaseSource(input.source);
+      sourceReleased = true;
+      return createEstablishedBacking({
+        input,
+        options,
+        mode: "session",
+        database,
+        source: null
+      });
+    } catch (error) {
+      let cleanupError;
+      if (database && createdSession) {
+        try {
+          await deleteSessionRecords(database, input.sessionId);
+        } catch (candidate) {
+          cleanupError = candidate;
+        }
+      }
+      if (input.policy === "prefer" && fallbackEligible(error) && cleanupError === void 0) {
+        if (database) database.close();
+        database = null;
+        return createEstablishedBacking({
+          input,
+          options,
+          mode: "direct",
+          database: null,
+          source: input.source,
+          warning: Object.freeze({
+            code: "ASSET_SESSION_BINARY_DIRECT_FALLBACK",
+            causeCode: errorCode(error)
+          })
+        });
+      }
+      if (cleanupError !== void 0) {
+        throw sessionError(
+          "ASSET_SESSION_BINARY_CLEANUP_FAILED",
+          "Partial session binary records could not be removed.",
+          new AggregateError([error, cleanupError])
+        );
+      }
+      throw error;
+    }
+  } catch (error) {
+    if (!sourceReleased) {
+      try {
+        await releaseSource(input.source);
+        sourceReleased = true;
+      } catch (releaseError) {
+        throw sessionError(
+          "ASSET_SESSION_BINARY_SOURCE_RELEASE_FAILED",
+          "Session binary startup failed and its source could not be released.",
+          new AggregateError([error, releaseError])
+        );
+      }
+    }
+    closeDatabase(database);
+    throw error;
+  } finally {
+    linked.release();
+  }
 }
 function createAssetManagerComposition(featureFlags, options = {}) {
   if (!options || typeof options !== "object" || Array.isArray(options)) {
@@ -4887,6 +6058,13 @@ function createAssetManagerComposition(featureFlags, options = {}) {
     },
     releaseBinaryStore() {
       return bundleStore().release();
+    },
+    createSessionBinaryBacking(input, operationOptions) {
+      return createSessionBinaryBacking(
+        input,
+        options.sessionBinaryBacking,
+        operationOptions
+      );
     }
   };
   return Object.freeze(composition);
@@ -4894,6 +6072,7 @@ function createAssetManagerComposition(featureFlags, options = {}) {
 export {
   createAssetManagerComposition,
   createBinaryBundleStore,
+  createSessionBinaryBacking,
   createVerifiedRemoteBinaryCache,
   createVerifiedRemoteCacheDatabaseName
 };

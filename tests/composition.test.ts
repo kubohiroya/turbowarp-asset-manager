@@ -328,4 +328,43 @@ describe('Asset Manager composition API', () => {
     ).rejects.toMatchObject({code: 'ASSET_BINARY_BUNDLE_RELEASED'});
     expect(registerExtension).not.toHaveBeenCalled();
   });
+
+  it('creates an explicitly disabled session backing without opening IndexedDB', async () => {
+    const open = vi.fn(() => {
+      throw new Error('IndexedDB must remain disabled');
+    });
+    const release = vi.fn();
+    const assets = createAssetManagerComposition(undefined, {
+      sessionBinaryBacking: {indexedDB: {open} as unknown as IDBFactory}
+    });
+    const backing = await assets.createSessionBinaryBacking({
+      policy: 'disabled',
+      sessionId: 'direct-session',
+      assets: [
+        {
+          namespace: 'story/source-integrity',
+          name: 'Pose',
+          integrity: `sha256-${'0'.repeat(64)}`,
+          files: [
+            {
+              path: 'weights.bin',
+              size: 1,
+              integrity: `sha256-${'1'.repeat(64)}`
+            }
+          ]
+        }
+      ],
+      source: {
+        async read() {
+          throw new Error('not materialized in this test');
+        },
+        release
+      }
+    });
+
+    expect(backing.mode).toBe('direct');
+    expect(open).not.toHaveBeenCalled();
+    await backing.dispose();
+    expect(release).toHaveBeenCalledTimes(1);
+  });
 });
