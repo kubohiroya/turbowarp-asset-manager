@@ -176,7 +176,7 @@
     };
   }
   const EXTENSION_ID = "kubohiroyaassetmanager";
-  const EXTENSION_VERSION = "0.9.0";
+  const EXTENSION_VERSION = "0.10.0";
   const EXTENSION_DOCS_URI = "https://kubohiroya.github.io/turbowarp-asset-manager/";
   const DB_NAME = "tw-asset-manager";
   const DB_VERSION = 1;
