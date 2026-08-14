@@ -1,6 +1,7 @@
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {
   AssetManagerExtension,
+  BLOCK_ICON_URI,
   EXTENSION_DOCS_URI,
   EXTENSION_VERSION,
   guessMimeType,
@@ -381,7 +382,17 @@ describe('project-local assets', () => {
     expect(extension.getInfo().docsURI).toBe(EXTENSION_DOCS_URI);
     expect(EXTENSION_DOCS_URI).toBe('https://kubohiroya.github.io/turbowarp-asset-manager/');
     expect(extension.getVersion()).toBe(EXTENSION_VERSION);
-    expect(EXTENSION_VERSION).toBe('0.10.0');
+    expect(EXTENSION_VERSION).toBe('0.11.0');
+  });
+
+  it('publishes the Asset Manager monogram as a transparent block icon', () => {
+    const info = new AssetManagerExtension().getInfo();
+    const svg = decodeURIComponent(BLOCK_ICON_URI.slice('data:image/svg+xml,'.length));
+
+    expect(info.blockIconURI).toBe(BLOCK_ICON_URI);
+    expect(svg).toContain('viewBox="0 0 64 64"');
+    expect(svg).toContain('M19 47 29 17h7l10 30');
+    expect(svg).not.toContain('<rect');
   });
 
   it('validates project asset addresses without registration side effects', () => {
