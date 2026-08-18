@@ -73,6 +73,74 @@ await assets.registerProjectAsset({
 Omitting `target` from a sound locator selects the Stage. The existing string `resourceId` grammar
 and its trimmed logical names remain available for saved projects and block-based callers.
 
+### DOM image resources
+
+Composition consumers can resolve a registered image without creating a scratch-render skin or
+drawable. `resolveDOMImageResource` returns a frozen resource containing a `blob:` URL, normalized
+and verified MIME type, intrinsic width and height, and an idempotent `release()` method. Raster
+PNG, JPEG, GIF, WebP, BMP, and AVIF resources must have matching file signatures and must decode to
+positive dimensions. SVG resources must be well-formed UTF-8 SVG and must declare positive
+absolute `width`/`height`, a positive `viewBox`, or enough of those values to derive both
+dimensions. The returned raster dimensions are encoded pixel dimensions; SVG absolute units are
+converted to CSS pixels at 96 dpi and missing dimensions are derived from the `viewBox` ratio.
+
+Bind a resource to an SVG `<image>` or HTML image through `applyDOMImageResource`. Reapplying the
+same element installs the new URL before releasing the previous resource, so a failed resolution
+keeps the current image intact. Overlapping resources for the same registered asset are separate
+leases over one verified backing and object URL. The final lease revokes the URL; resolving it again
+afterwards creates and verifies a new backing.
+
+```js
+const portraitImage = document.createElementNS('http://www.w3.org/2000/svg', 'image');
+
+await assets.registerProjectAsset({
+  name: 'Portrait',
+  locator: {kind: 'costume', target: 'Actor', name: 'Portrait'}
+});
+
+const portrait = await assets.applyDOMImageResource('Portrait', portraitImage, {
+  owner: actorTarget
+});
+console.log(portrait.mimeType, portrait.width, portrait.height);
+
+// Target cleanup:
+assets.releaseDOMImageResource(portraitImage);
+
+// Consumer disposal:
+assets.releaseAllDOMImageResources();
+assets.releaseAll();
+```
+
+Bubble's opt-in SVG overlay in
+[turbowarp-bubble#59](https://github.com/kubohiroya/turbowarp-bubble/issues/59) consumes this generic
+resource through a Bubble-owned adapter. Asset Manager does not import Bubble types or attach
+Bubble-specific security metadata; see Bubble's SVG overlay example for the integration point.
+
+Successful asset replacement and `releaseAsset` release every outstanding resource for that
+logical name. `releaseAllDOMImageResources` releases URLs without unregistering assets, while
+`releaseAll` does both. Active URLs are also released on `PROJECT_STOP_ALL`, `PROJECT_LOADED`, and
+`RUNTIME_DISPOSED`. Passing the owning TurboWarp target to `applyDOMImageResource` additionally
+releases its URL when a removed target or clone emits `STOP_FOR_TARGET`. Once released, the URL is
+revoked, a bound matching `href`/`src` is removed, and Asset Manager retains no Blob or byte
+reference. Callers must not keep using a released URL and must reapply resources after stop or
+project reload.
+
+SVG security is reject-by-default. The validator rejects malformed XML, DOCTYPE/entity and
+stylesheet processing instructions, non-SVG element namespaces, `script`, `foreignObject`,
+`iframe`, `object`, `embed`, and SMIL mutation elements, all `on*` event attributes, `xml:base`,
+imported or executable CSS, and URL-bearing attributes or CSS that refer outside the document.
+Local fragment references and base64 data URLs for the supported raster image formats are allowed;
+nested SVG data URLs are not.
+Validation occurs before creating the object URL, and accepted SVG is reserialized from the parsed
+DOM. These checks are a resource boundary for `<img>`/SVG `<image>` use, not permission to inject
+the returned content as live HTML or a top-level SVG document.
+
+The DOM resource contract is additive and is planned for the next minor package release (0.12.0).
+Bubble should pin that released version exactly, as it does for other composition dependencies;
+breaking method or field changes require a new major version. Rollback requires only disabling the
+Bubble SVG-overlay backend and returning to its scratch-render path. Existing skin application,
+sound, registration, persistence, and cache behavior does not call this API and is unchanged.
+
 Kamishibai hosts should scope the persistent cache to one story. Generate the database name when
 the story manifest is first built, persist both the stable ID and generated name in that manifest,
 and keep the database name when only the source filename changes:

@@ -1074,6 +1074,33 @@
         }
       }
     }
+    async resolveImageAssetBytes(args) {
+      const name = normalizeName(args.NAME);
+      const kind = this.assetRegistry.get(name);
+      if (!kind) throw this.assetNotRegistered("resolveDOMImageResource", name);
+      if (kind === "external") {
+        const asset = this.externalAssets.get(name);
+        if (!asset) throw this.assetNotRegistered("resolveDOMImageResource", name);
+        const mimeType = normalizeMimeType(asset.mimeType, asset.url || name);
+        if (!mimeType.startsWith("image/")) {
+          throw this.assetTypeMismatch(
+            "resolveDOMImageResource",
+            name,
+            "image",
+            `external/${this.externalMediaKind(asset)}`
+          );
+        }
+        return Object.freeze({ bytes: new Uint8Array(asset.data.slice(0)), mimeType });
+      }
+      if (kind === "costume" || kind === "backdrop") {
+        const { costume } = this.resolveCostumeReference(name);
+        const mimeType = this.projectAssetMimeType(costume.dataFormat, "image");
+        const asset = await this.resolveProjectImageStorageAsset(name, costume);
+        const source = asset.data instanceof Uint8Array ? asset.data : new Uint8Array(asset.data);
+        return Object.freeze({ bytes: Uint8Array.from(source), mimeType });
+      }
+      throw this.assetTypeMismatch("resolveDOMImageResource", name, "image", kind);
+    }
     getVersion() {
       return EXTENSION_VERSION;
     }
@@ -1791,6 +1818,39 @@
       const asset = this.externalAssets.get(name);
       if (!asset) throw this.assetNotRegistered("show", name);
       return this.ensureExternalAssetSkin(asset, name);
+    }
+    async resolveProjectImageStorageAsset(name, costume) {
+      if (costume.asset?.data) return costume.asset;
+      const assetId = costume.assetId;
+      const dataFormat = costume.dataFormat?.toLowerCase();
+      const storage = this.runtime.storage;
+      if (!assetId || !dataFormat || !storage) {
+        throw new AssetManagerError(
+          "SOURCE_ASSET_NOT_FOUND",
+          `Project image bytes are unavailable for asset "${name}".`,
+          {
+            operation: "resolveDOMImageResource",
+            assetName: name,
+            hint: "Resolve the resource while its project costume and VM storage are available."
+          }
+        );
+      }
+      const cached = storage.get?.(assetId);
+      if (cached?.data) return cached;
+      const assetType = dataFormat === "svg" ? storage.AssetType.ImageVector : storage.AssetType.ImageBitmap;
+      const loaded = await storage.load?.(assetType, assetId, dataFormat);
+      if (!loaded?.data) {
+        throw new AssetManagerError(
+          "SOURCE_ASSET_NOT_FOUND",
+          `Project image bytes are unavailable for asset "${name}".`,
+          {
+            operation: "resolveDOMImageResource",
+            assetName: name,
+            hint: "Keep the project asset available in VM storage until the resource is resolved."
+          }
+        );
+      }
+      return loaded;
     }
     async ensureExternalAssetSkin(asset, name) {
       asset.mimeType = normalizeMimeType(asset.mimeType, asset.url || name);

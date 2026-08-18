@@ -8,6 +8,7 @@ interface TurboWarpRenderer {
 interface TurboWarpCostume {
   name: string;
   assetId?: string;
+  asset?: TurboWarpStorageAsset | null;
   skinId?: number;
   dataFormat?: string;
 }
@@ -42,11 +43,28 @@ interface TurboWarpTarget {
 interface TurboWarpRuntime {
   renderer: TurboWarpRenderer;
   targets: TurboWarpTarget[];
+  storage?: TurboWarpStorage;
   stageWidth?: number;
   ext_lmsTempVars2?: TurboWarpTemporaryVariablesExtension;
   getOpcodeFunction?(opcode: string): TurboWarpOpcodeFunction | undefined;
   requestRedraw?(): void;
   on?(eventName: string, listener: (target?: TurboWarpTarget) => void): void;
+  off?(eventName: string, listener: (target?: TurboWarpTarget) => void): void;
+}
+interface TurboWarpStorageAsset {
+  readonly data: ArrayBuffer | Uint8Array;
+}
+interface TurboWarpStorage {
+  readonly AssetType: {
+    readonly ImageVector: unknown;
+    readonly ImageBitmap: unknown;
+  };
+  get?(assetId: string): TurboWarpStorageAsset | null | undefined;
+  load?(
+    assetType: unknown,
+    assetId: string,
+    dataFormat: string
+  ): Promise<TurboWarpStorageAsset | null | undefined>;
 }
 interface TurboWarpTemporaryVariablesExtension {
   getRuntimeVariable(args: {VAR: unknown}): unknown;

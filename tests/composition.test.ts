@@ -1,3 +1,7 @@
+import {
+  DOMParser as XMLDOMParser,
+  XMLSerializer as XMLDOMSerializer
+} from '@xmldom/xmldom';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 
 import {createAssetManagerComposition} from '../src/composition.js';
@@ -14,6 +18,16 @@ describe('Asset Manager composition API', () => {
   const fetchAsset = vi.fn(() => Promise.reject(new Error('network must not be used')));
   const openDatabase = vi.fn(() => {
     throw new Error('IndexedDB must not be used');
+  });
+  const runtimeListeners = new Map<string, Array<(target?: TurboWarpTarget) => void>>();
+  const runtimeOn = vi.fn((eventName: string, listener: (target?: TurboWarpTarget) => void) => {
+    const listeners = runtimeListeners.get(eventName) ?? [];
+    listeners.push(listener);
+    runtimeListeners.set(eventName, listeners);
+  });
+  const runtimeOff = vi.fn((eventName: string, listener: (target?: TurboWarpTarget) => void) => {
+    const listeners = runtimeListeners.get(eventName) ?? [];
+    runtimeListeners.set(eventName, listeners.filter((candidate) => candidate !== listener));
   });
   const stage: TurboWarpTarget = {
     id: 'stage',
@@ -66,6 +80,9 @@ describe('Asset Manager composition API', () => {
     registerExtension.mockClear();
     fetchAsset.mockClear();
     openDatabase.mockClear();
+    runtimeListeners.clear();
+    runtimeOn.mockClear();
+    runtimeOff.mockClear();
     vi.stubGlobal('fetch', fetchAsset);
     vi.stubGlobal('indexedDB', {open: openDatabase});
     vi.stubGlobal('createImageBitmap', vi.fn());
@@ -80,7 +97,8 @@ describe('Asset Manager composition API', () => {
           },
           targets: [stage, actor],
           requestRedraw: vi.fn(),
-          on: vi.fn()
+          on: runtimeOn,
+          off: runtimeOff
         }
       },
       extensions: {unsandboxed: true, register: registerExtension},
@@ -91,6 +109,7 @@ describe('Asset Manager composition API', () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
 
@@ -215,6 +234,161 @@ describe('Asset Manager composition API', () => {
     assets.releaseAsset('OpeningImage');
     expect(destroySkin).toHaveBeenCalledTimes(1);
     expect(destroySkin).toHaveBeenCalledWith(41);
+  });
+
+  it('resolves project image bytes into a releasable DOM resource without renderer skins', async () => {
+    vi.stubGlobal('DOMParser', XMLDOMParser);
+    vi.stubGlobal('XMLSerializer', XMLDOMSerializer);
+    const createObjectURL = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:beach');
+    const revokeObjectURL = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+    const vectorType = {runtimeFormat: 'svg'};
+    const load = vi.fn(async () => ({
+      data: new TextEncoder().encode(
+        '<svg xmlns="http://www.w3.org/2000/svg" width="480" height="360"/>'
+      )
+    }));
+    Scratch.vm.runtime.storage = {
+      AssetType: {ImageVector: vectorType, ImageBitmap: {runtimeFormat: 'png'}},
+      get: vi.fn(() => null),
+      load
+    };
+    const assets = createAssetManagerComposition();
+    await assets.registerProjectAsset({name: 'Beach', resourceId: 'backdrop:Beach'});
+
+    const resource = await assets.resolveDOMImageResource('Beach');
+
+    expect(resource).toMatchObject({
+      url: 'blob:beach',
+      mimeType: 'image/svg+xml',
+      width: 480,
+      height: 360,
+      released: false
+    });
+    expect(load).toHaveBeenCalledWith(vectorType, 'beach', 'svg');
+    expect(createSVGSkin).not.toHaveBeenCalled();
+    expect(createBitmapSkin).not.toHaveBeenCalled();
+    expect(updateDrawableSkinId).not.toHaveBeenCalled();
+
+    resource.release();
+    resource.release();
+    expect(revokeObjectURL).toHaveBeenCalledOnce();
+    expect(createObjectURL).toHaveBeenCalledOnce();
+  });
+
+  it('shares verified DOM image backing while leases overlap and detaches lifecycle listeners', async () => {
+    let objectURLSequence = 0;
+    const createObjectURL = vi.spyOn(URL, 'createObjectURL')
+      .mockImplementation(() => `blob:shared-${++objectURLSequence}`);
+    const revokeObjectURL = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+    const close = vi.fn();
+    const createImageBitmap = vi.fn(async () => ({width: 10, height: 20, close}));
+    vi.stubGlobal('createImageBitmap', createImageBitmap);
+    const assets = createAssetManagerComposition();
+    await assets.registerEmbeddedAsset({
+      name: 'Shared',
+      sourceName: 'shared.png',
+      mimeType: 'image/png',
+      bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+    });
+
+    const first = await assets.resolveDOMImageResource('Shared');
+    const second = await assets.resolveDOMImageResource('Shared');
+
+    expect(first).not.toBe(second);
+    expect(first.url).toBe('blob:shared-1');
+    expect(second.url).toBe(first.url);
+    expect(createObjectURL).toHaveBeenCalledOnce();
+    expect(createImageBitmap).toHaveBeenCalledOnce();
+    expect(runtimeListeners.get('PROJECT_STOP_ALL')).toHaveLength(1);
+
+    first.release();
+    expect(revokeObjectURL).not.toHaveBeenCalled();
+    second.release();
+    expect(revokeObjectURL).toHaveBeenCalledOnce();
+    expect(runtimeListeners.get('PROJECT_STOP_ALL')).toHaveLength(0);
+    expect(runtimeListeners.get('PROJECT_LOADED')).toHaveLength(0);
+    expect(runtimeListeners.get('RUNTIME_DISPOSED')).toHaveLength(0);
+
+    const attributes = new Map<string, string>();
+    const image = {
+      namespaceURI: 'http://www.w3.org/2000/svg',
+      localName: 'image',
+      getAttribute: (name: string) => attributes.get(name) ?? null,
+      setAttribute: (name: string, value: string) => attributes.set(name, value),
+      removeAttribute: (name: string) => {
+        attributes.delete(name);
+      }
+    };
+    const third = await assets.applyDOMImageResource('Shared', image);
+    const fourth = await assets.applyDOMImageResource('Shared', image);
+    expect(third.released).toBe(true);
+    expect(fourth.url).toBe('blob:shared-2');
+    expect(attributes.get('href')).toBe('blob:shared-2');
+    expect(createObjectURL).toHaveBeenCalledTimes(2);
+    expect(createImageBitmap).toHaveBeenCalledTimes(2);
+    expect(revokeObjectURL).toHaveBeenCalledOnce();
+    fourth.release();
+    expect(attributes.has('href')).toBe(false);
+    expect(revokeObjectURL).toHaveBeenCalledTimes(2);
+  });
+
+  it('releases DOM bindings on reapply, stop, reload, owner destruction, and replacement', async () => {
+    vi.stubGlobal('DOMParser', XMLDOMParser);
+    vi.stubGlobal('XMLSerializer', XMLDOMSerializer);
+    let objectURLSequence = 0;
+    vi.spyOn(URL, 'createObjectURL').mockImplementation(() => `blob:image-${++objectURLSequence}`);
+    const revokeObjectURL = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+    const attributes = new Map<string, string>();
+    const image = {
+      namespaceURI: 'http://www.w3.org/2000/svg',
+      localName: 'image',
+      getAttribute: (name: string) => attributes.get(name) ?? null,
+      setAttribute: (name: string, value: string) => attributes.set(name, value),
+      removeAttribute: (name: string) => {
+        attributes.delete(name);
+      }
+    };
+    const assets = createAssetManagerComposition();
+    const svg = (width: number) => new TextEncoder().encode(
+      `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="10"/>`
+    );
+    await assets.registerEmbeddedAsset({
+      name: 'First', sourceName: 'first.svg', mimeType: 'image/svg+xml', bytes: svg(10)
+    });
+    await assets.registerEmbeddedAsset({
+      name: 'Second', sourceName: 'second.svg', mimeType: 'image/svg+xml', bytes: svg(20)
+    });
+
+    const first = await assets.applyDOMImageResource('First', image, {owner: actor});
+    const second = await assets.applyDOMImageResource('Second', image, {owner: actor});
+    expect(first.released).toBe(true);
+    expect(second.released).toBe(false);
+    expect(attributes.get('href')).toBe('blob:image-2');
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:image-1');
+
+    for (const listener of runtimeListeners.get('PROJECT_STOP_ALL') ?? []) listener();
+    expect(second.released).toBe(true);
+    expect(attributes.has('href')).toBe(false);
+    expect(assets.isRegistered('Second')).toBe(true);
+
+    const afterStop = await assets.applyDOMImageResource('First', image, {owner: actor});
+    for (const listener of runtimeListeners.get('PROJECT_LOADED') ?? []) listener();
+    expect(afterStop.released).toBe(true);
+
+    const afterReload = await assets.applyDOMImageResource('First', image, {owner: actor});
+    Scratch.vm.runtime.targets.splice(Scratch.vm.runtime.targets.indexOf(actor), 1);
+    for (const listener of runtimeListeners.get('STOP_FOR_TARGET') ?? []) listener(actor);
+    expect(afterReload.released).toBe(true);
+
+    const beforeReplacement = await assets.applyDOMImageResource('First', image);
+    await assets.registerEmbeddedAsset({
+      name: 'First', sourceName: 'new.svg', mimeType: 'image/svg+xml', bytes: svg(30)
+    });
+    expect(beforeReplacement.released).toBe(true);
+    expect(attributes.has('href')).toBe(false);
+    expect(revokeObjectURL).toHaveBeenCalledTimes(5);
+    expect(createSVGSkin).not.toHaveBeenCalled();
+    expect(createBitmapSkin).not.toHaveBeenCalled();
   });
 
   it('preserves explicit embedded bitmap resolution and defaults it to one', async () => {

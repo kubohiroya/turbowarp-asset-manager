@@ -30,6 +30,13 @@ import {
   type SessionBinaryBackingInput,
   type SessionBinaryBackingOptions
 } from './session-binary-backing.js';
+import {
+  createDOMImageResourceBacking,
+  type DOMImageResource,
+  type DOMImageResourceBacking
+} from './dom-image-resource.js';
+
+export {type DOMImageResource} from './dom-image-resource.js';
 
 export {
   createBinaryBundleStore,
@@ -118,6 +125,19 @@ export interface AssetManagerCompositionTarget {
   readonly isStage: boolean;
 }
 
+export interface DOMImageResourceTarget {
+  readonly namespaceURI?: string | null;
+  readonly localName?: string;
+  getAttribute(name: string): string | null;
+  setAttribute(name: string, value: string): void;
+  removeAttribute(name: string): void;
+}
+
+export interface DOMImageResourceBindingOptions {
+  readonly attribute?: 'href' | 'src';
+  readonly owner?: AssetManagerCompositionTarget;
+}
+
 export interface AssetManagerCompositionOptions {
   readonly verifiedRemoteCache?: VerifiedRemoteBinaryCacheOptions;
   readonly binaryBundleStore?: BinaryBundleStoreOptions;
@@ -131,6 +151,14 @@ export interface AssetManagerComposition {
   releaseAll(): void;
   isRegistered(name: unknown): boolean;
   getMimeType(name: unknown): string;
+  resolveDOMImageResource(name: unknown): Promise<DOMImageResource>;
+  applyDOMImageResource(
+    name: unknown,
+    target: DOMImageResourceTarget,
+    options?: DOMImageResourceBindingOptions
+  ): Promise<DOMImageResource>;
+  releaseDOMImageResource(target: DOMImageResourceTarget): void;
+  releaseAllDOMImageResources(): void;
   applyToStage(name: unknown): Promise<void>;
   applyToTarget(name: unknown, target: AssetManagerCompositionTarget): Promise<void>;
   playSound(name: unknown, options?: Readonly<{untilDone?: boolean}>): Promise<void>;
@@ -183,6 +211,29 @@ export function createAssetManagerComposition(
   let literalNameSequence = 0;
   let verifiedRemoteCache: VerifiedRemoteBinaryCache | null = null;
   let binaryBundleStore: BinaryBundleStore | null = null;
+  const domImageResourceVersions = new Map<string, number>();
+  const domImageResourceBackings = new Map<string, DOMImageResourceBackingEntry>();
+  const activeDOMImageResources = new Set<ActiveDOMImageResource>();
+  const activeDOMImageResourcesByName = new Map<string, Set<ActiveDOMImageResource>>();
+  const domImageResourceControllers = new WeakMap<DOMImageResource, ActiveDOMImageResource>();
+  const boundDOMImageResources = new WeakMap<DOMImageResourceTarget, ActiveDOMImageResource>();
+  const ownerDOMImageResources = new Map<string, Set<ActiveDOMImageResource>>();
+
+  interface ActiveDOMImageResource {
+    readonly name: string;
+    readonly resource: DOMImageResource;
+    binding?: {
+      readonly target: DOMImageResourceTarget;
+      readonly attribute: 'href' | 'src';
+      readonly ownerId?: string;
+    };
+  }
+
+  interface DOMImageResourceBackingEntry {
+    readonly version: number;
+    readonly promise: Promise<DOMImageResourceBacking>;
+    backing?: DOMImageResourceBacking;
+  }
 
   function remoteCache(): VerifiedRemoteBinaryCache {
     verifiedRemoteCache ??= createVerifiedRemoteBinaryCache(options.verifiedRemoteCache);
@@ -196,6 +247,12 @@ export function createAssetManagerComposition(
 
   function cancelledRegistration(name: string): Error {
     const error = new Error(`Asset registration was cancelled: ${JSON.stringify(name)}`);
+    error.name = 'AbortError';
+    return error;
+  }
+
+  function cancelledDOMImageResolution(name: string): Error {
+    const error = new Error(`DOM image resource resolution was cancelled: ${JSON.stringify(name)}`);
     error.name = 'AbortError';
     return error;
   }
@@ -244,7 +301,9 @@ export function createAssetManagerComposition(
       ) {
         throw cancelledRegistration(claimed.external);
       }
-      return registration(claimed.external, claimed.internal);
+      const registered = registration(claimed.external, claimed.internal);
+      invalidateDOMImageResources(claimed.external);
+      return registered;
     } catch (error) {
       if (!claimed.previouslyOwned && !extension.isLoaded({NAME: claimed.internal})) {
         ownedNames.delete(claimed.external);
@@ -263,6 +322,7 @@ export function createAssetManagerComposition(
   function releaseAsset(name: unknown): void {
     const owned = ownedName(name);
     if (!owned) return;
+    invalidateDOMImageResources(owned.external);
     ownedNames.delete(owned.external);
     let stopError: unknown;
     if (extension.getAssetMimeType({NAME: owned.internal}).startsWith('audio/')) {
@@ -274,6 +334,209 @@ export function createAssetManagerComposition(
     }
     extension.deleteMemoryAsset({NAME: owned.internal});
     if (stopError) throw stopError;
+  }
+
+  function invalidateDOMImageResources(name: string): void {
+    domImageResourceVersions.set(name, (domImageResourceVersions.get(name) ?? 0) + 1);
+    for (const controller of [...(activeDOMImageResourcesByName.get(name) ?? [])]) {
+      controller.resource.release();
+    }
+  }
+
+  function releaseActiveDOMImageResource(controller: ActiveDOMImageResource): void {
+    activeDOMImageResources.delete(controller);
+    const named = activeDOMImageResourcesByName.get(controller.name);
+    named?.delete(controller);
+    if (named?.size === 0) activeDOMImageResourcesByName.delete(controller.name);
+    const binding = controller.binding;
+    if (!binding) {
+      stopListeningForDOMImageLifecycleIfIdle();
+      return;
+    }
+    const ownsTargetBinding = boundDOMImageResources.get(binding.target) === controller;
+    if (ownsTargetBinding) {
+      boundDOMImageResources.delete(binding.target);
+      try {
+        if (binding.target.getAttribute(binding.attribute) === controller.resource.url) {
+          binding.target.removeAttribute(binding.attribute);
+        }
+      } catch {
+        // The target may already be detached or disposed.
+      }
+    }
+    if (binding.ownerId !== undefined) {
+      const owned = ownerDOMImageResources.get(binding.ownerId);
+      owned?.delete(controller);
+      if (owned?.size === 0) ownerDOMImageResources.delete(binding.ownerId);
+    }
+    delete controller.binding;
+    stopListeningForDOMImageLifecycleIfIdle();
+  }
+
+  function releaseAllDOMImageResources(): void {
+    for (const name of ownedNames.keys()) {
+      domImageResourceVersions.set(name, (domImageResourceVersions.get(name) ?? 0) + 1);
+    }
+    for (const controller of [...activeDOMImageResources]) controller.resource.release();
+  }
+
+  function releaseDOMImageResourcesForOwner(ownerId: string): void {
+    for (const controller of [...(ownerDOMImageResources.get(ownerId) ?? [])]) {
+      controller.resource.release();
+    }
+  }
+
+  async function resolveDOMImageResourceBacking(
+    external: string,
+    internal: unknown,
+    version: number
+  ): Promise<DOMImageResourceBacking> {
+    const cached = domImageResourceBackings.get(external);
+    if (cached?.version === version) return cached.promise;
+
+    let entry!: DOMImageResourceBackingEntry;
+    const promise = (async () => {
+      const resolved = await extension.resolveImageAssetBytes({NAME: internal});
+      const backing = await createDOMImageResourceBacking(
+        {name: external, bytes: resolved.bytes, mimeType: resolved.mimeType},
+        (idleBacking) => {
+          if (
+            domImageResourceBackings.get(external) === entry &&
+            entry.backing === idleBacking
+          ) {
+            domImageResourceBackings.delete(external);
+          }
+        }
+      );
+      entry.backing = backing;
+      return backing;
+    })();
+    entry = {version, promise};
+    domImageResourceBackings.set(external, entry);
+    try {
+      return await promise;
+    } catch (error) {
+      if (domImageResourceBackings.get(external) === entry) {
+        domImageResourceBackings.delete(external);
+      }
+      throw error;
+    }
+  }
+
+  async function acquireDOMImageResource(
+    external: string,
+    internal: unknown,
+    version: number,
+    onRelease: (resource: DOMImageResource) => void
+  ): Promise<DOMImageResource> {
+    const backing = await resolveDOMImageResourceBacking(external, internal, version);
+    return backing.acquire(onRelease);
+  }
+
+  async function resolveDOMImageResource(name: unknown): Promise<DOMImageResource> {
+    const owned = ownedName(name);
+    const internal = owned?.internal ?? name;
+    const external = owned?.external ?? normalizeName(name);
+    const version = domImageResourceVersions.get(external) ?? 0;
+    let controller: ActiveDOMImageResource | undefined;
+    const resource = await acquireDOMImageResource(external, internal, version, () => {
+      if (controller) releaseActiveDOMImageResource(controller);
+    });
+    if (
+      !owned ||
+      ownedNames.get(external) !== owned.internal ||
+      (domImageResourceVersions.get(external) ?? 0) !== version
+    ) {
+      resource.release();
+      throw cancelledDOMImageResolution(external);
+    }
+    controller = {name: external, resource};
+    activeDOMImageResources.add(controller);
+    const named = activeDOMImageResourcesByName.get(external) ?? new Set();
+    named.add(controller);
+    activeDOMImageResourcesByName.set(external, named);
+    domImageResourceControllers.set(resource, controller);
+    startListeningForDOMImageLifecycle();
+    return resource;
+  }
+
+  async function applyDOMImageResource(
+    name: unknown,
+    target: DOMImageResourceTarget,
+    bindingOptions: DOMImageResourceBindingOptions = {}
+  ): Promise<DOMImageResource> {
+    if (
+      !target ||
+      typeof target !== 'object' ||
+      typeof target.getAttribute !== 'function' ||
+      typeof target.setAttribute !== 'function' ||
+      typeof target.removeAttribute !== 'function'
+    ) {
+      throw new TypeError('DOM image resource target must support DOM attributes.');
+    }
+    if (!bindingOptions || typeof bindingOptions !== 'object' || Array.isArray(bindingOptions)) {
+      throw new TypeError('DOM image resource binding options must be an object.');
+    }
+    const attribute = bindingOptions.attribute ?? (
+      target.namespaceURI === 'http://www.w3.org/2000/svg' ||
+      target.localName?.toLowerCase() === 'image'
+        ? 'href'
+        : 'src'
+    );
+    if (attribute !== 'href' && attribute !== 'src') {
+      throw new TypeError('DOM image resource attribute must be href or src.');
+    }
+    const resource = await resolveDOMImageResource(name);
+    const controller = domImageResourceControllers.get(resource)!;
+    const previous = boundDOMImageResources.get(target);
+    try {
+      target.setAttribute(attribute, resource.url);
+    } catch (error) {
+      resource.release();
+      throw error;
+    }
+    const ownerId = bindingOptions.owner?.id;
+    controller.binding = {
+      target,
+      attribute,
+      ...(ownerId === undefined ? {} : {ownerId})
+    };
+    boundDOMImageResources.set(target, controller);
+    if (ownerId !== undefined) {
+      const ownerResources = ownerDOMImageResources.get(ownerId) ?? new Set();
+      ownerResources.add(controller);
+      ownerDOMImageResources.set(ownerId, ownerResources);
+    }
+    previous?.resource.release();
+    return resource;
+  }
+
+  const runtime = Scratch.vm.runtime;
+  let listeningForDOMImageLifecycle = false;
+  const releaseStoppedTargetDOMImageResources = (target?: TurboWarpTarget): void => {
+    if (target && !runtime.targets.includes(target)) releaseDOMImageResourcesForOwner(target.id);
+  };
+
+  function startListeningForDOMImageLifecycle(): void {
+    if (listeningForDOMImageLifecycle || !runtime.on) return;
+    listeningForDOMImageLifecycle = true;
+    runtime.on('PROJECT_STOP_ALL', releaseAllDOMImageResources);
+    runtime.on('PROJECT_LOADED', releaseAllDOMImageResources);
+    runtime.on('RUNTIME_DISPOSED', releaseAllDOMImageResources);
+    runtime.on('STOP_FOR_TARGET', releaseStoppedTargetDOMImageResources);
+  }
+
+  function stopListeningForDOMImageLifecycleIfIdle(): void {
+    if (
+      !listeningForDOMImageLifecycle ||
+      activeDOMImageResources.size > 0 ||
+      !runtime.off
+    ) return;
+    listeningForDOMImageLifecycle = false;
+    runtime.off('PROJECT_STOP_ALL', releaseAllDOMImageResources);
+    runtime.off('PROJECT_LOADED', releaseAllDOMImageResources);
+    runtime.off('RUNTIME_DISPOSED', releaseAllDOMImageResources);
+    runtime.off('STOP_FOR_TARGET', releaseStoppedTargetDOMImageResources);
   }
 
   const composition: AssetManagerComposition = {
@@ -311,6 +574,7 @@ export function createAssetManagerComposition(
     },
     releaseAsset,
     releaseAll() {
+      releaseAllDOMImageResources();
       const errors: unknown[] = [];
       for (const name of [...ownedNames.keys()].reverse()) {
         try {
@@ -329,6 +593,12 @@ export function createAssetManagerComposition(
       const owned = ownedName(name);
       return owned ? extension.getAssetMimeType({NAME: owned.internal}) : '';
     },
+    resolveDOMImageResource,
+    applyDOMImageResource,
+    releaseDOMImageResource(target) {
+      boundDOMImageResources.get(target)?.resource.release();
+    },
+    releaseAllDOMImageResources,
     applyToStage(name) {
       return extension.setStageSkin({NAME: ownedName(name)?.internal ?? name});
     },

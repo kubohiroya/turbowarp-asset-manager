@@ -8,6 +8,9 @@ import {
   type BinaryBundleRegistration,
   type BinaryBundleResult,
   type BinaryBundleStore,
+  type DOMImageResource,
+  type DOMImageResourceBindingOptions,
+  type DOMImageResourceTarget,
   type EmbeddedAssetBytesInput,
   type EmbeddedAssetRegistration,
   type ProjectAssetLocator,
@@ -52,6 +55,19 @@ const databaseName: string = createVerifiedRemoteCacheDatabaseName({
 const registration: Promise<EmbeddedAssetRegistration> = composition.registerEmbeddedAsset(input);
 const bitmapRegistration: Promise<EmbeddedAssetRegistration> =
   composition.registerEmbeddedAsset(bitmapInput);
+declare const svgImage: DOMImageResourceTarget;
+const domBindingOptions: DOMImageResourceBindingOptions = {
+  attribute: 'href',
+  owner: {id: 'actor-1', isStage: false}
+};
+const domResource: Promise<DOMImageResource> = composition.resolveDOMImageResource('OpeningImage');
+const appliedDOMResource: Promise<DOMImageResource> = composition.applyDOMImageResource(
+  'OpeningImage',
+  svgImage,
+  domBindingOptions
+);
+composition.releaseDOMImageResource(svgImage);
+composition.releaseAllDOMImageResources();
 const remoteInput: VerifiedRemoteBinaryInput = {
   url: 'https://example.com/model.bin',
   integrity: `sha256-${'0'.repeat(64)}`,
@@ -137,6 +153,9 @@ const compositionSession: Promise<SessionBinaryBacking> = composition.createSess
 
 void registration;
 void bitmapRegistration;
+void domResource;
+void appliedDOMResource;
+void domBindingOptions;
 void projectRegistration;
 void projectLocator;
 void remote;
