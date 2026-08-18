@@ -20,7 +20,7 @@ import {
 } from './text-style.js';
 
 export const EXTENSION_ID = 'kubohiroyaassetmanager';
-export const EXTENSION_VERSION = '0.11.0';
+export const EXTENSION_VERSION = '0.12.0';
 export const EXTENSION_DOCS_URI = 'https://kubohiroya.github.io/turbowarp-asset-manager/';
 export const BLOCK_ICON_URI = `data:image/svg+xml,${encodeURIComponent(
   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><path fill="#fff" d="M19 47 29 17h7l10 30h-7l-2-7H27l-2 7h-6Zm10-13h6l-3-10-3 10Z"/></svg>'
