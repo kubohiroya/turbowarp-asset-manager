@@ -15,14 +15,14 @@ The built JavaScript file is committed to this repository so that users do not n
 The versioned npm package contains the same reviewed build:
 
 ```bash
-pnpm add --save-exact @kubohiroya/turbowarp-asset-manager@0.11.0
+pnpm add --save-exact @kubohiroya/turbowarp-asset-manager@0.12.0
 ```
 
 Load `node_modules/@kubohiroya/turbowarp-asset-manager/dist/asset-manager.js`, or use the
 version-pinned CDN URL:
 
 ```text
-https://cdn.jsdelivr.net/npm/@kubohiroya/turbowarp-asset-manager@0.11.0/dist/asset-manager.js
+https://cdn.jsdelivr.net/npm/@kubohiroya/turbowarp-asset-manager@0.12.0/dist/asset-manager.js
 ```
 
 ## Composition API
@@ -135,7 +135,7 @@ Validation occurs before creating the object URL, and accepted SVG is reserializ
 DOM. These checks are a resource boundary for `<img>`/SVG `<image>` use, not permission to inject
 the returned content as live HTML or a top-level SVG document.
 
-The DOM resource contract is additive and is planned for the next minor package release (0.12.0).
+The DOM resource contract is additive and is introduced in package release 0.12.0.
 Bubble should pin that released version exactly, as it does for other composition dependencies;
 breaking method or field changes require a new major version. Rollback requires only disabling the
 Bubble SVG-overlay backend and returning to its scratch-render path. Existing skin application,

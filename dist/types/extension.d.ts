@@ -1,7 +1,7 @@
 import { AssetManagerError } from './asset-manager-error.js';
 import { type AssetManagerFeatureFlags } from './feature-flags.js';
 export declare const EXTENSION_ID = "kubohiroyaassetmanager";
-export declare const EXTENSION_VERSION = "0.11.0";
+export declare const EXTENSION_VERSION = "0.12.0";
 export declare const EXTENSION_DOCS_URI = "https://kubohiroya.github.io/turbowarp-asset-manager/";
 export declare const BLOCK_ICON_URI: string;
 type BlockArgs = Record<string, unknown>;
