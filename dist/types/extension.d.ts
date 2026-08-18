@@ -17,6 +17,10 @@ export interface EmbeddedAssetRegistration {
     readonly name: string;
     readonly mimeType: string;
 }
+export interface ResolvedImageAssetBytes {
+    readonly bytes: Uint8Array;
+    readonly mimeType: string;
+}
 interface ResolvedSkin {
     skinId: number;
     sourceSize: number | null;
@@ -129,6 +133,7 @@ export declare class AssetManagerExtension {
     stopSound(args: BlockArgs): void;
     stopAllSounds(): void;
     getAssetMimeType(args: BlockArgs): string;
+    resolveImageAssetBytes(args: BlockArgs): Promise<ResolvedImageAssetBytes>;
     getVersion(): string;
     setTextValue(args: BlockArgs): Promise<void>;
     setTextStyle(args: BlockArgs): void;
@@ -181,6 +186,7 @@ export declare class AssetManagerExtension {
     private setRuntimeVariable;
     private requireAnimatedTextOpcode;
     private ensureExternalSkin;
+    private resolveProjectImageStorageAsset;
     private ensureExternalAssetSkin;
     private resolveSkinFromAsset;
     private resolveCostumeReference;

@@ -2,6 +2,8 @@ import { type AssetManagerFeatureFlags } from './feature-flags.js';
 import { type BinaryBundleKeyInput, type BinaryBundleOperationOptions, type BinaryBundlePutInput, type BinaryBundleRegistration, type BinaryBundleResult, type BinaryBundleStoreOptions } from './binary-bundle-store.js';
 import { type VerifiedRemoteBinaryCacheOptions, type VerifiedRemoteBinaryInput, type VerifiedRemoteBinaryResolveOptions, type VerifiedRemoteBinaryResult, type VerifiedRemoteCachePruneResult, type VerifiedRemoteCacheStats, type VerifiedRemoteStoryCacheDeleteResult, type VerifiedRemoteStoryCacheInfo, type VerifiedRemoteStoryCachePruneResult } from './verified-remote-cache.js';
 import { type SessionBinaryBacking, type SessionBinaryBackingInput, type SessionBinaryBackingOptions } from './session-binary-backing.js';
+import { type DOMImageResource } from './dom-image-resource.js';
+export { type DOMImageResource } from './dom-image-resource.js';
 export { createBinaryBundleStore, type BinaryBundleFileInput, type BinaryBundleFileRegistration, type BinaryBundleFileResult, type BinaryBundleKeyInput, type BinaryBundleOperationOptions, type BinaryBundlePutInput, type BinaryBundleRegistration, type BinaryBundleResult, type BinaryBundleStore, type BinaryBundleStoreOptions } from './binary-bundle-store.js';
 export { createVerifiedRemoteBinaryCache, createVerifiedRemoteCacheDatabaseName, type NormalizedVerifiedRemoteBinaryInput, type VerifiedRemoteBinaryCache, type VerifiedRemoteBinaryCacheOptions, type VerifiedRemoteBinaryInput, type VerifiedRemoteBinaryLoadResult, type VerifiedRemoteBinaryResolveOptions, type VerifiedRemoteBinaryResult, type VerifiedRemoteCacheWarning, type VerifiedRemoteCacheIdentity, type VerifiedRemoteCacheIdentityInput, type VerifiedRemoteCachePruneResult, type VerifiedRemoteCacheStats, type VerifiedRemoteStoryCacheDeleteResult, type VerifiedRemoteStoryCacheInfo, type VerifiedRemoteStoryCachePruneResult } from './verified-remote-cache.js';
 export { createSessionBinaryBacking, type SessionBinaryBacking, type SessionBinaryBackingAssetInput, type SessionBinaryBackingInput, type SessionBinaryBackingMode, type SessionBinaryBackingOptions, type SessionBinaryBackingPolicy, type SessionBinaryBackingSource, type SessionBinaryBackingSourceAsset, type SessionBinaryBackingWarning } from './session-binary-backing.js';
@@ -45,6 +47,17 @@ export interface AssetManagerCompositionTarget {
     readonly id: string;
     readonly isStage: boolean;
 }
+export interface DOMImageResourceTarget {
+    readonly namespaceURI?: string | null;
+    readonly localName?: string;
+    getAttribute(name: string): string | null;
+    setAttribute(name: string, value: string): void;
+    removeAttribute(name: string): void;
+}
+export interface DOMImageResourceBindingOptions {
+    readonly attribute?: 'href' | 'src';
+    readonly owner?: AssetManagerCompositionTarget;
+}
 export interface AssetManagerCompositionOptions {
     readonly verifiedRemoteCache?: VerifiedRemoteBinaryCacheOptions;
     readonly binaryBundleStore?: BinaryBundleStoreOptions;
@@ -57,6 +70,10 @@ export interface AssetManagerComposition {
     releaseAll(): void;
     isRegistered(name: unknown): boolean;
     getMimeType(name: unknown): string;
+    resolveDOMImageResource(name: unknown): Promise<DOMImageResource>;
+    applyDOMImageResource(name: unknown, target: DOMImageResourceTarget, options?: DOMImageResourceBindingOptions): Promise<DOMImageResource>;
+    releaseDOMImageResource(target: DOMImageResourceTarget): void;
+    releaseAllDOMImageResources(): void;
     applyToStage(name: unknown): Promise<void>;
     applyToTarget(name: unknown, target: AssetManagerCompositionTarget): Promise<void>;
     playSound(name: unknown, options?: Readonly<{
