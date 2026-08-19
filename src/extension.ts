@@ -10,6 +10,11 @@ import {
   type AssetManagerFeatureFlags
 } from './feature-flags.js';
 import {
+  createDOMImageResourceBacking,
+  type DOMImageResource,
+  type DOMImageResourceBacking
+} from './dom-image-resource.js';
+import {
   DEFAULT_OUTLINE_COLOR,
   DEFAULT_OUTLINE_WIDTH,
   normalizeTextStyleProperty,
@@ -20,7 +25,7 @@ import {
 } from './text-style.js';
 
 export const EXTENSION_ID = 'kubohiroyaassetmanager';
-export const EXTENSION_VERSION = '0.12.0';
+export const EXTENSION_VERSION = '0.12.1';
 export const EXTENSION_DOCS_URI = 'https://kubohiroya.github.io/turbowarp-asset-manager/';
 export const BLOCK_ICON_URI = `data:image/svg+xml,${encodeURIComponent(
   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><path fill="#fff" d="M19 47 29 17h7l10 30h-7l-2-7H27l-2 7h-6Zm10-13h6l-3-10-3 10Z"/></svg>'
@@ -75,6 +80,23 @@ export interface EmbeddedAssetRegistration {
 export interface ResolvedImageAssetBytes {
   readonly bytes: Uint8Array;
   readonly mimeType: string;
+}
+
+export interface AssetManagerDOMImageCapability {
+  isRegistered(name: unknown): boolean;
+  getMimeType(name: unknown): string;
+  resolveDOMImageResource(name: unknown): Promise<DOMImageResource>;
+}
+
+interface ExtensionDOMImageResourceController {
+  readonly name: string;
+  readonly resource: DOMImageResource;
+}
+
+interface ExtensionDOMImageResourceBackingEntry {
+  readonly version: number;
+  readonly promise: Promise<DOMImageResourceBacking>;
+  backing?: DOMImageResourceBacking;
 }
 
 interface ExternalMemoryAsset extends AssetRecord {
@@ -776,6 +798,22 @@ export class AssetManagerExtension {
   private lastAssetErrorType = '';
   private lastAssetErrorLabel = '';
   private assetErrorVersion = 0;
+  private readonly domImageResourceVersions = new Map<string, number>();
+  private readonly domImageResourceBackings =
+    new Map<string, ExtensionDOMImageResourceBackingEntry>();
+  private readonly activeDOMImageResources =
+    new Set<ExtensionDOMImageResourceController>();
+  private readonly activeDOMImageResourcesByName =
+    new Map<string, Set<ExtensionDOMImageResourceController>>();
+  private domImageCapabilityValue?: AssetManagerDOMImageCapability;
+  private listeningForDOMImageLifecycle = false;
+  private readonly releaseAllDOMImageResourcesForLifecycle = (): void => {
+    this.releaseAllDOMImageResources();
+  };
+  private readonly releaseDOMImageResourcesForRuntimeDispose = (): void => {
+    this.releaseAllDOMImageResources();
+    this.stopListeningForDOMImageLifecycle();
+  };
 
   constructor(featureFlags: AssetManagerFeatureFlags = FEATURE_FLAGS) {
     this.featureFlags = Object.freeze({...featureFlags});
@@ -866,6 +904,23 @@ export class AssetManagerExtension {
       color1: '#5b7cfa', color2: '#425ed8', color3: '#2f46aa',
       blocks: blockDefinitions.map((block) => this.toScratchBlock(block))
     };
+  }
+
+  /**
+   * Exposes the stock extension registry through a host-neutral DOM image
+   * resource contract for other unsandboxed extensions.
+   */
+  getDOMImageCapability(): AssetManagerDOMImageCapability {
+    this.startListeningForDOMImageLifecycle();
+    this.domImageCapabilityValue ??= Object.freeze({
+      isRegistered: (name: unknown): boolean =>
+        this.assetRegistry.has(normalizeName(name)),
+      getMimeType: (name: unknown): string =>
+        this.getAssetMimeType({NAME: name}),
+      resolveDOMImageResource: (name: unknown): Promise<DOMImageResource> =>
+        this.resolveExtensionDOMImageResource(name)
+    });
+    return this.domImageCapabilityValue;
   }
 
   validateProjectAssetAddress(args: BlockArgs): string {
@@ -1056,6 +1111,7 @@ export class AssetManagerExtension {
   }
 
   deleteAllMemoryAssets(): void {
+    this.releaseAllDOMImageResources();
     for (const name of this.registrationVersions.keys()) {
       this.cancelRegistrations(name);
     }
@@ -1481,6 +1537,7 @@ export class AssetManagerExtension {
 
   private unregisterAsset(name: string): void {
     this.cancelRegistrations(name);
+    this.invalidateDOMImageResources(name);
     const kind = this.assetRegistry.get(name);
     if (!kind) return;
     const asset = this.getRegisteredAsset(name, kind);
@@ -1538,6 +1595,7 @@ export class AssetManagerExtension {
         }
         throw error;
       }
+      this.invalidateDOMImageResources(name);
       if (!this.isRegistrationCancellationCurrent(name, token)) {
         if (cacheRecord) {
           await this.restoreCacheIfGeneration(name, token.version, previousCached ?? null);
@@ -2143,6 +2201,121 @@ export class AssetManagerExtension {
       );
     }
     return loaded;
+  }
+
+  private cancelledDOMImageResolution(name: string): Error {
+    const error = new Error(`DOM image resource resolution was cancelled: ${JSON.stringify(name)}`);
+    error.name = 'AbortError';
+    return error;
+  }
+
+  private async resolveExtensionDOMImageResource(
+    nameInput: unknown
+  ): Promise<DOMImageResource> {
+    const name = normalizeName(nameInput);
+    const version = this.domImageResourceVersions.get(name) ?? 0;
+    let entry = this.domImageResourceBackings.get(name);
+    if (entry?.version !== version) {
+      let nextEntry!: ExtensionDOMImageResourceBackingEntry;
+      const promise = (async () => {
+        const resolved = await this.resolveImageAssetBytes({NAME: name});
+        const backing = await createDOMImageResourceBacking(
+          {name, bytes: resolved.bytes, mimeType: resolved.mimeType},
+          (idleBacking) => {
+            if (
+              this.domImageResourceBackings.get(name) === nextEntry &&
+              nextEntry.backing === idleBacking
+            ) {
+              this.domImageResourceBackings.delete(name);
+            }
+          }
+        );
+        nextEntry.backing = backing;
+        return backing;
+      })();
+      nextEntry = {version, promise};
+      entry = nextEntry;
+      this.domImageResourceBackings.set(name, entry);
+      try {
+        await promise;
+      } catch (error) {
+        if (this.domImageResourceBackings.get(name) === entry) {
+          this.domImageResourceBackings.delete(name);
+        }
+        throw error;
+      }
+    }
+    const backing = await entry.promise;
+    let controller: ExtensionDOMImageResourceController | undefined;
+    const resource = backing.acquire(() => {
+      if (controller) this.releaseActiveDOMImageResource(controller);
+    });
+    if (
+      (this.domImageResourceVersions.get(name) ?? 0) !== version ||
+      !this.assetRegistry.has(name)
+    ) {
+      resource.release();
+      throw this.cancelledDOMImageResolution(name);
+    }
+    controller = {name, resource};
+    this.activeDOMImageResources.add(controller);
+    const named = this.activeDOMImageResourcesByName.get(name) ?? new Set();
+    named.add(controller);
+    this.activeDOMImageResourcesByName.set(name, named);
+    return resource;
+  }
+
+  private releaseActiveDOMImageResource(
+    controller: ExtensionDOMImageResourceController
+  ): void {
+    this.activeDOMImageResources.delete(controller);
+    const named = this.activeDOMImageResourcesByName.get(controller.name);
+    named?.delete(controller);
+    if (named?.size === 0) this.activeDOMImageResourcesByName.delete(controller.name);
+  }
+
+  private invalidateDOMImageResources(name: string): void {
+    this.domImageResourceVersions.set(
+      name,
+      (this.domImageResourceVersions.get(name) ?? 0) + 1
+    );
+    this.domImageResourceBackings.delete(name);
+    for (const controller of [...(this.activeDOMImageResourcesByName.get(name) ?? [])]) {
+      controller.resource.release();
+    }
+  }
+
+  private releaseAllDOMImageResources(): void {
+    const names = new Set([
+      ...this.domImageResourceBackings.keys(),
+      ...this.activeDOMImageResourcesByName.keys()
+    ]);
+    for (const name of names) {
+      this.domImageResourceVersions.set(
+        name,
+        (this.domImageResourceVersions.get(name) ?? 0) + 1
+      );
+    }
+    this.domImageResourceBackings.clear();
+    for (const controller of [...this.activeDOMImageResources]) {
+      controller.resource.release();
+    }
+  }
+
+  private startListeningForDOMImageLifecycle(): void {
+    if (this.listeningForDOMImageLifecycle || !this.runtime.on) return;
+    this.listeningForDOMImageLifecycle = true;
+    this.runtime.on('PROJECT_STOP_ALL', this.releaseAllDOMImageResourcesForLifecycle);
+    this.runtime.on('PROJECT_LOADED', this.releaseAllDOMImageResourcesForLifecycle);
+    this.runtime.on('RUNTIME_DISPOSED', this.releaseDOMImageResourcesForRuntimeDispose);
+  }
+
+  private stopListeningForDOMImageLifecycle(): void {
+    if (!this.listeningForDOMImageLifecycle || !this.runtime.off) return;
+    this.listeningForDOMImageLifecycle = false;
+    this.runtime.off('PROJECT_STOP_ALL', this.releaseAllDOMImageResourcesForLifecycle);
+    this.runtime.off('PROJECT_LOADED', this.releaseAllDOMImageResourcesForLifecycle);
+    this.runtime.off('RUNTIME_DISPOSED', this.releaseDOMImageResourcesForRuntimeDispose);
   }
 
   private async ensureExternalAssetSkin(asset: ExternalMemoryAsset, name: string): Promise<number> {

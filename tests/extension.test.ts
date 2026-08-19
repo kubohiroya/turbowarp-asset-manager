@@ -174,6 +174,15 @@ describe('project-local assets', () => {
   const setAmbiguousSize = vi.fn();
   const setStageSize = vi.fn();
   const setUrashimaSize = vi.fn();
+  const runtimeListeners = new Map<
+    string,
+    Set<(target?: TurboWarpTarget) => void>
+  >();
+  const emitRuntime = (eventName: string, target?: TurboWarpTarget): void => {
+    for (const listener of runtimeListeners.get(eventName) ?? []) {
+      listener(target);
+    }
+  };
 
   const soundBank = {playSound, stop: stopSound, stopAllSounds};
   const sprite: TurboWarpTarget = {
@@ -278,6 +287,7 @@ describe('project-local assets', () => {
   });
 
   beforeEach(() => {
+    runtimeListeners.clear();
     sprite.size = 250;
     turtle.size = 175;
     twin.size = 100;
@@ -332,7 +342,15 @@ describe('project-local assets', () => {
           stageWidth: 640,
           ext_lmsTempVars2: {getRuntimeVariable, setRuntimeVariable},
           getOpcodeFunction,
-          requestRedraw: vi.fn()
+          requestRedraw: vi.fn(),
+          on(eventName: string, listener: (target?: TurboWarpTarget) => void) {
+            const listeners = runtimeListeners.get(eventName) ?? new Set();
+            listeners.add(listener);
+            runtimeListeners.set(eventName, listeners);
+          },
+          off(eventName: string, listener: (target?: TurboWarpTarget) => void) {
+            runtimeListeners.get(eventName)?.delete(listener);
+          }
         }
       },
       extensions: {unsandboxed: true, register: vi.fn()},
@@ -376,13 +394,122 @@ describe('project-local assets', () => {
     expect(createBitmapSkin).toHaveBeenCalledWith(expect.anything(), 2);
   });
 
+  it('shares verified DOM image resources from the stock extension registry', async () => {
+    const extension = new AssetManagerExtension(ALL_FEATURES);
+    const close = vi.fn();
+    const createImageBitmap = vi.fn(async () => ({width: 64, height: 32, close}));
+    const createObjectURL = vi
+      .spyOn(URL, 'createObjectURL')
+      .mockReturnValue('blob:stock-resource');
+    const revokeObjectURL = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+    vi.stubGlobal('createImageBitmap', createImageBitmap);
+
+    await extension.registerEmbeddedAsset({
+      name: 'Portrait',
+      sourceName: 'portrait.png',
+      mimeType: 'image/png',
+      bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+    });
+    const capability = extension.getDOMImageCapability();
+
+    expect(Object.isFrozen(capability)).toBe(true);
+    expect(capability.isRegistered('Portrait')).toBe(true);
+    expect(capability.getMimeType('Portrait')).toBe('image/png');
+    const first = await capability.resolveDOMImageResource('Portrait');
+    const second = await capability.resolveDOMImageResource('Portrait');
+
+    expect(first).toMatchObject({
+      url: 'blob:stock-resource',
+      mimeType: 'image/png',
+      width: 64,
+      height: 32,
+      released: false
+    });
+    expect(second.url).toBe(first.url);
+    expect(createObjectURL).toHaveBeenCalledOnce();
+    expect(Scratch.vm.runtime.renderer.createSVGSkin).not.toHaveBeenCalled();
+    expect(Scratch.vm.runtime.renderer.createBitmapSkin).not.toHaveBeenCalled();
+
+    first.release();
+    expect(revokeObjectURL).not.toHaveBeenCalled();
+    second.release();
+    expect(revokeObjectURL).toHaveBeenCalledOnce();
+    expect(close).toHaveBeenCalledOnce();
+
+    createObjectURL.mockRestore();
+    revokeObjectURL.mockRestore();
+  });
+
+  it('invalidates stock extension DOM resources on replacement and lifecycle events', async () => {
+    const extension = new AssetManagerExtension(ALL_FEATURES);
+    vi.stubGlobal(
+      'createImageBitmap',
+      vi.fn(async () => ({width: 32, height: 16, close: vi.fn()}))
+    );
+    const createObjectURL = vi
+      .spyOn(URL, 'createObjectURL')
+      .mockImplementationOnce(() => 'blob:portrait-1')
+      .mockImplementationOnce(() => 'blob:portrait-2')
+      .mockImplementationOnce(() => 'blob:portrait-3')
+      .mockImplementationOnce(() => 'blob:portrait-4')
+      .mockImplementationOnce(() => 'blob:portrait-5');
+    const revokeObjectURL = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    await extension.registerEmbeddedAsset({
+      name: 'Portrait',
+      sourceName: 'portrait.png',
+      mimeType: 'image/png',
+      bytes: png
+    });
+    const capability = extension.getDOMImageCapability();
+    const beforeReplacement = await capability.resolveDOMImageResource('Portrait');
+
+    await extension.registerEmbeddedAsset({
+      name: 'Portrait',
+      sourceName: 'portrait-v2.png',
+      mimeType: 'image/png',
+      bytes: png
+    });
+    expect(beforeReplacement.released).toBe(true);
+
+    const beforeDeletion = await capability.resolveDOMImageResource('Portrait');
+    extension.deleteMemoryAsset({NAME: 'Portrait'});
+    expect(beforeDeletion.released).toBe(true);
+    expect(capability.isRegistered('Portrait')).toBe(false);
+    await extension.registerEmbeddedAsset({
+      name: 'Portrait',
+      sourceName: 'portrait-v3.png',
+      mimeType: 'image/png',
+      bytes: png
+    });
+
+    const beforeStop = await capability.resolveDOMImageResource('Portrait');
+    emitRuntime('PROJECT_STOP_ALL');
+    expect(beforeStop.released).toBe(true);
+
+    const beforeReload = await capability.resolveDOMImageResource('Portrait');
+    emitRuntime('PROJECT_LOADED');
+    expect(beforeReload.released).toBe(true);
+
+    const beforeDispose = await capability.resolveDOMImageResource('Portrait');
+    emitRuntime('RUNTIME_DISPOSED');
+    expect(beforeDispose.released).toBe(true);
+    expect(runtimeListeners.get('PROJECT_STOP_ALL')?.size ?? 0).toBe(0);
+    expect(runtimeListeners.get('PROJECT_LOADED')?.size ?? 0).toBe(0);
+    expect(runtimeListeners.get('RUNTIME_DISPOSED')?.size ?? 0).toBe(0);
+    expect(revokeObjectURL).toHaveBeenCalledTimes(5);
+
+    createObjectURL.mockRestore();
+    revokeObjectURL.mockRestore();
+  });
+
   it('links the default English user guide from the extension palette', () => {
     const extension = new AssetManagerExtension();
 
     expect(extension.getInfo().docsURI).toBe(EXTENSION_DOCS_URI);
     expect(EXTENSION_DOCS_URI).toBe('https://kubohiroya.github.io/turbowarp-asset-manager/');
     expect(extension.getVersion()).toBe(EXTENSION_VERSION);
-    expect(EXTENSION_VERSION).toBe('0.12.0');
+    expect(EXTENSION_VERSION).toBe('0.12.1');
   });
 
   it('publishes the Asset Manager monogram as a transparent block icon', () => {

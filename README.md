@@ -15,14 +15,14 @@ The built JavaScript file is committed to this repository so that users do not n
 The versioned npm package contains the same reviewed build:
 
 ```bash
-pnpm add --save-exact @kubohiroya/turbowarp-asset-manager@0.12.0
+pnpm add --save-exact @kubohiroya/turbowarp-asset-manager@0.12.1
 ```
 
 Load `node_modules/@kubohiroya/turbowarp-asset-manager/dist/asset-manager.js`, or use the
 version-pinned CDN URL:
 
 ```text
-https://cdn.jsdelivr.net/npm/@kubohiroya/turbowarp-asset-manager@0.12.0/dist/asset-manager.js
+https://cdn.jsdelivr.net/npm/@kubohiroya/turbowarp-asset-manager@0.12.1/dist/asset-manager.js
 ```
 
 ## Composition API
@@ -111,10 +111,35 @@ assets.releaseAllDOMImageResources();
 assets.releaseAll();
 ```
 
-Bubble's opt-in SVG overlay in
+Bubble's default SVG overlay in
 [turbowarp-bubble#59](https://github.com/kubohiroya/turbowarp-bubble/issues/59) consumes this generic
 resource through a Bubble-owned adapter. Asset Manager does not import Bubble types or attach
 Bubble-specific security metadata; see Bubble's SVG overlay example for the integration point.
+
+Separately loaded unsandboxed extensions can share the stock Asset Manager registry without
+reading private fields. Call `getDOMImageCapability()` on the registered Asset Manager extension
+and pass the returned frozen capability to the consumer-owned adapter. The capability exposes only
+generic registration lookup, MIME lookup, and verified DOM resource resolution:
+
+```js
+const assetManager = Scratch.vm.runtime.ext_kubohiroyaassetmanager;
+const imageCapability = assetManager.getDOMImageCapability();
+
+if (imageCapability.isRegistered('Portrait')) {
+  const portrait = await imageCapability.resolveDOMImageResource('Portrait');
+  imageElement.setAttribute('href', portrait.url);
+  const releasePortrait = () => {
+    imageElement.removeAttribute('href');
+    portrait.release();
+  };
+  // Call releasePortrait() when the consumer replaces or removes the image.
+}
+```
+
+The capability shares the exact registry populated by the stock Asset Manager blocks. Successful
+replacement or deletion invalidates its active leases. Project stop, project reload, and runtime
+disposal release every remaining lease. Target- or clone-specific consumers retain ownership of
+their resource and must call its idempotent `release()` during their own target lifecycle cleanup.
 
 Successful asset replacement and `releaseAsset` release every outstanding resource for that
 logical name. `releaseAllDOMImageResources` releases URLs without unregistering assets, while
@@ -135,8 +160,9 @@ Validation occurs before creating the object URL, and accepted SVG is reserializ
 DOM. These checks are a resource boundary for `<img>`/SVG `<image>` use, not permission to inject
 the returned content as live HTML or a top-level SVG document.
 
-The DOM resource contract is additive and is introduced in package release 0.12.0.
-Bubble should pin that released version exactly, as it does for other composition dependencies;
+The DOM resource contract is additive and was introduced in package release 0.12.0. The stock
+extension capability handoff is added in 0.12.1. Bubble should pin the required released version
+exactly, as it does for other composition dependencies;
 breaking method or field changes require a new major version. Rollback requires only disabling the
 Bubble SVG-overlay backend and returning to its scratch-render path. Existing skin application,
 sound, registration, persistence, and cache behavior does not call this API and is unchanged.
