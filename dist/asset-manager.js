@@ -86,6 +86,323 @@
     ENABLE_LIVE_ASSET_REPLACEMENT: configuredFlag("ENABLE_LIVE_ASSET_REPLACEMENT"),
     ENABLE_STRICT_ASSET_KIND_REPLACEMENT: configuredFlag("ENABLE_STRICT_ASSET_KIND_REPLACEMENT")
   });
+  const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
+  const XLINK_NAMESPACE = "http://www.w3.org/1999/xlink";
+  const XML_NAMESPACE = "http://www.w3.org/XML/1998/namespace";
+  const XMLNS_NAMESPACE = "http://www.w3.org/2000/xmlns/";
+  const FORBIDDEN_SVG_ELEMENTS = /* @__PURE__ */ new Set([
+    "animate",
+    "animatemotion",
+    "animatetransform",
+    "discard",
+    "embed",
+    "foreignobject",
+    "iframe",
+    "object",
+    "script",
+    "set"
+  ]);
+  const SAFE_DATA_IMAGE_REFERENCE = /^data:image\/(?:avif|bmp|gif|jpeg|png|webp);base64,[a-z0-9+/=\s]+$/i;
+  async function createDOMImageResourceBacking(input, onIdle) {
+    const normalizedInput = { ...input, mimeType: normalizedImageMimeType(input.mimeType) };
+    const verified = normalizedInput.mimeType === "image/svg+xml" ? verifySVGImage(normalizedInput) : await verifyRasterImage(normalizedInput);
+    const objectURL = URL.createObjectURL(new Blob(
+      [copyArrayBuffer(verified.bytes)],
+      { type: verified.mimeType }
+    ));
+    let leaseCount = 0;
+    let revoked = false;
+    let idleListener = onIdle;
+    const backing = Object.freeze({
+      acquire(onRelease) {
+        if (revoked) throw new Error("DOM image resource backing has been released.");
+        leaseCount += 1;
+        let released = false;
+        let releaseListener = onRelease;
+        let backingReference = backing;
+        const resource = Object.freeze({
+          url: objectURL,
+          mimeType: verified.mimeType,
+          width: verified.width,
+          height: verified.height,
+          get released() {
+            return released;
+          },
+          release() {
+            if (released) return;
+            released = true;
+            leaseCount -= 1;
+            const releasedBacking = backingReference;
+            backingReference = void 0;
+            try {
+              if (leaseCount === 0) {
+                revoked = true;
+                URL.revokeObjectURL(objectURL);
+              }
+            } finally {
+              const listener = releaseListener;
+              releaseListener = void 0;
+              try {
+                listener?.(resource);
+              } finally {
+                if (revoked) {
+                  const listener2 = idleListener;
+                  idleListener = void 0;
+                  if (releasedBacking) listener2?.(releasedBacking);
+                }
+              }
+            }
+          }
+        });
+        return resource;
+      }
+    });
+    return backing;
+  }
+  function verifySVGImage(input) {
+    let source;
+    try {
+      source = new TextDecoder("utf-8", { fatal: true }).decode(input.bytes);
+    } catch (error) {
+      throw invalidResource(input.name, "SVG bytes are not valid UTF-8.", error);
+    }
+    if (/<!DOCTYPE|<!ENTITY|<\?xml-stylesheet\b/i.test(source)) {
+      throw unsafeSVG(input.name, "DOCTYPE, entity, and stylesheet processing instructions are forbidden.");
+    }
+    if (typeof DOMParser !== "function" || typeof XMLSerializer !== "function") {
+      throw new AssetManagerError(
+        "DEPENDENCY_MISSING",
+        "DOMParser and XMLSerializer are required to validate SVG image resources.",
+        {
+          operation: "resolveDOMImageResource",
+          assetName: input.name,
+          hint: "Resolve SVG resources in a browser DOM environment."
+        }
+      );
+    }
+    let document;
+    try {
+      document = new DOMParser().parseFromString(source, "image/svg+xml");
+    } catch (error) {
+      throw invalidResource(input.name, "SVG markup is not well-formed XML.", error);
+    }
+    const root = document.documentElement;
+    if (root.localName.toLowerCase() === "parsererror" || document.getElementsByTagName("parsererror").length > 0) {
+      throw invalidResource(input.name, "SVG markup is not well-formed XML.");
+    }
+    if (root.namespaceURI !== SVG_NAMESPACE || root.localName.toLowerCase() !== "svg") {
+      throw invalidResource(input.name, "SVG resource must have an SVG root element.");
+    }
+    validateSVGElement(input.name, root);
+    for (const element of root.getElementsByTagName("*")) {
+      validateSVGElement(input.name, element);
+    }
+    const { width, height } = svgIntrinsicSize(input.name, root);
+    const serialized = new XMLSerializer().serializeToString(document);
+    return {
+      bytes: new TextEncoder().encode(serialized),
+      mimeType: "image/svg+xml",
+      width,
+      height
+    };
+  }
+  function validateSVGElement(name, element) {
+    const localName = element.localName.toLowerCase();
+    if (element.namespaceURI !== SVG_NAMESPACE) {
+      throw unsafeSVG(name, `Element namespace is not allowed: ${element.namespaceURI ?? "(none)"}.`);
+    }
+    if (FORBIDDEN_SVG_ELEMENTS.has(localName)) {
+      throw unsafeSVG(name, `SVG <${localName}> elements are forbidden.`);
+    }
+    if (localName === "style") validateCSSReferences(name, element.textContent ?? "");
+    for (const attribute of [...element.attributes]) {
+      const attributeName = attribute.localName.toLowerCase();
+      if (attributeName.startsWith("on")) {
+        throw unsafeSVG(name, `SVG event handler attribute ${attribute.name} is forbidden.`);
+      }
+      if (attribute.namespaceURI && ![
+        XLINK_NAMESPACE,
+        XML_NAMESPACE,
+        XMLNS_NAMESPACE
+      ].includes(attribute.namespaceURI)) {
+        throw unsafeSVG(name, `Attribute namespace is not allowed: ${attribute.namespaceURI}.`);
+      }
+      if (attributeName === "base" && attribute.namespaceURI === XML_NAMESPACE) {
+        throw unsafeSVG(name, "SVG xml:base is forbidden.");
+      }
+      if (attributeName === "href" || attributeName === "src") {
+        validateImageReference(name, attribute.value);
+      }
+      if (attributeName === "style" || /url\s*\(/i.test(attribute.value)) {
+        validateCSSReferences(name, attribute.value);
+      }
+    }
+  }
+  function validateImageReference(name, rawReference) {
+    const reference = rawReference.trim();
+    if (!reference || reference.startsWith("#") || SAFE_DATA_IMAGE_REFERENCE.test(reference)) return;
+    throw unsafeSVG(name, `External SVG reference is forbidden: ${safeLabel(reference)}.`);
+  }
+  function validateCSSReferences(name, css) {
+    if (/[\\@]|\/\*|expression\s*\(|-moz-binding\s*:|(?:-webkit-)?image(?:-set)?\s*\(|cross-fade\s*\(|(?:https?|file|ftp|javascript):|\/\//i.test(css)) {
+      throw unsafeSVG(name, "Imported, obfuscated, external, or executable SVG CSS is forbidden.");
+    }
+    for (const match of css.matchAll(/url\(\s*(['"]?)(.*?)\1\s*\)/gi)) {
+      validateImageReference(name, match[2] ?? "");
+    }
+  }
+  function svgIntrinsicSize(name, root) {
+    const rawWidth = root.getAttribute("width");
+    const rawHeight = root.getAttribute("height");
+    const rawViewBox = root.getAttribute("viewBox");
+    const width = absoluteSVGLength(rawWidth);
+    const height = absoluteSVGLength(rawHeight);
+    const viewBox = svgViewBox(rawViewBox);
+    if (rawWidth !== null && width === null) {
+      throw invalidResource(name, "SVG width must be a positive absolute length.");
+    }
+    if (rawHeight !== null && height === null) {
+      throw invalidResource(name, "SVG height must be a positive absolute length.");
+    }
+    if (rawViewBox !== null && viewBox === null) {
+      throw invalidResource(name, "SVG viewBox must contain four finite values and positive dimensions.");
+    }
+    if (width !== null && height !== null) return { width, height };
+    if (width !== null && viewBox) {
+      return { width, height: width * viewBox.height / viewBox.width };
+    }
+    if (height !== null && viewBox) {
+      return { width: height * viewBox.width / viewBox.height, height };
+    }
+    if (viewBox) return { width: viewBox.width, height: viewBox.height };
+    throw invalidResource(
+      name,
+      "SVG resource must declare positive absolute width/height or a positive viewBox."
+    );
+  }
+  function absoluteSVGLength(raw) {
+    if (raw === null || !raw.trim()) return null;
+    const match = /^([+]?(?:\d+\.?\d*|\.\d+))(px|in|cm|mm|q|pt|pc)?$/i.exec(raw.trim());
+    if (!match) return null;
+    const value = Number(match[1]);
+    const factor = (/* @__PURE__ */ new Map([
+      ["", 1],
+      ["px", 1],
+      ["in", 96],
+      ["cm", 96 / 2.54],
+      ["mm", 96 / 25.4],
+      ["q", 96 / 101.6],
+      ["pt", 96 / 72],
+      ["pc", 16]
+    ])).get((match[2] ?? "").toLowerCase());
+    const pixels = value * (factor ?? Number.NaN);
+    return Number.isFinite(pixels) && pixels > 0 ? pixels : null;
+  }
+  function svgViewBox(raw) {
+    if (raw === null) return null;
+    const values = raw.trim().split(/[\s,]+/).map(Number);
+    if (values.length !== 4 || values.some((value) => !Number.isFinite(value)) || !(values[2] > 0) || !(values[3] > 0)) return null;
+    return { width: values[2], height: values[3] };
+  }
+  async function verifyRasterImage(input) {
+    const detectedMimeType = sniffRasterMimeType(input.bytes);
+    if (!detectedMimeType || detectedMimeType !== input.mimeType) {
+      throw new AssetManagerError(
+        "ASSET_TYPE_MISMATCH",
+        `Image asset "${input.name}" bytes do not match MIME type ${input.mimeType}.`,
+        {
+          operation: "resolveDOMImageResource",
+          assetName: input.name,
+          expectedKind: input.mimeType,
+          actualKind: detectedMimeType ?? "unrecognized image bytes",
+          hint: "Use PNG, JPEG, GIF, WebP, BMP, or AVIF bytes with the matching MIME type."
+        }
+      );
+    }
+    if (typeof createImageBitmap !== "function") {
+      throw new AssetManagerError(
+        "DEPENDENCY_MISSING",
+        "createImageBitmap is required to validate raster image dimensions.",
+        {
+          operation: "resolveDOMImageResource",
+          assetName: input.name,
+          hint: "Resolve raster resources in a browser that supports createImageBitmap."
+        }
+      );
+    }
+    let bitmap;
+    try {
+      bitmap = await createImageBitmap(new Blob(
+        [copyArrayBuffer(input.bytes)],
+        { type: input.mimeType }
+      ));
+    } catch (error) {
+      throw invalidResource(input.name, "Raster image bytes could not be decoded.", error);
+    }
+    try {
+      if (!Number.isFinite(bitmap.width) || bitmap.width <= 0 || !Number.isFinite(bitmap.height) || bitmap.height <= 0) {
+        throw invalidResource(input.name, "Raster image has invalid intrinsic dimensions.");
+      }
+      return {
+        bytes: input.bytes,
+        mimeType: input.mimeType,
+        width: bitmap.width,
+        height: bitmap.height
+      };
+    } finally {
+      bitmap.close();
+    }
+  }
+  function sniffRasterMimeType(bytes) {
+    if (startsWith(bytes, [137, 80, 78, 71, 13, 10, 26, 10])) {
+      return "image/png";
+    }
+    if (startsWith(bytes, [255, 216, 255])) return "image/jpeg";
+    if (ascii(bytes, 0, 6) === "GIF87a" || ascii(bytes, 0, 6) === "GIF89a") return "image/gif";
+    if (ascii(bytes, 0, 4) === "RIFF" && ascii(bytes, 8, 4) === "WEBP") return "image/webp";
+    if (ascii(bytes, 0, 2) === "BM") return "image/bmp";
+    if (ascii(bytes, 4, 4) === "ftyp") {
+      const brand = ascii(bytes, 8, 4);
+      if (brand === "avif" || brand === "avis") return "image/avif";
+    }
+    return null;
+  }
+  function normalizedImageMimeType(value) {
+    const mimeType = value.split(";")[0]?.trim().toLowerCase() ?? "";
+    if (mimeType === "image/jpg" || mimeType === "image/pjpeg") return "image/jpeg";
+    if (mimeType === "image/x-png") return "image/png";
+    if (mimeType === "image/x-ms-bmp") return "image/bmp";
+    return mimeType;
+  }
+  function startsWith(bytes, prefix) {
+    return prefix.every((value, index) => bytes[index] === value);
+  }
+  function ascii(bytes, offset, length) {
+    if (bytes.byteLength < offset + length) return "";
+    return String.fromCharCode(...bytes.subarray(offset, offset + length));
+  }
+  function copyArrayBuffer(bytes) {
+    return Uint8Array.from(bytes).buffer;
+  }
+  function invalidResource(name, message, cause) {
+    return new AssetManagerError("RESOURCE_ID_INVALID", message, {
+      operation: "resolveDOMImageResource",
+      assetName: name,
+      hint: "Provide a well-formed image with verifiable intrinsic dimensions.",
+      cause
+    });
+  }
+  function unsafeSVG(name, message) {
+    return new AssetManagerError("RESOURCE_ID_INVALID", message, {
+      operation: "resolveDOMImageResource",
+      assetName: name,
+      hint: "Remove scripts, event handlers, embedded HTML, and external references from the SVG."
+    });
+  }
+  function safeLabel(value) {
+    const normalized = value.replace(/[\u0000-\u001f\u007f]/g, "").slice(0, 80);
+    return JSON.stringify(normalized || "(empty)");
+  }
   const TEXT_RUNTIME_NAMESPACE = "text";
   const TEXT_STYLE_RUNTIME_NAMESPACE = "textStyle";
   const TEXT_STYLE_PROPERTIES = [
@@ -176,7 +493,7 @@
     };
   }
   const EXTENSION_ID = "kubohiroyaassetmanager";
-  const EXTENSION_VERSION = "0.12.0";
+  const EXTENSION_VERSION = "0.12.1";
   const EXTENSION_DOCS_URI = "https://kubohiroya.github.io/turbowarp-asset-manager/";
   const BLOCK_ICON_URI = `data:image/svg+xml,${encodeURIComponent(
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><path fill="#fff" d="M19 47 29 17h7l10 30h-7l-2-7H27l-2 7h-6Zm10-13h6l-3-10-3 10Z"/></svg>'
@@ -712,6 +1029,19 @@
       __publicField(this, "lastAssetErrorType", "");
       __publicField(this, "lastAssetErrorLabel", "");
       __publicField(this, "assetErrorVersion", 0);
+      __publicField(this, "domImageResourceVersions", /* @__PURE__ */ new Map());
+      __publicField(this, "domImageResourceBackings", /* @__PURE__ */ new Map());
+      __publicField(this, "activeDOMImageResources", /* @__PURE__ */ new Set());
+      __publicField(this, "activeDOMImageResourcesByName", /* @__PURE__ */ new Map());
+      __publicField(this, "domImageCapabilityValue");
+      __publicField(this, "listeningForDOMImageLifecycle", false);
+      __publicField(this, "releaseAllDOMImageResourcesForLifecycle", () => {
+        this.releaseAllDOMImageResources();
+      });
+      __publicField(this, "releaseDOMImageResourcesForRuntimeDispose", () => {
+        this.releaseAllDOMImageResources();
+        this.stopListeningForDOMImageLifecycle();
+      });
       this.featureFlags = Object.freeze({ ...featureFlags });
       this.runtime.on?.("STOP_FOR_TARGET", (target) => {
         if (target && !this.runtime.targets.includes(target)) {
@@ -792,6 +1122,19 @@
         color3: "#2f46aa",
         blocks: blockDefinitions.map((block) => this.toScratchBlock(block))
       };
+    }
+    /**
+     * Exposes the stock extension registry through a host-neutral DOM image
+     * resource contract for other unsandboxed extensions.
+     */
+    getDOMImageCapability() {
+      this.startListeningForDOMImageLifecycle();
+      this.domImageCapabilityValue ?? (this.domImageCapabilityValue = Object.freeze({
+        isRegistered: (name) => this.assetRegistry.has(normalizeName(name)),
+        getMimeType: (name) => this.getAssetMimeType({ NAME: name }),
+        resolveDOMImageResource: (name) => this.resolveExtensionDOMImageResource(name)
+      }));
+      return this.domImageCapabilityValue;
     }
     validateProjectAssetAddress(args) {
       return JSON.stringify(
@@ -958,6 +1301,7 @@
       this.unregisterAsset(normalizeName(args.NAME));
     }
     deleteAllMemoryAssets() {
+      this.releaseAllDOMImageResources();
       for (const name of this.registrationVersions.keys()) {
         this.cancelRegistrations(name);
       }
@@ -1323,6 +1667,7 @@
     }
     unregisterAsset(name) {
       this.cancelRegistrations(name);
+      this.invalidateDOMImageResources(name);
       const kind = this.assetRegistry.get(name);
       if (!kind) return;
       const asset = this.getRegisteredAsset(name, kind);
@@ -1367,6 +1712,7 @@
           }
           throw error;
         }
+        this.invalidateDOMImageResources(name);
         if (!this.isRegistrationCancellationCurrent(name, token)) {
           if (cacheRecord) {
             await this.restoreCacheIfGeneration(name, token.version, previousCached ?? null);
@@ -1851,6 +2197,104 @@
         );
       }
       return loaded;
+    }
+    cancelledDOMImageResolution(name) {
+      const error = new Error(`DOM image resource resolution was cancelled: ${JSON.stringify(name)}`);
+      error.name = "AbortError";
+      return error;
+    }
+    async resolveExtensionDOMImageResource(nameInput) {
+      const name = normalizeName(nameInput);
+      const version = this.domImageResourceVersions.get(name) ?? 0;
+      let entry = this.domImageResourceBackings.get(name);
+      if (entry?.version !== version) {
+        let nextEntry;
+        const promise = (async () => {
+          const resolved = await this.resolveImageAssetBytes({ NAME: name });
+          const backing2 = await createDOMImageResourceBacking(
+            { name, bytes: resolved.bytes, mimeType: resolved.mimeType },
+            (idleBacking) => {
+              if (this.domImageResourceBackings.get(name) === nextEntry && nextEntry.backing === idleBacking) {
+                this.domImageResourceBackings.delete(name);
+              }
+            }
+          );
+          nextEntry.backing = backing2;
+          return backing2;
+        })();
+        nextEntry = { version, promise };
+        entry = nextEntry;
+        this.domImageResourceBackings.set(name, entry);
+        try {
+          await promise;
+        } catch (error) {
+          if (this.domImageResourceBackings.get(name) === entry) {
+            this.domImageResourceBackings.delete(name);
+          }
+          throw error;
+        }
+      }
+      const backing = await entry.promise;
+      let controller;
+      const resource = backing.acquire(() => {
+        if (controller) this.releaseActiveDOMImageResource(controller);
+      });
+      if ((this.domImageResourceVersions.get(name) ?? 0) !== version || !this.assetRegistry.has(name)) {
+        resource.release();
+        throw this.cancelledDOMImageResolution(name);
+      }
+      controller = { name, resource };
+      this.activeDOMImageResources.add(controller);
+      const named = this.activeDOMImageResourcesByName.get(name) ?? /* @__PURE__ */ new Set();
+      named.add(controller);
+      this.activeDOMImageResourcesByName.set(name, named);
+      return resource;
+    }
+    releaseActiveDOMImageResource(controller) {
+      this.activeDOMImageResources.delete(controller);
+      const named = this.activeDOMImageResourcesByName.get(controller.name);
+      named?.delete(controller);
+      if (named?.size === 0) this.activeDOMImageResourcesByName.delete(controller.name);
+    }
+    invalidateDOMImageResources(name) {
+      this.domImageResourceVersions.set(
+        name,
+        (this.domImageResourceVersions.get(name) ?? 0) + 1
+      );
+      this.domImageResourceBackings.delete(name);
+      for (const controller of [...this.activeDOMImageResourcesByName.get(name) ?? []]) {
+        controller.resource.release();
+      }
+    }
+    releaseAllDOMImageResources() {
+      const names = /* @__PURE__ */ new Set([
+        ...this.domImageResourceBackings.keys(),
+        ...this.activeDOMImageResourcesByName.keys()
+      ]);
+      for (const name of names) {
+        this.domImageResourceVersions.set(
+          name,
+          (this.domImageResourceVersions.get(name) ?? 0) + 1
+        );
+      }
+      this.domImageResourceBackings.clear();
+      for (const controller of [...this.activeDOMImageResources]) {
+        controller.resource.release();
+      }
+    }
+    startListeningForDOMImageLifecycle() {
+      if (this.listeningForDOMImageLifecycle || !this.runtime.on) return;
+      this.listeningForDOMImageLifecycle = true;
+      this.runtime.on("PROJECT_STOP_ALL", this.releaseAllDOMImageResourcesForLifecycle);
+      this.runtime.on("PROJECT_LOADED", this.releaseAllDOMImageResourcesForLifecycle);
+      this.runtime.on("RUNTIME_DISPOSED", this.releaseDOMImageResourcesForRuntimeDispose);
+    }
+    stopListeningForDOMImageLifecycle() {
+      if (!this.listeningForDOMImageLifecycle || !this.runtime.off) return;
+      this.listeningForDOMImageLifecycle = false;
+      this.runtime.off("PROJECT_STOP_ALL", this.releaseAllDOMImageResourcesForLifecycle);
+      this.runtime.off("PROJECT_LOADED", this.releaseAllDOMImageResourcesForLifecycle);
+      this.runtime.off("RUNTIME_DISPOSED", this.releaseDOMImageResourcesForRuntimeDispose);
     }
     async ensureExternalAssetSkin(asset, name) {
       asset.mimeType = normalizeMimeType(asset.mimeType, asset.url || name);

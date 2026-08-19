@@ -1,7 +1,8 @@
 import { AssetManagerError } from './asset-manager-error.js';
 import { type AssetManagerFeatureFlags } from './feature-flags.js';
+import { type DOMImageResource } from './dom-image-resource.js';
 export declare const EXTENSION_ID = "kubohiroyaassetmanager";
-export declare const EXTENSION_VERSION = "0.12.0";
+export declare const EXTENSION_VERSION = "0.12.1";
 export declare const EXTENSION_DOCS_URI = "https://kubohiroya.github.io/turbowarp-asset-manager/";
 export declare const BLOCK_ICON_URI: string;
 type BlockArgs = Record<string, unknown>;
@@ -20,6 +21,11 @@ export interface EmbeddedAssetRegistration {
 export interface ResolvedImageAssetBytes {
     readonly bytes: Uint8Array;
     readonly mimeType: string;
+}
+export interface AssetManagerDOMImageCapability {
+    isRegistered(name: unknown): boolean;
+    getMimeType(name: unknown): string;
+    resolveDOMImageResource(name: unknown): Promise<DOMImageResource>;
 }
 interface ResolvedSkin {
     skinId: number;
@@ -95,6 +101,14 @@ export declare class AssetManagerExtension {
     private lastAssetErrorType;
     private lastAssetErrorLabel;
     private assetErrorVersion;
+    private readonly domImageResourceVersions;
+    private readonly domImageResourceBackings;
+    private readonly activeDOMImageResources;
+    private readonly activeDOMImageResourcesByName;
+    private domImageCapabilityValue?;
+    private listeningForDOMImageLifecycle;
+    private readonly releaseAllDOMImageResourcesForLifecycle;
+    private readonly releaseDOMImageResourcesForRuntimeDispose;
     constructor(featureFlags?: AssetManagerFeatureFlags);
     setLoadingBackdrop(args: BlockArgs): void;
     setLoadingCostumes(args: BlockArgs): void;
@@ -112,6 +126,11 @@ export declare class AssetManagerExtension {
         color3: string;
         blocks: Record<string, unknown>[];
     };
+    /**
+     * Exposes the stock extension registry through a host-neutral DOM image
+     * resource contract for other unsandboxed extensions.
+     */
+    getDOMImageCapability(): AssetManagerDOMImageCapability;
     validateProjectAssetAddress(args: BlockArgs): string;
     registerProjectAssetLiteral(assetName: unknown, locatorInput: unknown): Promise<void>;
     registerAsset(args: BlockArgs): Promise<void>;
@@ -187,6 +206,13 @@ export declare class AssetManagerExtension {
     private requireAnimatedTextOpcode;
     private ensureExternalSkin;
     private resolveProjectImageStorageAsset;
+    private cancelledDOMImageResolution;
+    private resolveExtensionDOMImageResource;
+    private releaseActiveDOMImageResource;
+    private invalidateDOMImageResources;
+    private releaseAllDOMImageResources;
+    private startListeningForDOMImageLifecycle;
+    private stopListeningForDOMImageLifecycle;
     private ensureExternalAssetSkin;
     private resolveSkinFromAsset;
     private resolveCostumeReference;
