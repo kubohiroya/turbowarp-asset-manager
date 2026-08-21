@@ -36,6 +36,15 @@ import {
   type DOMImageResourceBacking
 } from './dom-image-resource.js';
 
+export {
+  type AssetManagerAudioVoice,
+  type AssetManagerAudioVoiceOptions
+} from './audio-voice.js';
+import {
+  type AssetManagerAudioVoice,
+  type AssetManagerAudioVoiceOptions
+} from './audio-voice.js';
+
 export {type DOMImageResource} from './dom-image-resource.js';
 
 export {
@@ -162,6 +171,10 @@ export interface AssetManagerComposition {
   applyToStage(name: unknown): Promise<void>;
   applyToTarget(name: unknown, target: AssetManagerCompositionTarget): Promise<void>;
   playSound(name: unknown, options?: Readonly<{untilDone?: boolean}>): Promise<void>;
+  createAudioVoice(
+    name: unknown,
+    options?: AssetManagerAudioVoiceOptions
+  ): Promise<AssetManagerAudioVoice>;
   stopSound(name: unknown): void;
   stopAllSounds(): void;
   resolveVerifiedRemoteBinary(
@@ -612,6 +625,9 @@ export function createAssetManagerComposition(
       return options.untilDone
         ? extension.playSoundUntilDone({NAME: ownedName(name)?.internal ?? name})
         : extension.playSound({NAME: ownedName(name)?.internal ?? name});
+    },
+    createAudioVoice(name, options) {
+      return extension.createAudioVoice(ownedName(name)?.internal ?? name, options);
     },
     stopSound(name) {
       extension.stopSound({NAME: ownedName(name)?.internal ?? name});

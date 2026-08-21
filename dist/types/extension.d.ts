@@ -1,6 +1,7 @@
 import { AssetManagerError } from './asset-manager-error.js';
 import { type AssetManagerFeatureFlags } from './feature-flags.js';
 import { type DOMImageResource } from './dom-image-resource.js';
+import { type AssetManagerAudioVoice, type AssetManagerAudioVoiceOptions } from './audio-voice.js';
 export declare const EXTENSION_ID = "kubohiroyaassetmanager";
 export declare const EXTENSION_VERSION = "0.12.1";
 export declare const EXTENSION_DOCS_URI = "https://kubohiroya.github.io/turbowarp-asset-manager/";
@@ -89,6 +90,7 @@ export declare class AssetManagerExtension {
     private readonly assetRegistry;
     private readonly displayedAssets;
     private readonly playingAudio;
+    private readonly audioVoiceStops;
     private readonly registrationVersions;
     private readonly successfulRegistrationVersions;
     private readonly registrationCancellationVersions;
@@ -149,6 +151,7 @@ export declare class AssetManagerExtension {
     setStageSkin(args: BlockArgs): Promise<void>;
     playSound(args: BlockArgs): Promise<void>;
     playSoundUntilDone(args: BlockArgs): Promise<void>;
+    createAudioVoice(value: unknown, options?: AssetManagerAudioVoiceOptions): Promise<AssetManagerAudioVoice>;
     stopSound(args: BlockArgs): void;
     stopAllSounds(): void;
     getAssetMimeType(args: BlockArgs): string;
@@ -217,10 +220,13 @@ export declare class AssetManagerExtension {
     private resolveSkinFromAsset;
     private resolveCostumeReference;
     private resolveCostumeAssetReference;
+    private resolveSoundAssetReference;
     private resolveSoundReference;
     private deleteOwnedSkinIfExists;
     protected applySkinToTarget(target: TurboWarpTarget, skin: ResolvedSkin): void;
     protected playResolvedSound(value: unknown, waitUntilDone: boolean): Promise<void>;
+    private resolveAudioBytes;
+    private startBrowserAudioVoice;
     private playExternalSound;
     private stopExternalAudio;
     private playProjectSound;

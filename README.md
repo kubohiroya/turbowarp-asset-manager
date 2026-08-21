@@ -73,6 +73,35 @@ await assets.registerProjectAsset({
 Omitting `target` from a sound locator selects the Stage. The existing string `resourceId` grammar
 and its trimmed logical names remain available for saved projects and block-based callers.
 
+### Audio voices
+
+Composition consumers can start a registered external or project-local sound as an independently
+owned audio voice. `createAudioVoice` resolves after browser playback starts and returns a frozen
+handle with instance-local gain, an idempotent `stop()` method, and an `ended` promise. Gain values
+are finite linear amplitudes from `0` to `1`.
+
+```js
+const outgoing = await assets.createAudioVoice('OpeningMusic');
+const incoming = await assets.createAudioVoice('BattleMusic', {gain: 0});
+
+outgoing.setGain(0.5);
+incoming.setGain(0.5);
+
+outgoing.stop();
+await outgoing.ended;
+incoming.setGain(1);
+```
+
+Voices created from the same asset remain independent: changing or stopping one voice does not
+change another voice or a sound started through `playSound`. Natural completion and explicit stop
+resolve `ended`; playback failure rejects it. `stopSound` stops all managed voices for that logical
+asset as well as legacy playback, while `stopAllSounds`, `releaseAsset`, and `releaseAll` also clean
+up matching voices. Each voice releases its browser audio resource and object URL exactly once.
+
+Project-local voices load the registered Scratch sound bytes directly and therefore do not reuse
+Scratch Audio's sound-ID-wide player. This is intended for composition-owned channels such as BGM;
+the existing `playSound` path remains the compatibility API for Scratch target sound effects.
+
 ### DOM image resources
 
 Composition consumers can resolve a registered image without creating a scratch-render skin or

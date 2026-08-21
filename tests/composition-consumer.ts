@@ -4,6 +4,7 @@ import {
   createSessionBinaryBacking,
   createVerifiedRemoteCacheDatabaseName,
   type AssetManagerComposition,
+  type AssetManagerAudioVoice,
   type BinaryBundlePutInput,
   type BinaryBundleRegistration,
   type BinaryBundleResult,
@@ -39,6 +40,14 @@ const bitmapInput: EmbeddedAssetBytesInput = {
   bitmapResolution: 2
 };
 const composition: AssetManagerComposition = createAssetManagerComposition();
+const audioVoice: Promise<AssetManagerAudioVoice> = composition.createAudioVoice('OpeningMusic', {
+  gain: 0
+});
+void audioVoice.then((voice) => {
+  voice.setGain(0.5);
+  voice.stop();
+  return voice.ended;
+});
 const projectLocator: ProjectAssetLocator = {
   kind: 'costume',
   target: ' Actor/\u0001: ',
@@ -173,3 +182,4 @@ void binaryDelete;
 void binaryStoreRelease;
 void directSession;
 void compositionSession;
+void audioVoice;
