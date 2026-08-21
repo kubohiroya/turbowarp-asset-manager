@@ -15,6 +15,7 @@ interface TurboWarpCostume {
 interface TurboWarpSound {
   name: string;
   assetId?: string;
+  asset?: TurboWarpStorageAsset | null;
   soundId?: string;
   dataFormat?: string;
 }
@@ -58,6 +59,7 @@ interface TurboWarpStorage {
   readonly AssetType: {
     readonly ImageVector: unknown;
     readonly ImageBitmap: unknown;
+    readonly Sound?: unknown;
   };
   get?(assetId: string): TurboWarpStorageAsset | null | undefined;
   load?(

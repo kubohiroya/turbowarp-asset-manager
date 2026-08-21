@@ -1346,12 +1346,13 @@ describe('project-local assets', () => {
       createObjectURL: vi.fn(() => 'blob:test-audio'),
       revokeObjectURL
     });
-    vi.stubGlobal('Audio', class {
+    vi.stubGlobal('Audio', class extends EventTarget {
       currentTime = 0;
-      addEventListener = vi.fn();
       pause = vi.fn();
       play = vi.fn(() => Promise.reject(new Error('play blocked')));
-      constructor(_url: string) {}
+      constructor(_url: string) {
+        super();
+      }
     });
     internals.externalAssets.set('audio', {
       kind: 'external', name: 'audio', url: 'https://example.com/audio.mp3',

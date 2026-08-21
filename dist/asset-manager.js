@@ -403,6 +403,13 @@
     const normalized = value.replace(/[\u0000-\u001f\u007f]/g, "").slice(0, 80);
     return JSON.stringify(normalized || "(empty)");
   }
+  function normalizeAudioVoiceGain(value, label = "Audio voice gain") {
+    const gain = value === void 0 ? 1 : value;
+    if (typeof gain !== "number" || !Number.isFinite(gain) || gain < 0 || gain > 1) {
+      throw new TypeError(`${label} must be a finite number from 0 to 1.`);
+    }
+    return gain;
+  }
   const TEXT_RUNTIME_NAMESPACE = "text";
   const TEXT_STYLE_RUNTIME_NAMESPACE = "textStyle";
   const TEXT_STYLE_PROPERTIES = [
@@ -1019,6 +1026,7 @@
       __publicField(this, "assetRegistry", /* @__PURE__ */ new Map());
       __publicField(this, "displayedAssets", /* @__PURE__ */ new Map());
       __publicField(this, "playingAudio", /* @__PURE__ */ new Map());
+      __publicField(this, "audioVoiceStops", /* @__PURE__ */ new WeakMap());
       __publicField(this, "registrationVersions", /* @__PURE__ */ new Map());
       __publicField(this, "successfulRegistrationVersions", /* @__PURE__ */ new Map());
       __publicField(this, "registrationCancellationVersions", /* @__PURE__ */ new Map());
@@ -1365,6 +1373,26 @@
     async playSoundUntilDone(args) {
       await this.playResolvedSound(args.NAME, true);
     }
+    async createAudioVoice(value, options = {}) {
+      if (!options || typeof options !== "object" || Array.isArray(options)) {
+        throw new TypeError("Audio voice options must be an object.");
+      }
+      if (Object.keys(options).some((key) => key !== "gain")) {
+        throw new TypeError("Audio voice options contain an unknown property.");
+      }
+      const gain = normalizeAudioVoiceGain(options.gain, "Audio voice initial gain");
+      const name = normalizeName(value);
+      const resource = await this.resolveAudioBytes(name);
+      const playback = this.startBrowserAudioVoice(
+        name,
+        resource.bytes,
+        resource.mimeType,
+        gain,
+        "createAudioVoice"
+      );
+      await playback.started;
+      return playback.voice;
+    }
     stopSound(args) {
       const name = normalizeName(args.NAME);
       const kind = this.assetRegistry.get(name);
@@ -1382,8 +1410,11 @@
         return;
       }
       if (kind === "sound") {
-        const { target, sound } = this.resolveSoundReference(name);
-        target.sprite.soundBank.stop(target, sound.soundId);
+        const { target, sound, soundBank } = this.resolveSoundReference(name);
+        for (const [audio, assetName] of [...this.playingAudio]) {
+          if (assetName === name) this.stopExternalAudio(audio);
+        }
+        soundBank.stop(target, sound.soundId);
         return;
       }
       throw this.assetTypeMismatch("stopSound", name, "audio", kind);
@@ -2358,7 +2389,7 @@
       }
       return { target, costume };
     }
-    resolveSoundReference(name) {
+    resolveSoundAssetReference(name) {
       const reference = this.soundAssets.get(name);
       if (!reference) throw this.assetNotRegistered("playSound", name);
       const target = this.resolveReferencedTarget(reference.targetId, reference.targetName, reference.isStage);
@@ -2380,31 +2411,36 @@
           }
         );
       }
+      return { target, sound };
+    }
+    resolveSoundReference(name) {
+      const { target, sound } = this.resolveSoundAssetReference(name);
       if (!sound.soundId) {
         throw new AssetManagerError(
           "SOURCE_ASSET_NOT_FOUND",
-          `Sound ID is not available: ${reference.targetName}/${reference.soundName}.`,
+          `Sound ID is not available: ${target.sprite?.name ?? target.id}/${sound.name}.`,
           {
             operation: "playSound",
             assetName: name,
-            actorName: reference.targetName,
+            actorName: target.sprite?.name ?? target.id,
             hint: "Wait for the project sound to finish loading and try again."
           }
         );
       }
-      if (!target.sprite?.soundBank) {
+      const soundBank = target.sprite?.soundBank;
+      if (!soundBank) {
         throw new AssetManagerError(
           "DEPENDENCY_MISSING",
-          `Sound bank is not available: ${reference.targetName}.`,
+          `Sound bank is not available: ${target.sprite?.name ?? target.id}.`,
           {
             operation: "playSound",
             assetName: name,
-            actorName: reference.targetName,
+            actorName: target.sprite?.name ?? target.id,
             hint: "Use a TurboWarp runtime with sound support."
           }
         );
       }
-      return { target, sound };
+      return { target, sound, soundBank };
     }
     deleteOwnedSkinIfExists(asset) {
       if (!asset || asset.skinId === null) return;
@@ -2448,6 +2484,140 @@
       }
       throw this.assetTypeMismatch("playSound", name, "audio", kind);
     }
+    async resolveAudioBytes(name) {
+      const kind = this.assetRegistry.get(name);
+      if (!kind) throw this.assetNotRegistered("createAudioVoice", name);
+      if (kind === "external") {
+        const asset2 = this.externalAssets.get(name);
+        if (!asset2) throw this.assetNotRegistered("createAudioVoice", name);
+        asset2.mimeType = normalizeMimeType(asset2.mimeType, asset2.url || name);
+        if (!asset2.mimeType.startsWith("audio/")) {
+          throw this.assetTypeMismatch(
+            "createAudioVoice",
+            name,
+            "audio",
+            `external/${this.externalMediaKind(asset2)}`
+          );
+        }
+        return { bytes: asset2.data, mimeType: asset2.mimeType };
+      }
+      if (kind !== "sound") {
+        throw this.assetTypeMismatch("createAudioVoice", name, "audio", kind);
+      }
+      const { target, sound } = this.resolveSoundAssetReference(name);
+      const assetId = sound.assetId;
+      const dataFormat = sound.dataFormat;
+      const storage = this.runtime.storage;
+      let asset = sound.asset ?? (assetId ? storage?.get?.(assetId) : null);
+      if (!asset && assetId && dataFormat && storage?.load && storage.AssetType.Sound !== void 0) {
+        try {
+          asset = await storage.load(storage.AssetType.Sound, assetId, dataFormat);
+        } catch (error) {
+          throw new AssetManagerError(
+            "SOURCE_ASSET_NOT_FOUND",
+            `Sound bytes could not be loaded: ${target.sprite?.name ?? target.id}/${sound.name}.`,
+            {
+              operation: "createAudioVoice",
+              assetName: name,
+              actorName: target.sprite?.name ?? target.id,
+              hint: "Wait for the project sound to finish loading and try again.",
+              cause: error
+            }
+          );
+        }
+      }
+      if (!asset?.data) {
+        throw new AssetManagerError(
+          "SOURCE_ASSET_NOT_FOUND",
+          `Sound bytes are not available: ${target.sprite?.name ?? target.id}/${sound.name}.`,
+          {
+            operation: "createAudioVoice",
+            assetName: name,
+            actorName: target.sprite?.name ?? target.id,
+            hint: "Use a TurboWarp runtime that retains or can reload project sound assets."
+          }
+        );
+      }
+      return {
+        bytes: asset.data,
+        mimeType: this.projectAssetMimeType(dataFormat, "audio")
+      };
+    }
+    startBrowserAudioVoice(name, bytes, mimeType, initialGain, operation) {
+      const blobBytes = bytes instanceof Uint8Array ? new Uint8Array(bytes).buffer : bytes;
+      const objectUrl = URL.createObjectURL(new Blob([blobBytes], { type: mimeType }));
+      let audio;
+      try {
+        audio = new Audio(objectUrl);
+        audio.volume = initialGain;
+      } catch (error) {
+        URL.revokeObjectURL(objectUrl);
+        throw this.playbackError(name, error, operation);
+      }
+      let active = true;
+      let resolveEnded;
+      let rejectEnded;
+      const ended = new Promise((resolve, reject) => {
+        resolveEnded = resolve;
+        rejectEnded = reject;
+      });
+      void ended.catch(() => {
+      });
+      const cleanup = (error) => {
+        if (!active) return;
+        active = false;
+        audio.removeEventListener("ended", handleEnded);
+        audio.removeEventListener("error", handleError);
+        this.playingAudio.delete(audio);
+        this.audioVoiceStops.delete(audio);
+        URL.revokeObjectURL(objectUrl);
+        if (error === void 0) resolveEnded();
+        else rejectEnded(error);
+      };
+      const handleEnded = () => cleanup();
+      const handleError = () => cleanup(
+        operation === "createAudioVoice" ? this.playbackError(
+          name,
+          new Error("The browser audio element reported a playback error."),
+          operation
+        ) : void 0
+      );
+      const stop = () => {
+        if (!active) return;
+        try {
+          audio.pause();
+          audio.currentTime = 0;
+        } catch {
+        }
+        cleanup();
+      };
+      const voice = Object.freeze({
+        ended,
+        setGain(value) {
+          const gain = normalizeAudioVoiceGain(value);
+          if (active) audio.volume = gain;
+        },
+        stop
+      });
+      audio.addEventListener("ended", handleEnded, { once: true });
+      audio.addEventListener("error", handleError, { once: true });
+      this.playingAudio.set(audio, name);
+      this.audioVoiceStops.set(audio, stop);
+      let playResult;
+      try {
+        playResult = audio.play();
+      } catch (error) {
+        const playbackError = this.playbackError(name, error, operation);
+        cleanup(playbackError);
+        return { voice, started: Promise.reject(playbackError) };
+      }
+      const started = Promise.resolve(playResult).catch((error) => {
+        const playbackError = this.playbackError(name, error, operation);
+        cleanup(playbackError);
+        throw playbackError;
+      });
+      return { voice, started };
+    }
     async playExternalSound(name, waitUntilDone) {
       const asset = this.externalAssets.get(name);
       if (!asset) throw this.assetNotRegistered("playSound", name);
@@ -2460,37 +2630,26 @@
           `external/${this.externalMediaKind(asset)}`
         );
       }
-      const objectUrl = URL.createObjectURL(new Blob([asset.data], { type: asset.mimeType }));
-      const audio = new Audio(objectUrl);
-      this.playingAudio.set(audio, name);
-      let resolvePlayback;
-      const playbackFinished = new Promise((resolve) => {
-        resolvePlayback = resolve;
-      });
-      const cleanup = () => {
-        this.playingAudio.delete(audio);
-        URL.revokeObjectURL(objectUrl);
-        resolvePlayback();
-      };
-      audio.addEventListener("ended", cleanup, { once: true });
-      audio.addEventListener("error", cleanup, { once: true });
-      const playPromise = audio.play();
+      const playback = this.startBrowserAudioVoice(
+        name,
+        asset.data,
+        asset.mimeType,
+        1,
+        "playSound"
+      );
       if (!waitUntilDone) {
-        void playPromise.catch((error) => {
-          cleanup();
-          console.error(this.playbackError(name, error));
-        });
+        void playback.started.catch((error) => console.error(error));
         return;
       }
-      try {
-        await playPromise;
-      } catch (error) {
-        cleanup();
-        throw this.playbackError(name, error);
-      }
-      await playbackFinished;
+      await playback.started;
+      await playback.voice.ended;
     }
     stopExternalAudio(audio) {
+      const stopVoice = this.audioVoiceStops.get(audio);
+      if (stopVoice) {
+        stopVoice();
+        return;
+      }
       try {
         audio.pause();
         audio.currentTime = 0;
@@ -2501,8 +2660,8 @@
       }
     }
     async playProjectSound(name, waitUntilDone) {
-      const { target, sound } = this.resolveSoundReference(name);
-      const playResult = target.sprite?.soundBank?.playSound(target, sound.soundId);
+      const { target, sound, soundBank } = this.resolveSoundReference(name);
+      const playResult = soundBank.playSound(target, sound.soundId);
       const playPromise = Promise.resolve(playResult);
       if (!waitUntilDone) {
         void playPromise.catch((error) => console.error(this.playbackError(name, error)));
@@ -2514,12 +2673,12 @@
         throw this.playbackError(name, error);
       }
     }
-    playbackError(name, cause) {
+    playbackError(name, cause, operation = "playSound") {
       return new AssetManagerError(
         "PLAYBACK_FAILED",
         `Failed to play audio asset "${name}": ${errorMessage(cause)}`,
         {
-          operation: "playSound",
+          operation,
           assetName: name,
           hint: "Check browser audio permissions and the registered audio resource.",
           cause

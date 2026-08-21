@@ -145,6 +145,181 @@ describe('Asset Manager composition API', () => {
     expect(assets.isRegistered('Opening')).toBe(false);
   });
 
+  it('controls independent embedded audio voices by instance gain and stop', async () => {
+    const instances: TestAudio[] = [];
+    const createObjectURL = vi.spyOn(URL, 'createObjectURL')
+      .mockImplementation(() => `blob:voice-${instances.length + 1}`);
+    const revokeObjectURL = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+    class TestAudio extends EventTarget {
+      currentTime = 12;
+      volume = 1;
+      pause = vi.fn();
+      play = vi.fn(() => Promise.resolve());
+      constructor(readonly src: string) {
+        super();
+        instances.push(this);
+      }
+    }
+    vi.stubGlobal('Audio', TestAudio);
+    const assets = createAssetManagerComposition();
+    await assets.registerEmbeddedAsset({
+      name: 'Music',
+      sourceName: 'music.mp3',
+      mimeType: 'audio/mpeg',
+      bytes: new Uint8Array([1, 2, 3])
+    });
+
+    const first = await assets.createAudioVoice('Music', {gain: 0});
+    const second = await assets.createAudioVoice('Music', {gain: 0.25});
+
+    expect(Object.isFrozen(first)).toBe(true);
+    expect(instances).toHaveLength(2);
+    expect(instances[0]?.volume).toBe(0);
+    expect(instances[1]?.volume).toBe(0.25);
+    first.setGain(0.75);
+    expect(instances[0]?.volume).toBe(0.75);
+    expect(instances[1]?.volume).toBe(0.25);
+
+    first.stop();
+    first.stop();
+    await first.ended;
+    expect(instances[0]?.pause).toHaveBeenCalledOnce();
+    expect(instances[0]?.currentTime).toBe(0);
+    expect(instances[1]?.pause).not.toHaveBeenCalled();
+    expect(revokeObjectURL).toHaveBeenCalledTimes(1);
+
+    instances[1]?.dispatchEvent(new Event('ended'));
+    await second.ended;
+    expect(revokeObjectURL).toHaveBeenCalledTimes(2);
+    expect(createObjectURL).toHaveBeenCalledTimes(2);
+    expect(() => second.setGain(Number.NaN)).toThrow(/finite number from 0 to 1/u);
+    assets.releaseAll();
+  });
+
+  it('creates a gain-controlled voice from reloadable project sound bytes', async () => {
+    const audioInstances: Array<{volume: number; play: ReturnType<typeof vi.fn>}> = [];
+    const soundType = {runtimeFormat: 'wav'};
+    const load = vi.fn(async () => ({data: new Uint8Array([4, 5, 6])}));
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:project-voice');
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+    vi.stubGlobal('Audio', class extends EventTarget {
+      currentTime = 0;
+      volume = 1;
+      pause = vi.fn();
+      play = vi.fn(() => Promise.resolve());
+      constructor(_src: string) {
+        super();
+        audioInstances.push(this);
+      }
+    });
+    Scratch.vm.runtime.storage = {
+      AssetType: {
+        ImageVector: {runtimeFormat: 'svg'},
+        ImageBitmap: {runtimeFormat: 'png'},
+        Sound: soundType
+      },
+      get: vi.fn(() => null),
+      load
+    };
+    const assets = createAssetManagerComposition();
+    await assets.registerProjectAsset({name: 'Opening', resourceId: 'sound:@stage:Opening'});
+
+    const voice = await assets.createAudioVoice('Opening', {gain: 0.4});
+
+    expect(load).toHaveBeenCalledWith(soundType, 'opening', 'wav');
+    expect(audioInstances[0]?.volume).toBe(0.4);
+    expect(playProjectSound).not.toHaveBeenCalled();
+    voice.stop();
+    await voice.ended;
+    assets.releaseAll();
+  });
+
+  it('stops every managed voice through asset and composition lifecycle methods', async () => {
+    const instances: TestAudio[] = [];
+    vi.spyOn(URL, 'createObjectURL').mockImplementation(() => `blob:lifecycle-${instances.length}`);
+    const revokeObjectURL = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+    class TestAudio extends EventTarget {
+      currentTime = 1;
+      volume = 1;
+      pause = vi.fn();
+      play = vi.fn(() => Promise.resolve());
+      constructor(_src: string) {
+        super();
+        instances.push(this);
+      }
+    }
+    vi.stubGlobal('Audio', TestAudio);
+    const assets = createAssetManagerComposition();
+    for (const name of ['A', 'B', 'C']) {
+      await assets.registerEmbeddedAsset({
+        name,
+        sourceName: `${name}.wav`,
+        mimeType: 'audio/wav',
+        bytes: new Uint8Array([1])
+      });
+    }
+    const a1 = await assets.createAudioVoice('A');
+    const a2 = await assets.createAudioVoice('A');
+    const b = await assets.createAudioVoice('B');
+    const c = await assets.createAudioVoice('C');
+
+    assets.stopSound('A');
+    await Promise.all([a1.ended, a2.ended]);
+    expect(instances[0]?.pause).toHaveBeenCalledOnce();
+    expect(instances[1]?.pause).toHaveBeenCalledOnce();
+    expect(instances[2]?.pause).not.toHaveBeenCalled();
+    expect(instances[3]?.pause).not.toHaveBeenCalled();
+
+    assets.stopAllSounds();
+    await Promise.all([b.ended, c.ended]);
+    expect(instances[2]?.pause).toHaveBeenCalledOnce();
+    expect(instances[3]?.pause).toHaveBeenCalledOnce();
+
+    const replacementB = await assets.createAudioVoice('B');
+    assets.releaseAsset('B');
+    await replacementB.ended;
+    expect(instances[4]?.pause).toHaveBeenCalledOnce();
+
+    const replacementC = await assets.createAudioVoice('C');
+    assets.releaseAll();
+    await replacementC.ended;
+    expect(instances[5]?.pause).toHaveBeenCalledOnce();
+    expect(revokeObjectURL).toHaveBeenCalledTimes(6);
+  });
+
+  it('rejects invalid voice options and releases failed playback resources once', async () => {
+    const revokeObjectURL = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:failed-voice');
+    vi.stubGlobal('Audio', class extends EventTarget {
+      currentTime = 0;
+      volume = 1;
+      pause = vi.fn();
+      play = vi.fn(() => Promise.reject(new Error('play blocked')));
+      constructor(_src: string) {
+        super();
+      }
+    });
+    const assets = createAssetManagerComposition();
+    await assets.registerEmbeddedAsset({
+      name: 'Music',
+      sourceName: 'music.ogg',
+      mimeType: 'audio/ogg',
+      bytes: new Uint8Array([1])
+    });
+
+    await expect(assets.createAudioVoice('Music', {gain: 2})).rejects
+      .toThrow(/finite number from 0 to 1/u);
+    await expect(assets.createAudioVoice('Music', {unknown: true} as never)).rejects
+      .toThrow(/unknown property/u);
+    await expect(assets.createAudioVoice('Music')).rejects.toMatchObject({
+      code: 'PLAYBACK_FAILED',
+      operation: 'createAudioVoice',
+      assetName: 'Music'
+    });
+    expect(revokeObjectURL).toHaveBeenCalledOnce();
+    assets.releaseAll();
+  });
+
   it('keeps literal logical names and structured project locators byte-for-byte', async () => {
     const assets = createAssetManagerComposition();
     const backdropId = ' Backdrop ID/\u0001: ';

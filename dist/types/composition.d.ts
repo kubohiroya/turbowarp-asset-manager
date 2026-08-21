@@ -3,6 +3,8 @@ import { type BinaryBundleKeyInput, type BinaryBundleOperationOptions, type Bina
 import { type VerifiedRemoteBinaryCacheOptions, type VerifiedRemoteBinaryInput, type VerifiedRemoteBinaryResolveOptions, type VerifiedRemoteBinaryResult, type VerifiedRemoteCachePruneResult, type VerifiedRemoteCacheStats, type VerifiedRemoteStoryCacheDeleteResult, type VerifiedRemoteStoryCacheInfo, type VerifiedRemoteStoryCachePruneResult } from './verified-remote-cache.js';
 import { type SessionBinaryBacking, type SessionBinaryBackingInput, type SessionBinaryBackingOptions } from './session-binary-backing.js';
 import { type DOMImageResource } from './dom-image-resource.js';
+export { type AssetManagerAudioVoice, type AssetManagerAudioVoiceOptions } from './audio-voice.js';
+import { type AssetManagerAudioVoice, type AssetManagerAudioVoiceOptions } from './audio-voice.js';
 export { type DOMImageResource } from './dom-image-resource.js';
 export { createBinaryBundleStore, type BinaryBundleFileInput, type BinaryBundleFileRegistration, type BinaryBundleFileResult, type BinaryBundleKeyInput, type BinaryBundleOperationOptions, type BinaryBundlePutInput, type BinaryBundleRegistration, type BinaryBundleResult, type BinaryBundleStore, type BinaryBundleStoreOptions } from './binary-bundle-store.js';
 export { createVerifiedRemoteBinaryCache, createVerifiedRemoteCacheDatabaseName, type NormalizedVerifiedRemoteBinaryInput, type VerifiedRemoteBinaryCache, type VerifiedRemoteBinaryCacheOptions, type VerifiedRemoteBinaryInput, type VerifiedRemoteBinaryLoadResult, type VerifiedRemoteBinaryResolveOptions, type VerifiedRemoteBinaryResult, type VerifiedRemoteCacheWarning, type VerifiedRemoteCacheIdentity, type VerifiedRemoteCacheIdentityInput, type VerifiedRemoteCachePruneResult, type VerifiedRemoteCacheStats, type VerifiedRemoteStoryCacheDeleteResult, type VerifiedRemoteStoryCacheInfo, type VerifiedRemoteStoryCachePruneResult } from './verified-remote-cache.js';
@@ -79,6 +81,7 @@ export interface AssetManagerComposition {
     playSound(name: unknown, options?: Readonly<{
         untilDone?: boolean;
     }>): Promise<void>;
+    createAudioVoice(name: unknown, options?: AssetManagerAudioVoiceOptions): Promise<AssetManagerAudioVoice>;
     stopSound(name: unknown): void;
     stopAllSounds(): void;
     resolveVerifiedRemoteBinary(input: VerifiedRemoteBinaryInput, options: VerifiedRemoteBinaryResolveOptions): Promise<VerifiedRemoteBinaryResult>;
