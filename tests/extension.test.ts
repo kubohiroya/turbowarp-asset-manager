@@ -509,7 +509,7 @@ describe('project-local assets', () => {
     expect(extension.getInfo().docsURI).toBe(EXTENSION_DOCS_URI);
     expect(EXTENSION_DOCS_URI).toBe('https://kubohiroya.github.io/turbowarp-asset-manager/');
     expect(extension.getVersion()).toBe(EXTENSION_VERSION);
-    expect(EXTENSION_VERSION).toBe('0.12.1');
+    expect(EXTENSION_VERSION).toBe('0.13.0');
   });
 
   it('publishes the Asset Manager monogram as a transparent block icon', () => {
