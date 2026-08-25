@@ -1,4 +1,4 @@
-# TurboWarp Asset Manager
+# TurboWarp-Asset-Manager
 
 An IndexedDB-backed image, audio, and runtime-text asset manager for TurboWarp projects. It registers external files, project-local costumes/backdrops/sounds, and Temporary Variables text references for use from TurboWarp blocks or composition hosts.
 

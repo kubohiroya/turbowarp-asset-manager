@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "productName": "TurboWarp Asset Manager",
+  "productName": "TurboWarp-Asset-Manager",
   "packageType": "extension-composition",
   "licensePolicy": "mpl-2.0",
   "packageManager": "pnpm",

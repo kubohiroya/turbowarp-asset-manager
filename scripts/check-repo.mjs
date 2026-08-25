@@ -28,8 +28,8 @@ process.stdout.write('Repository policy is aligned.\n');
 
 function checkPolicy() {
   if (policy.schemaVersion !== 1) errors.push('repo-policy.json schemaVersion must be 1');
-  if (policy.productName !== 'TurboWarp Asset Manager') {
-    errors.push('repo-policy.json productName must be TurboWarp Asset Manager');
+  if (policy.productName !== 'TurboWarp-Asset-Manager') {
+    errors.push('repo-policy.json productName must be TurboWarp-Asset-Manager');
   }
   if (policy.packageType !== 'extension-composition') {
     errors.push('repo-policy.json packageType must be extension-composition');
