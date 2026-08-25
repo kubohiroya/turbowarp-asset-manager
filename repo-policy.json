@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "productName": "TurboWarp Asset Manager",
+  "packageType": "extension-composition",
+  "licensePolicy": "mpl-2.0",
+  "packageManager": "pnpm",
+  "homepage": "pages",
+  "node": {
+    "minimum": "22"
+  },
+  "extension": {
+    "id": "kubohiroyaassetmanager",
+    "standaloneBundle": "dist/asset-manager.js",
+    "compositionBundle": "dist/composition.js",
+    "compositionTypes": "dist/types/composition.d.ts"
+  },
+  "exceptions": {
+    "cache": true,
+    "thirdPartyRuntimeDependencies": true,
+    "compositionApi": true,
+    "legacyOpcodeCompatibility": true
+  }
+}

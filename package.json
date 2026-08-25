@@ -1,11 +1,11 @@
 {
   "name": "@kubohiroya/turbowarp-asset-manager",
-  "version": "0.13.0",
+  "version": "0.14.0",
   "description": "An IndexedDB-backed image, audio, and runtime-text asset manager for TurboWarp projects.",
   "author": "Hiroya Kubo <hiroya@cuc.ac.jp>",
   "type": "module",
   "license": "MPL-2.0",
-  "homepage": "https://github.com/kubohiroya/turbowarp-asset-manager#readme",
+  "homepage": "https://kubohiroya.github.io/turbowarp-asset-manager/",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/kubohiroya/turbowarp-asset-manager.git"
@@ -32,6 +32,9 @@
     "registry": "https://registry.npmjs.org/"
   },
   "packageManager": "pnpm@11.11.0",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "vite build --watch",
     "typecheck": "tsc --noEmit",
@@ -42,14 +45,15 @@
     "types:composition:check": "tsc --project tsconfig.composition-consumer.json",
     "test": "vitest run",
     "docs": "node scripts/generate-readme.mjs",
-    "docs:check": "npm run docs && git diff --exit-code -- README.md",
+    "docs:check": "pnpm run docs && git diff --exit-code -- docs/block-reference.md",
     "docs:site:check": "node scripts/check-site.mjs",
-    "check:dist": "npm run build && git diff --exit-code -- dist",
+    "repo:check": "node scripts/check-repo.mjs",
+    "check:dist": "pnpm run build && git diff --exit-code -- dist",
     "archive:check": "node scripts/check-github-archive.mjs",
     "pack:check": "npm pack --dry-run --ignore-scripts",
     "release:check": "npm publish --dry-run --access public",
-    "check": "npm run typecheck && npm run test && npm run build && npm run types:composition:check && npm run docs:check && npm run docs:site:check && npm run check:dist && npm run archive:check && npm run pack:check",
-    "prepack": "npm run build"
+    "check": "pnpm run typecheck && pnpm run test && pnpm run build && pnpm run types:composition:check && pnpm run docs:check && pnpm run docs:site:check && pnpm run check:dist && pnpm run archive:check && pnpm run repo:check && pnpm run pack:check",
+    "prepack": "pnpm run build"
   },
   "devDependencies": {
     "@kubohiroya/vite-plugin-turbowarp-extension": "0.1.0",

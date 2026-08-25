@@ -6,7 +6,7 @@ const END = '<!-- END GENERATED BLOCKS -->';
 const definitions = JSON.parse(
   await readFile(new URL('../src/block-definitions.json', import.meta.url), 'utf8')
 );
-const readmeUrl = new URL('../README.md', import.meta.url);
+const readmeUrl = new URL('../docs/block-reference.md', import.meta.url);
 const readme = await readFile(readmeUrl, 'utf8');
 
 const generated = definitions.blocks.map(renderBlock).join('\n\n');
