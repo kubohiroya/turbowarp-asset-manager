@@ -14,7 +14,7 @@ try {
     recursive: true,
     filter(source) {
       const relative = path.relative(repositoryRoot, source);
-      const topLevel = relative.split(path.sep)[0];
+      const topLevel = relative.split(path.sep)[0] ?? '';
       return relative === '' || !excludedTopLevel.has(topLevel);
     },
   });

@@ -5,7 +5,7 @@ import {fileURLToPath} from 'node:url';
 const siteRoot = fileURLToPath(new URL('../docs/', import.meta.url));
 const readmePath = fileURLToPath(new URL('../README.md', import.meta.url));
 const htmlFiles = await collectHtml(siteRoot);
-const errors = [];
+const errors: string[] = [];
 
 const readme = await readFile(readmePath, 'utf8');
 for (const guideUrl of [
@@ -23,10 +23,10 @@ await checkAppBarCss(path.join(siteRoot, 'assets/site.css'));
 
 for (const htmlFile of htmlFiles) {
   const source = await readFile(htmlFile, 'utf8');
-  const ids = new Set([...source.matchAll(/\bid="([^"]+)"/g)].map((match) => match[1]));
+  const ids = new Set([...source.matchAll(/\bid="([^"]+)"/g)].flatMap((match) => match[1] ?? []));
   const references = [
     ...source.matchAll(/\b(?:href|src)="([^"]+)"/g)
-  ].map((match) => match[1]);
+  ].flatMap((match) => match[1] ?? []);
 
   for (const language of ['en', 'ja', 'x-default']) {
     if (!new RegExp(`rel="alternate"\\s+hreflang="${language}"`).test(source)) {
@@ -50,7 +50,7 @@ for (const htmlFile of htmlFiles) {
       const targetSource = target === htmlFile ? source : await readFile(target, 'utf8');
       const targetIds = target === htmlFile
         ? ids
-        : new Set([...targetSource.matchAll(/\bid="([^"]+)"/g)].map((match) => match[1]));
+        : new Set([...targetSource.matchAll(/\bid="([^"]+)"/g)].flatMap((match) => match[1] ?? []));
       if (!targetIds.has(fragment)) {
         errors.push(`${relative(htmlFile)}: missing anchor #${fragment} in ${relative(target)}`);
       }
@@ -58,8 +58,8 @@ for (const htmlFile of htmlFiles) {
   }
 
   for (const figure of source.matchAll(/<figure\b([^>]*)>([\s\S]*?)<\/figure>/g)) {
-    const describedBy = figure[1].match(/\baria-describedby="([^"]+)"/)?.[1];
-    if (!describedBy || !figure[2].includes(`id="${describedBy}"`)) {
+    const describedBy = figure[1]?.match(/\baria-describedby="([^"]+)"/)?.[1];
+    if (!describedBy || !figure[2]?.includes(`id="${describedBy}"`)) {
       errors.push(`${relative(htmlFile)}: diagram is missing an in-figure text description`);
     }
   }
@@ -71,7 +71,7 @@ if (errors.length > 0) {
 
 console.log(`Checked ${htmlFiles.length} HTML pages and their local links, anchors, and diagram descriptions.`);
 
-async function collectHtml(directory) {
+async function collectHtml(directory: string): Promise<string[]> {
   const entries = await readdir(directory, {withFileTypes: true});
   const nested = await Promise.all(entries.map((entry) => {
     const entryPath = path.join(directory, entry.name);
@@ -81,7 +81,7 @@ async function collectHtml(directory) {
   return nested.flat();
 }
 
-async function exists(target) {
+async function exists(target: string) {
   try {
     await stat(target);
     return true;
@@ -90,7 +90,7 @@ async function exists(target) {
   }
 }
 
-async function isDirectory(target) {
+async function isDirectory(target: string) {
   try {
     return (await stat(target)).isDirectory();
   } catch {
@@ -98,16 +98,16 @@ async function isDirectory(target) {
   }
 }
 
-function relative(target) {
+function relative(target: string) {
   return path.relative(siteRoot, target) || 'index.html';
 }
 
-async function checkAppBar(pages) {
+async function checkAppBar(pages: string[]) {
   const sources = await Promise.all(pages.map((page) => readFile(page, 'utf8')));
   const appBars = sources.map((source, index) => {
     const match = source.match(/<header class="app-bar">[\s\S]*?<\/header>/);
     if (!match) {
-      errors.push(`${relative(pages[index])}: missing app-bar`);
+      errors.push(`${relative(pages[index] ?? '')}: missing app-bar`);
       return '';
     }
     return match[0];
@@ -116,7 +116,7 @@ async function checkAppBar(pages) {
   const signatures = appBars.map((appBar) => [...appBar.matchAll(/<(\/)?([a-z0-9-]+)([^>]*)>/gi)]
     .map((match) => {
       if (match[1]) return `/${match[2]}`;
-      const className = match[3].match(/\bclass="([^"]+)"/)?.[1] ?? '';
+      const className = match[3]?.match(/\bclass="([^"]+)"/)?.[1] ?? '';
       return `${match[2]}.${className}`;
     })
     .join('|'));
@@ -124,7 +124,7 @@ async function checkAppBar(pages) {
 
   const sectionTargets = appBars.map((appBar) => {
     const nav = appBar.match(/<nav class="app-bar-sections"[\s\S]*?<\/nav>/)?.[0] ?? '';
-    return [...nav.matchAll(/href="(#[^"]+)"/g)].map((match) => match[1]);
+    return [...nav.matchAll(/href="(#[^"]+)"/g)].flatMap((match) => match[1] ?? []);
   });
   if (JSON.stringify(sectionTargets[0]) !== JSON.stringify(sectionTargets[1])) {
     errors.push('localized app bars must use the same section order');
@@ -132,25 +132,25 @@ async function checkAppBar(pages) {
 
   for (const [index, appBar] of appBars.entries()) {
     for (const className of ['app-bar-brand', 'app-bar-sections', 'app-bar-actions', 'app-bar-github', 'app-bar-languages']) {
-      if (!appBar.includes(`class="${className}"`)) errors.push(`${relative(pages[index])}: missing ${className}`);
+      if (!appBar.includes(`class="${className}"`)) errors.push(`${relative(pages[index] ?? '')}: missing ${className}`);
     }
     if (!appBar.includes('>English</a>') || !appBar.includes('>日本語</a>')) {
-      errors.push(`${relative(pages[index])}: language names must be English / 日本語`);
+      errors.push(`${relative(pages[index] ?? '')}: language names must be English / 日本語`);
     }
     if ((appBar.match(/aria-current="page"/g) ?? []).length !== 1) {
-      errors.push(`${relative(pages[index])}: exactly one language must have aria-current=page`);
+      errors.push(`${relative(pages[index] ?? '')}: exactly one language must have aria-current=page`);
     }
     for (const language of ['en', 'ja']) {
       if (!new RegExp(`hreflang="${language}"[^>]*lang="${language}"|lang="${language}"[^>]*hreflang="${language}"`).test(appBar)) {
-        errors.push(`${relative(pages[index])}: language switch is missing lang/hreflang=${language}`);
+        errors.push(`${relative(pages[index] ?? '')}: language switch is missing lang/hreflang=${language}`);
       }
     }
   }
 }
 
-async function checkAppBarCss(cssPath) {
+async function checkAppBarCss(cssPath: string) {
   const css = await readFile(cssPath, 'utf8');
-  const requirements = [
+  const requirements: [RegExp, string][] = [
     [/\.app-bar\s*{[\s\S]*?position:\s*sticky/, 'sticky app bar'],
     [/\.app-bar-inner\s*{[\s\S]*?min-height:\s*4\.25rem/, '68px app bar content height'],
     [/backdrop-filter:\s*blur\(/, 'backdrop blur'],
@@ -163,7 +163,7 @@ async function checkAppBarCss(cssPath) {
     if (!pattern.test(css)) errors.push(`${relative(cssPath)}: missing ${label}`);
   }
   const hiddenSelectors = [...css.matchAll(/([^{}]+)\{[^{}]*display:\s*none/g)]
-    .map((match) => match[1]);
+    .flatMap((match) => match[1] ?? []);
   for (const selector of ['.app-bar-brand', '.app-bar-mark', '.app-bar-github', '.app-bar-languages']) {
     if (hiddenSelectors.some((hiddenSelector) => hiddenSelector.includes(selector))) {
       errors.push(`${relative(cssPath)}: ${selector} must remain visible on mobile`);

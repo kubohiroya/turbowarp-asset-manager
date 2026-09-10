@@ -33,7 +33,7 @@
   },
   "packageManager": "pnpm@11.11.0",
   "engines": {
-    "node": ">=22"
+    "node": ">=22.18.0"
   },
   "scripts": {
     "dev": "vite build --watch",
@@ -44,12 +44,12 @@
     "build:types": "tsc --project tsconfig.build.json",
     "types:composition:check": "tsc --project tsconfig.composition-consumer.json",
     "test": "vitest run",
-    "docs": "node scripts/generate-readme.mjs",
+    "docs": "node scripts/generate-readme.ts",
     "docs:check": "pnpm run docs && git diff --exit-code -- docs/block-reference.md",
-    "docs:site:check": "node scripts/check-site.mjs",
-    "repo:check": "node scripts/check-repo.mjs",
+    "docs:site:check": "node scripts/check-site.ts",
+    "repo:check": "node scripts/check-repo.ts",
     "check:dist": "pnpm run build && git diff --exit-code -- dist",
-    "archive:check": "node scripts/check-github-archive.mjs",
+    "archive:check": "node scripts/check-github-archive.ts",
     "pack:check": "npm pack --dry-run --ignore-scripts",
     "release:check": "npm publish --dry-run --access public",
     "check": "pnpm run typecheck && pnpm run test && pnpm run build && pnpm run types:composition:check && pnpm run docs:check && pnpm run docs:site:check && pnpm run check:dist && pnpm run archive:check && pnpm run repo:check && pnpm run pack:check",
@@ -57,6 +57,7 @@
   },
   "devDependencies": {
     "@kubohiroya/vite-plugin-turbowarp-extension": "0.1.0",
+    "@types/node": "^22.20.1",
     "@xmldom/xmldom": "0.9.11",
     "fake-indexeddb": "6.2.5",
     "typescript": "^5.9.3",
