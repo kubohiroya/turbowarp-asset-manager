@@ -38,13 +38,13 @@ The built JavaScript file is committed to this repository so users do not need t
 The versioned npm package contains the same reviewed build:
 
 ```bash
-pnpm add --save-exact @kubohiroya/turbowarp-asset-manager@0.15.0
+pnpm add --save-exact @kubohiroya/turbowarp-asset-manager@0.16.0
 ```
 
 Load `node_modules/@kubohiroya/turbowarp-asset-manager/dist/asset-manager.js`, or use the version-pinned CDN URL:
 
 ```text
-https://cdn.jsdelivr.net/npm/@kubohiroya/turbowarp-asset-manager@0.15.0/dist/asset-manager.js
+https://cdn.jsdelivr.net/npm/@kubohiroya/turbowarp-asset-manager@0.16.0/dist/asset-manager.js
 ```
 
 ## Quick Start
