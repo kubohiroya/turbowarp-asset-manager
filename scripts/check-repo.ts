@@ -1,6 +1,7 @@
 import {execFile} from 'node:child_process';
 import {readFile} from 'node:fs/promises';
 import {promisify} from 'node:util';
+import {serializeExtensionManifest} from '@kubohiroya/turbowarp-extension-manifest';
 
 interface PackageMetadata {
   name: string;
@@ -33,6 +34,7 @@ interface RepoPolicy {
   extension: {
     id: string;
     standaloneBundle: string;
+    manifest: string;
     compositionBundle: string;
     compositionTypes: string;
   };
@@ -59,11 +61,14 @@ const license = await readFile('LICENSE', 'utf8');
 const blockReference = await readFile('docs/block-reference.md', 'utf8');
 const compositionApi = await readFile('docs/composition-api.md', 'utf8');
 const runtimeContracts = await readFile('docs/runtime-contracts.md', 'utf8');
+const blockDefinitions = JSON.parse(await readFile('src/block-definitions.json', 'utf8')) as unknown;
+const extensionManifest = await readFile('dist/extension-manifest.json', 'utf8');
 
 checkPolicy();
 checkPackageMetadata();
 checkReadme();
 checkSplitDocuments();
+checkExtensionManifest();
 checkLicense();
 await checkPackContents();
 
@@ -112,6 +117,13 @@ function checkPackageMetadata() {
   }
   for (const file of ['dist/', 'README.md', 'LICENSE']) {
     if (!packageMetadata.files?.includes(file)) errors.push(`package.json files must include ${file}`);
+  }
+}
+
+function checkExtensionManifest() {
+  const expected = serializeExtensionManifest(policy.extension.id, blockDefinitions);
+  if (extensionManifest !== expected) {
+    errors.push('dist/extension-manifest.json must match src/block-definitions.json byte-for-byte');
   }
 }
 
@@ -207,6 +219,7 @@ async function checkPackContents() {
     'README.md',
     'LICENSE',
     policy.extension.standaloneBundle,
+    policy.extension.manifest,
     policy.extension.compositionBundle,
     policy.extension.compositionTypes
   ]) {

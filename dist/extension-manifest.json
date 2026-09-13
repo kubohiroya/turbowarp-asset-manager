@@ -1,0 +1,252 @@
+{
+  "formatVersion": 1,
+  "id": "kubohiroyaassetmanager",
+  "blocks": [
+    {
+      "opcode": "assetErrorLabel",
+      "blockType": "REPORTER",
+      "arguments": []
+    },
+    {
+      "opcode": "assetErrorType",
+      "blockType": "REPORTER",
+      "arguments": []
+    },
+    {
+      "opcode": "deleteAllCachedAssets",
+      "blockType": "COMMAND",
+      "arguments": []
+    },
+    {
+      "opcode": "deleteAllMemoryAssets",
+      "blockType": "COMMAND",
+      "arguments": []
+    },
+    {
+      "opcode": "deleteCachedAsset",
+      "blockType": "COMMAND",
+      "arguments": [
+        {
+          "id": "NAME",
+          "type": "STRING"
+        }
+      ]
+    },
+    {
+      "opcode": "deleteMemoryAsset",
+      "blockType": "COMMAND",
+      "arguments": [
+        {
+          "id": "NAME",
+          "type": "STRING"
+        }
+      ]
+    },
+    {
+      "opcode": "finishAllActorSequences",
+      "blockType": "COMMAND",
+      "arguments": []
+    },
+    {
+      "opcode": "getAssetMimeType",
+      "blockType": "REPORTER",
+      "arguments": [
+        {
+          "id": "NAME",
+          "type": "STRING"
+        }
+      ]
+    },
+    {
+      "opcode": "getVersion",
+      "blockType": "REPORTER",
+      "arguments": []
+    },
+    {
+      "opcode": "isLoaded",
+      "blockType": "BOOLEAN",
+      "arguments": [
+        {
+          "id": "NAME",
+          "type": "STRING"
+        }
+      ]
+    },
+    {
+      "opcode": "loadAsset",
+      "blockType": "COMMAND",
+      "arguments": [
+        {
+          "id": "NAME",
+          "type": "STRING"
+        },
+        {
+          "id": "URL",
+          "type": "STRING"
+        }
+      ]
+    },
+    {
+      "opcode": "playSound",
+      "blockType": "COMMAND",
+      "arguments": [
+        {
+          "id": "NAME",
+          "type": "STRING"
+        }
+      ]
+    },
+    {
+      "opcode": "playSoundUntilDone",
+      "blockType": "COMMAND",
+      "arguments": [
+        {
+          "id": "NAME",
+          "type": "STRING"
+        }
+      ]
+    },
+    {
+      "opcode": "registerAsset",
+      "blockType": "COMMAND",
+      "arguments": [
+        {
+          "id": "NAME",
+          "type": "STRING"
+        },
+        {
+          "id": "RESOURCE_ID",
+          "type": "STRING"
+        }
+      ]
+    },
+    {
+      "opcode": "setSpriteSkin",
+      "blockType": "COMMAND",
+      "arguments": [
+        {
+          "id": "NAME",
+          "type": "STRING"
+        },
+        {
+          "id": "SPRITE",
+          "type": "STRING"
+        }
+      ]
+    },
+    {
+      "opcode": "setStageSkin",
+      "blockType": "COMMAND",
+      "arguments": [
+        {
+          "id": "NAME",
+          "type": "STRING"
+        }
+      ]
+    },
+    {
+      "opcode": "setTextStyle",
+      "blockType": "COMMAND",
+      "arguments": [
+        {
+          "id": "NAME",
+          "type": "STRING"
+        },
+        {
+          "id": "PROPERTY",
+          "type": "STRING"
+        },
+        {
+          "id": "VALUE",
+          "type": "STRING"
+        }
+      ]
+    },
+    {
+      "opcode": "setTextValue",
+      "blockType": "COMMAND",
+      "arguments": [
+        {
+          "id": "NAME",
+          "type": "STRING"
+        },
+        {
+          "id": "VALUE",
+          "type": "STRING"
+        }
+      ]
+    },
+    {
+      "opcode": "setThisSpriteSkin",
+      "blockType": "COMMAND",
+      "arguments": [
+        {
+          "id": "NAME",
+          "type": "STRING"
+        }
+      ]
+    },
+    {
+      "opcode": "startActorLoop",
+      "blockType": "COMMAND",
+      "arguments": [
+        {
+          "id": "ACTOR",
+          "type": "STRING"
+        },
+        {
+          "id": "ASSETS",
+          "type": "STRING"
+        },
+        {
+          "id": "DURATIONS",
+          "type": "STRING"
+        }
+      ]
+    },
+    {
+      "opcode": "startActorSequence",
+      "blockType": "COMMAND",
+      "arguments": [
+        {
+          "id": "ACTOR",
+          "type": "STRING"
+        },
+        {
+          "id": "ASSETS",
+          "type": "STRING"
+        },
+        {
+          "id": "DURATIONS",
+          "type": "STRING"
+        }
+      ]
+    },
+    {
+      "opcode": "stopActorAnimation",
+      "blockType": "COMMAND",
+      "arguments": [
+        {
+          "id": "ACTOR",
+          "type": "STRING"
+        }
+      ]
+    },
+    {
+      "opcode": "stopAllSounds",
+      "blockType": "COMMAND",
+      "arguments": []
+    },
+    {
+      "opcode": "stopSound",
+      "blockType": "COMMAND",
+      "arguments": [
+        {
+          "id": "NAME",
+          "type": "STRING"
+        }
+      ]
+    }
+  ],
+  "menus": []
+}

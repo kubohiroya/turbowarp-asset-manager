@@ -84,13 +84,13 @@ pnpm install --frozen-lockfile
 pnpm run check
 ```
 
-Regenerate block documentation after changing `src/block-definitions.json`:
+`src/block-definitions.json` is the canonical block API source. Regenerate block documentation after changing it:
 
 ```bash
 pnpm run docs
 ```
 
-The build produces `dist/asset-manager.js`, `dist/composition.js`, and `dist/types/composition.d.ts`. Commit rebuilt artifacts whenever extension or Composition source changes.
+The build produces `dist/asset-manager.js`, `dist/extension-manifest.json`, `dist/composition.js`, and `dist/types/composition.d.ts`. The deterministic manifest records the extension ID, every opcode and block type, and each argument ID, type, and menu reference for compatibility checks by tools such as `sb3-toolchain`. Commit rebuilt artifacts whenever extension, block metadata, or Composition source changes.
 
 ## Release
 
@@ -101,7 +101,7 @@ pnpm run pack:check
 pnpm run release:check
 ```
 
-The npm package archive must include README, LICENSE, the Standalone bundle, the Composition bundle, and Composition type declarations.
+The npm package archive must include README, LICENSE, the Standalone bundle, the extension API manifest, the Composition bundle, and Composition type declarations.
 
 ## License
 
