@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>OPFS binary backing smoke test</title>
+  </head>
+  <body data-result="pending">
+    <script type="module">
+      try {
+        document.body.dataset.result = 'running';
+        const {createBinaryBundleStore} = await import('/dist/composition.js');
+        const request = (request) => new Promise((resolve, reject) => {
+          request.onsuccess = () => resolve(request.result);
+          request.onerror = () => reject(request.error);
+        });
+        const transactionComplete = (transaction) => new Promise((resolve, reject) => {
+          transaction.oncomplete = () => resolve();
+          transaction.onerror = () => reject(transaction.error);
+          transaction.onabort = () => reject(transaction.error);
+        });
+        document.body.dataset.result = 'imported';
+        const bytes = Uint8Array.from([1, 3, 5, 7]);
+        const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+        const integrity = `sha256-${[...digest]
+          .map((value) => value.toString(16).padStart(2, '0'))
+          .join('')}`;
+        const identity = crypto.randomUUID();
+        const input = {
+          namespace: `browser-smoke/${identity}`,
+          name: 'model',
+          integrity: `sha256-${'1'.repeat(64)}`,
+          files: [{path: 'model.bin', size: bytes.byteLength, integrity, bytes}]
+        };
+        await navigator.storage.getDirectory();
+        document.body.dataset.result = 'native-opfs';
+        const store = createBinaryBundleStore({
+          backendPolicy: 'opfs-required',
+          databaseName: `twam-browser-smoke-${identity}`
+        });
+        await store.getStats();
+        document.body.dataset.result = 'established';
+        document.body.dataset.result = 'putting';
+        await store.put(input);
+        document.body.dataset.result = 'getting';
+        const result = await store.get(input);
+        if (store.getBackendStatus().selected !== 'opfs') throw new Error('OPFS was not selected.');
+        if (result.files[0].bytes.join(',') !== bytes.join(',')) throw new Error('Bytes changed.');
+
+        const aborted = new AbortController();
+        aborted.abort('browser smoke abort');
+        try {
+          await store.put({...input, name: 'aborted'}, {signal: aborted.signal});
+          throw new Error('An aborted write succeeded.');
+        } catch (error) {
+          if (error.name !== 'AbortError') throw error;
+        }
+
+        const concurrentDatabaseName = `twam-browser-concurrent-${identity}`;
+        const concurrentOptions = {
+          backendPolicy: 'opfs-required',
+          databaseName: concurrentDatabaseName,
+          maxStoredBundles: 1
+        };
+        const firstStore = createBinaryBundleStore(concurrentOptions);
+        const secondStore = createBinaryBundleStore(concurrentOptions);
+        await Promise.all([
+          firstStore.put({...input, namespace: `${input.namespace}/first`, name: 'first'}),
+          secondStore.put({...input, namespace: `${input.namespace}/second`, name: 'second'})
+        ]);
+        const concurrentStats = await firstStore.getStats();
+        if (concurrentStats.bundles !== 1) throw new Error('Concurrent eviction exceeded the bundle limit.');
+        await firstStore.clear();
+        await Promise.all([firstStore.release(), secondStore.release()]);
+
+        const metadataName = `twam-browser-smoke-${identity}-opfs-metadata`;
+        const database = await request(indexedDB.open(metadataName));
+        const recoveryTransaction = database.transaction(
+          ['activeManifests', 'pendingObjectDeletions'],
+          'readwrite'
+        );
+        const manifests = await request(recoveryTransaction.objectStore('activeManifests').getAll());
+        const manifest = manifests[0];
+        if (!manifest) throw new Error('Recovery manifest was not found.');
+        recoveryTransaction.objectStore('activeManifests').delete(manifest.key);
+        for (const file of manifest.files) {
+          recoveryTransaction.objectStore('pendingObjectDeletions').put({
+            key: file.object.key,
+            descriptor: file.object,
+            createdAt: Date.now()
+          });
+        }
+        await transactionComplete(recoveryTransaction);
+        database.close();
+        await store.release();
+
+        const recoveredStore = createBinaryBundleStore({
+          backendPolicy: 'opfs-required',
+          databaseName: `twam-browser-smoke-${identity}`
+        });
+        await recoveredStore.getStats();
+        const recoveredDatabase = await request(indexedDB.open(metadataName));
+        const deletionTransaction = recoveredDatabase.transaction('pendingObjectDeletions', 'readonly');
+        const pendingDeletionCount = await request(
+          deletionTransaction.objectStore('pendingObjectDeletions').count()
+        );
+        await transactionComplete(deletionTransaction);
+        recoveredDatabase.close();
+        if (pendingDeletionCount !== 0) throw new Error('Recovery left pending object deletions.');
+        await recoveredStore.release();
+        document.body.dataset.result = 'passed';
+        document.body.textContent = 'OPFS smoke test passed';
+      } catch (error) {
+        document.body.dataset.result = 'failed';
+        document.body.textContent = `${error?.code ?? error?.name}: ${error?.message}`;
+      }
+    </script>
+  </body>
+</html>

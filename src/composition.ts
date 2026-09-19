@@ -2,6 +2,9 @@ import {AssetManagerExtension, normalizeName} from './extension.js';
 import {type AssetManagerFeatureFlags} from './feature-flags.js';
 import {
   createBinaryBundleStore,
+  type BinaryBundleBackendStatus,
+  type BinaryBundlePruneResult,
+  type BinaryBundleStoreStats,
   type BinaryBundleKeyInput,
   type BinaryBundleOperationOptions,
   type BinaryBundlePutInput,
@@ -49,17 +52,34 @@ export {type DOMImageResource} from './dom-image-resource.js';
 
 export {
   createBinaryBundleStore,
+  type BinaryBundleBackendStatus,
+  type BinaryBundleBackendWarning,
   type BinaryBundleFileInput,
   type BinaryBundleFileRegistration,
   type BinaryBundleFileResult,
   type BinaryBundleKeyInput,
   type BinaryBundleOperationOptions,
+  type BinaryBundlePruneResult,
   type BinaryBundlePutInput,
   type BinaryBundleRegistration,
   type BinaryBundleResult,
   type BinaryBundleStore,
+  type BinaryBundleStoreStats,
   type BinaryBundleStoreOptions
 } from './binary-bundle-store.js';
+
+export {
+  createIndexedDBBinaryObjectStore,
+  createOpfsBinaryObjectStore,
+  type BinaryObjectDescriptor,
+  type BinaryObjectOperationOptions,
+  type BinaryObjectResult,
+  type BinaryObjectStore,
+  type BinaryStorageBackendPolicy,
+  type IndexedDBBinaryObjectStoreOptions,
+  type OpfsBinaryObjectStoreOptions,
+  type OpfsStorageManager
+} from './binary-object-store.js';
 
 export {
   createVerifiedRemoteBinaryCache,
@@ -203,6 +223,10 @@ export interface AssetManagerComposition {
     input: BinaryBundleKeyInput,
     options?: BinaryBundleOperationOptions
   ): Promise<void>;
+  getBinaryBundleBackendStatus(): BinaryBundleBackendStatus;
+  getBinaryBundleStoreStats(): Promise<BinaryBundleStoreStats>;
+  pruneBinaryBundleStore(): Promise<BinaryBundlePruneResult>;
+  clearBinaryBundleStore(): Promise<BinaryBundlePruneResult>;
   releaseBinaryStore(): Promise<void>;
   createSessionBinaryBacking(
     input: SessionBinaryBackingInput,
@@ -670,6 +694,18 @@ export function createAssetManagerComposition(
     },
     deleteBinaryBundle(input, operationOptions) {
       return bundleStore().delete(input, operationOptions);
+    },
+    getBinaryBundleBackendStatus() {
+      return bundleStore().getBackendStatus();
+    },
+    getBinaryBundleStoreStats() {
+      return bundleStore().getStats();
+    },
+    pruneBinaryBundleStore() {
+      return bundleStore().prune();
+    },
+    clearBinaryBundleStore() {
+      return bundleStore().clear();
     },
     releaseBinaryStore() {
       return bundleStore().release();

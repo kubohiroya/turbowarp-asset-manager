@@ -1,6 +1,6 @@
 # TurboWarp-Asset-Manager
 
-An IndexedDB-backed image, audio, and runtime-text asset manager for TurboWarp projects. It registers external files, project-local costumes/backdrops/sounds, and Temporary Variables text references for use from TurboWarp blocks or composition hosts.
+An IndexedDB-backed image, audio, and runtime-text asset manager for TurboWarp projects, with an explicit OPFS hybrid binary backing for composition hosts. It registers external files, project-local costumes/backdrops/sounds, and Temporary Variables text references for use from TurboWarp blocks or composition hosts.
 
 ## User Guide
 
@@ -14,6 +14,7 @@ For setup, safety notes, recipes, and the illustrated block guide, see the [Engl
 - offers a block-free Composition API for host extensions;
 - validates SVG and remote binary inputs before use or cache writes;
 - keeps story-scoped IndexedDB cache controls available for application shells.
+- keeps IndexedDB as the default while allowing composition hosts to select OPFS for verified binary object bytes.
 
 ## Choose an Integration
 

@@ -1,4 +1,5 @@
-import { type BinaryBundleFileInput, type BinaryBundleFileRegistration, type BinaryBundleKeyInput, type BinaryBundleOperationOptions, type BinaryBundleResult } from './binary-bundle-store.js';
+import { type BinaryBundleBackendWarning, type BinaryBundleFileInput, type BinaryBundleFileRegistration, type BinaryBundleKeyInput, type BinaryBundleOperationOptions, type BinaryBundleResult } from './binary-bundle-store.js';
+import type { BinaryStorageBackendPolicy, OpfsBinaryObjectStoreOptions } from './binary-object-store.js';
 export type SessionBinaryBackingPolicy = 'prefer' | 'required' | 'disabled';
 export type SessionBinaryBackingMode = 'session' | 'direct';
 export interface SessionBinaryBackingAssetInput extends BinaryBundleKeyInput {
@@ -34,11 +35,16 @@ export interface SessionBinaryBackingOptions {
     readonly leaseTtlMs?: number;
     readonly heartbeatIntervalMs?: number;
     readonly orphanCleanupBatchSize?: number;
+    readonly backendPolicy?: BinaryStorageBackendPolicy;
+    readonly opfs?: OpfsBinaryObjectStoreOptions;
+    readonly opfsMetadataDatabaseName?: string;
 }
 export interface SessionBinaryBacking {
     readonly sessionId: string;
     readonly mode: SessionBinaryBackingMode;
+    readonly backend: 'direct' | 'indexeddb' | 'opfs';
     readonly warning?: SessionBinaryBackingWarning;
+    readonly storageWarning?: BinaryBundleBackendWarning;
     get(input: BinaryBundleKeyInput, options?: BinaryBundleOperationOptions): Promise<BinaryBundleResult>;
     renewLease(): Promise<void>;
     dispose(): Promise<void>;

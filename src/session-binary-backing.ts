@@ -1,10 +1,16 @@
 import {
+  createBinaryBundleStore,
+  type BinaryBundleBackendWarning,
   type BinaryBundleFileInput,
   type BinaryBundleFileRegistration,
   type BinaryBundleKeyInput,
   type BinaryBundleOperationOptions,
   type BinaryBundleResult
 } from './binary-bundle-store.js';
+import type {
+  BinaryStorageBackendPolicy,
+  OpfsBinaryObjectStoreOptions
+} from './binary-object-store.js';
 
 const DEFAULT_DATABASE_NAME = 'tw-asset-manager-session-binary-v1';
 const DATABASE_VERSION = 1;
@@ -73,12 +79,17 @@ export interface SessionBinaryBackingOptions {
   readonly leaseTtlMs?: number;
   readonly heartbeatIntervalMs?: number;
   readonly orphanCleanupBatchSize?: number;
+  readonly backendPolicy?: BinaryStorageBackendPolicy;
+  readonly opfs?: OpfsBinaryObjectStoreOptions;
+  readonly opfsMetadataDatabaseName?: string;
 }
 
 export interface SessionBinaryBacking {
   readonly sessionId: string;
   readonly mode: SessionBinaryBackingMode;
+  readonly backend: 'direct' | 'indexeddb' | 'opfs';
   readonly warning?: SessionBinaryBackingWarning;
+  readonly storageWarning?: BinaryBundleBackendWarning;
   get(
     input: BinaryBundleKeyInput,
     options?: BinaryBundleOperationOptions
@@ -1353,6 +1364,7 @@ function createEstablishedBacking({
   const backing: SessionBinaryBacking = {
     sessionId: input.sessionId,
     mode,
+    backend: mode === 'direct' ? 'direct' : 'indexeddb',
     ...(warning === undefined ? {} : {warning}),
     get(value, operationOptions = {}) {
       const operation = (async () => {
@@ -1427,6 +1439,170 @@ function createEstablishedBacking({
   return Object.freeze(backing);
 }
 
+async function createObjectBackedSession(
+  input: NormalizedInput,
+  options: NormalizedOptions,
+  rawOptions: SessionBinaryBackingOptions,
+  signal: AbortSignal
+): Promise<SessionBinaryBacking> {
+  const subtleCrypto = options.subtleCrypto ?? globalThis.crypto?.subtle;
+  if (!subtleCrypto?.digest) {
+    throw sessionError('ASSET_SESSION_BINARY_CRYPTO_UNAVAILABLE', 'SHA-256 is unavailable.');
+  }
+  const store = createBinaryBundleStore({
+    backendPolicy: rawOptions.backendPolicy ?? 'opfs-required',
+    subtleCrypto,
+    ...(rawOptions.indexedDB ? {indexedDB: rawOptions.indexedDB} : {}),
+    ...(rawOptions.databaseName ? {databaseName: rawOptions.databaseName} : {}),
+    ...(rawOptions.opfs ? {opfs: rawOptions.opfs} : {}),
+    ...(rawOptions.opfsMetadataDatabaseName
+      ? {opfsMetadataDatabaseName: rawOptions.opfsMetadataDatabaseName}
+      : {}),
+    ...(rawOptions.maxFilesPerAsset ? {maxFilesPerBundle: rawOptions.maxFilesPerAsset} : {}),
+    ...(rawOptions.maxAssetBytes ? {maxBundleBytes: rawOptions.maxAssetBytes} : {}),
+    ...(rawOptions.leaseTtlMs ? {ttlMs: rawOptions.leaseTtlMs} : {}),
+    ...(rawOptions.orphanCleanupBatchSize
+      ? {recoveryBatchSize: rawOptions.orphanCleanupBatchSize}
+      : {})
+  });
+  const internalKeys = new Map<string, BinaryBundleKeyInput>();
+  const committed: BinaryBundleKeyInput[] = [];
+  try {
+    for (const asset of input.assets) {
+      assertNotAborted(signal);
+      const identity = new TextEncoder().encode(`${input.sessionId}\0${asset.lookupKey}`);
+      const digest = new Uint8Array(await subtleCrypto.digest('SHA-256', identity));
+      const internalKey = {
+        namespace: `session-${toHex(digest)}`,
+        name: 'asset',
+        integrity: asset.integrity
+      };
+      const files = await readSourceAsset(input.source, asset, subtleCrypto, signal);
+      await store.put({...internalKey, files}, {signal});
+      await store.get(internalKey, {signal});
+      internalKeys.set(asset.lookupKey, internalKey);
+      committed.push(internalKey);
+    }
+    await releaseSource(input.source);
+  } catch (error) {
+    await Promise.allSettled(committed.map((key) => store.delete(key)));
+    await store.release();
+    throw error;
+  }
+
+  const status = store.getBackendStatus();
+  const controller = new AbortController();
+  const activeOperations = new Set<Promise<unknown>>();
+  let disposed = false;
+  let disposePromise: Promise<void> | null = null;
+  let fatalError: Error | null = null;
+  const notifyFatal = (error: Error): Error => {
+    if (!fatalError) {
+      fatalError = error;
+      controller.abort();
+      try {
+        input.onFatalError?.(error);
+      } catch {
+        // A diagnostic callback cannot replace the authoritative failure.
+      }
+    }
+    return fatalError;
+  };
+  const ensureUsable = () => {
+    if (disposed) {
+      throw sessionError('ASSET_SESSION_BINARY_RELEASED', 'Session binary backing was disposed.');
+    }
+    if (fatalError) throw fatalError;
+  };
+  const track = <T>(operation: Promise<T>): Promise<T> => {
+    activeOperations.add(operation);
+    void operation.then(
+      () => activeOperations.delete(operation),
+      () => activeOperations.delete(operation)
+    );
+    return operation;
+  };
+  const renew = async () => {
+    ensureUsable();
+    try {
+      await Promise.all(committed.map((key) => store.touch(key, {signal: controller.signal})));
+    } catch (error) {
+      const normalized = error instanceof Error
+        ? error
+        : sessionError('ASSET_SESSION_BINARY_WRITE_FAILED', 'Session lease renewal failed.', error);
+      if (disposed) throw normalized;
+      throw notifyFatal(normalized);
+    }
+  };
+  let heartbeat: ReturnType<typeof setInterval> | null = setInterval(() => {
+    void track(renew()).catch(() => {});
+  }, options.heartbeatIntervalMs);
+  const backing: SessionBinaryBacking = {
+    sessionId: input.sessionId,
+    mode: 'session',
+    backend: status.selected === 'opfs' ? 'opfs' : 'indexeddb',
+    ...(status.warning ? {storageWarning: status.warning} : {}),
+    get(value, operationOptions = {}) {
+      const operation = (async () => {
+        ensureUsable();
+        const key = normalizeKey(value);
+        const asset = input.assetsByKey.get(key.lookupKey);
+        const internalKey = internalKeys.get(key.lookupKey);
+        if (!asset || !internalKey) {
+          throw sessionError('ASSET_SESSION_BINARY_NOT_FOUND', `Unknown session binary asset: ${key.name}`);
+        }
+        const externalSignal = operationSignal(operationOptions);
+        const linked = linkSignals(externalSignal, controller.signal);
+        try {
+          const result = await store.get(internalKey, {signal: linked.signal});
+          return Object.freeze({
+            namespace: asset.namespace,
+            name: asset.name,
+            integrity: asset.integrity,
+            files: result.files,
+            totalBytes: result.totalBytes
+          });
+        } catch (error) {
+          if (disposed) throw error;
+          throw notifyFatal(error instanceof Error
+            ? error
+            : sessionError('ASSET_SESSION_BINARY_READ_FAILED', 'Session binary read failed.', error));
+        } finally {
+          linked.release();
+        }
+      })();
+      return track(operation);
+    },
+    renewLease() {
+      return track(renew());
+    },
+    dispose() {
+      if (disposePromise) return disposePromise;
+      disposed = true;
+      controller.abort();
+      if (heartbeat !== null) {
+        clearInterval(heartbeat);
+        heartbeat = null;
+      }
+      disposePromise = (async () => {
+        await Promise.allSettled([...activeOperations]);
+        const results = await Promise.allSettled(committed.map((key) => store.delete(key)));
+        await store.release();
+        const failures = results.filter((result) => result.status === 'rejected');
+        if (failures.length > 0) {
+          throw sessionError(
+            'ASSET_SESSION_BINARY_CLEANUP_FAILED',
+            'Session OPFS binary cleanup failed.',
+            new AggregateError(failures.map((result) => (result as PromiseRejectedResult).reason))
+          );
+        }
+      })();
+      return disposePromise;
+    }
+  };
+  return Object.freeze(backing);
+}
+
 /**
  * Establish a fixed direct or IndexedDB-backed binary session without changing persistent caches.
  *
@@ -1458,6 +1634,9 @@ export async function createSessionBinaryBacking(
         database: null,
         source: input.source
       });
+    }
+    if (optionValue.backendPolicy && optionValue.backendPolicy !== 'indexeddb') {
+      return await createObjectBackedSession(input, options, optionValue, signal);
     }
     try {
       database = await openDatabase(options, signal);

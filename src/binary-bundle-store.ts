@@ -1,3 +1,13 @@
+import {
+  createOpfsBinaryObjectStore,
+  type BinaryStorageBackendPolicy,
+  type OpfsBinaryObjectStoreOptions
+} from './binary-object-store.js';
+import {
+  createOpfsBinaryBundleStore,
+  type EstablishedOpfsBinaryBundleStore
+} from './opfs-binary-bundle-store.js';
+
 const DEFAULT_DATABASE_NAME = 'tw-asset-manager-binary-bundles-v1';
 const DATABASE_VERSION = 1;
 const BUNDLE_STORE = 'bundles';
@@ -76,6 +86,33 @@ export interface BinaryBundleStoreOptions {
   readonly maxStoredBundles?: number;
   readonly maxStoreBytes?: number;
   readonly ttlMs?: number;
+  readonly backendPolicy?: BinaryStorageBackendPolicy;
+  readonly opfs?: OpfsBinaryObjectStoreOptions;
+  readonly opfsMetadataDatabaseName?: string;
+  readonly recoveryBatchSize?: number;
+}
+
+export interface BinaryBundleBackendWarning {
+  readonly code: 'ASSET_BINARY_BACKEND_FALLBACK';
+  readonly causeCode: string;
+}
+
+export interface BinaryBundleBackendStatus {
+  readonly policy: BinaryStorageBackendPolicy;
+  readonly selected: 'pending' | 'indexeddb' | 'opfs';
+  readonly warning?: BinaryBundleBackendWarning;
+}
+
+export interface BinaryBundleStoreStats {
+  readonly backend: 'indexeddb' | 'opfs';
+  readonly bundles: number;
+  readonly logicalBytes: number;
+  readonly physicalObjectBytes: number;
+}
+
+export interface BinaryBundlePruneResult {
+  readonly removedBundles: number;
+  readonly removedBytes: number;
 }
 
 export interface BinaryBundleStore {
@@ -88,6 +125,11 @@ export interface BinaryBundleStore {
     options?: BinaryBundleOperationOptions
   ): Promise<BinaryBundleResult>;
   delete(input: BinaryBundleKeyInput, options?: BinaryBundleOperationOptions): Promise<void>;
+  touch(input: BinaryBundleKeyInput, options?: BinaryBundleOperationOptions): Promise<void>;
+  getStats(): Promise<BinaryBundleStoreStats>;
+  prune(): Promise<BinaryBundlePruneResult>;
+  clear(): Promise<BinaryBundlePruneResult>;
+  getBackendStatus(): BinaryBundleBackendStatus;
   release(): Promise<void>;
 }
 
@@ -455,7 +497,7 @@ function publicRegistration(
  * structured-cloned bundle record, and success is published only after the containing transaction
  * completes.
  */
-export function createBinaryBundleStore(options: BinaryBundleStoreOptions = {}): BinaryBundleStore {
+function createIndexedDBBinaryBundleStore(options: BinaryBundleStoreOptions = {}): BinaryBundleStore {
   if (!options || typeof options !== 'object' || Array.isArray(options)) {
     throw new TypeError('Binary bundle store options must be an object.');
   }
@@ -1072,6 +1114,57 @@ export function createBinaryBundleStore(options: BinaryBundleStoreOptions = {}):
     }
   }
 
+  async function touchBundle(
+    input: BinaryBundleKeyInput,
+    operationOptions: BinaryBundleOperationOptions = {}
+  ): Promise<void> {
+    ensureActive();
+    const signal = operationSignal(operationOptions);
+    assertNotAborted(signal);
+    const key = normalizeKey(input);
+    const records = await metadataRecords();
+    const metadata = records.find((record) => record.key === key.key);
+    if (!metadata) throw bundleError('ASSET_BINARY_BUNDLE_NOT_FOUND', 'Binary bundle was not found.');
+    await touch(key.key, metadata.writeToken);
+  }
+
+  async function metadataRecords(): Promise<BundleMetadata[]> {
+    ensureActive();
+    const database = await openDatabase();
+    try {
+      const transaction = database.transaction(METADATA_STORE, 'readonly');
+      const values = await requestResult(
+        transaction.objectStore(METADATA_STORE).getAll() as IDBRequest<unknown[]>
+      );
+      await transactionComplete(transaction);
+      return values.filter((value): value is BundleMetadata =>
+        Boolean(value && typeof value === 'object' &&
+          metadataIsValid(value, String((value as Partial<BundleMetadata>).key)))
+      );
+    } finally {
+      database.close();
+    }
+  }
+
+  async function clearStore(): Promise<BinaryBundlePruneResult> {
+    const records = await metadataRecords();
+    const database = await openDatabase();
+    try {
+      const transaction = database.transaction([BUNDLE_STORE, METADATA_STORE], 'readwrite');
+      transaction.objectStore(BUNDLE_STORE).clear();
+      transaction.objectStore(METADATA_STORE).clear();
+      await transactionComplete(transaction);
+    } catch (error) {
+      throw mappedStoreError(error, 'clear');
+    } finally {
+      database.close();
+    }
+    return Object.freeze({
+      removedBundles: records.length,
+      removedBytes: records.reduce((sum, record) => sum + record.totalBytes, 0)
+    });
+  }
+
   const store: BinaryBundleStore = {
     put(input, operationOptions) {
       return trackOperation(put(input, operationOptions));
@@ -1081,6 +1174,40 @@ export function createBinaryBundleStore(options: BinaryBundleStoreOptions = {}):
     },
     delete(input, operationOptions) {
       return trackOperation(deleteBundle(input, operationOptions));
+    },
+    touch(input, operationOptions) {
+      return trackOperation(touchBundle(input, operationOptions));
+    },
+    getStats() {
+      return trackOperation(metadataRecords().then((records) => {
+        const logicalBytes = records.reduce((sum, record) => sum + record.totalBytes, 0);
+        return Object.freeze({
+          backend: 'indexeddb' as const,
+          bundles: records.length,
+          logicalBytes,
+          physicalObjectBytes: logicalBytes
+        });
+      }));
+    },
+    prune() {
+      return trackOperation((async () => {
+        const records = await metadataRecords();
+        const timestamp = now();
+        const expired = records.filter((record) =>
+          timestamp < record.lastAccessedAt || timestamp - record.lastAccessedAt > limits.ttlMs
+        );
+        for (const record of expired) await deleteIfToken(record.key, record.writeToken);
+        return Object.freeze({
+          removedBundles: expired.length,
+          removedBytes: expired.reduce((sum, record) => sum + record.totalBytes, 0)
+        });
+      })());
+    },
+    clear() {
+      return trackOperation(clearStore());
+    },
+    getBackendStatus() {
+      return Object.freeze({policy: 'indexeddb', selected: 'indexeddb'});
     },
     release() {
       if (releasePromise) return releasePromise;
@@ -1099,6 +1226,132 @@ export function createBinaryBundleStore(options: BinaryBundleStoreOptions = {}):
       const pending = [...activeOperations];
       releasePromise = Promise.allSettled(pending).then(() => {});
       return releasePromise;
+    }
+  };
+  return Object.freeze(store);
+}
+
+function errorCode(error: unknown): string {
+  return error instanceof Error && 'code' in error && typeof error.code === 'string'
+    ? error.code
+    : 'ASSET_BINARY_OPFS_OPEN_FAILED';
+}
+
+function fallbackEligible(error: unknown): boolean {
+  return new Set([
+    'ASSET_BINARY_OPFS_UNSUPPORTED',
+    'ASSET_BINARY_OPFS_INSECURE_CONTEXT',
+    'ASSET_BINARY_OPFS_OPEN_FAILED',
+    'ASSET_BINARY_OPFS_QUOTA'
+  ]).has(errorCode(error));
+}
+
+/**
+ * Create a binary bundle store whose backend is selected once, before its first operation.
+ * IndexedDB remains the default so existing consumers keep the previous behavior.
+ */
+export function createBinaryBundleStore(options: BinaryBundleStoreOptions = {}): BinaryBundleStore {
+  if (!options || typeof options !== 'object' || Array.isArray(options)) {
+    throw new TypeError('Binary bundle store options must be an object.');
+  }
+  const policy = options.backendPolicy ?? 'indexeddb';
+  if (!new Set<BinaryStorageBackendPolicy>(['indexeddb', 'opfs-prefer', 'opfs-required']).has(policy)) {
+    throw new TypeError('backendPolicy must be indexeddb, opfs-prefer, or opfs-required.');
+  }
+  if (policy === 'indexeddb') return createIndexedDBBinaryBundleStore(options);
+
+  let selected: 'pending' | 'indexeddb' | 'opfs' = 'pending';
+  let warning: BinaryBundleBackendWarning | undefined;
+  let selectedStore: BinaryBundleStore | null = null;
+  let selection: Promise<BinaryBundleStore> | null = null;
+  let released = false;
+
+  const select = (): Promise<BinaryBundleStore> => {
+    selection ??= (async () => {
+      if (released) throw releasedError();
+      try {
+        if (globalThis.isSecureContext === false && !options.opfs?.rootDirectory) {
+          throw bundleError(
+            'ASSET_BINARY_OPFS_INSECURE_CONTEXT',
+            'OPFS requires a secure context.'
+          );
+        }
+        const objectSubtleCrypto = options.opfs?.subtleCrypto ?? options.subtleCrypto;
+        const objectStore = createOpfsBinaryObjectStore({
+          ...options.opfs,
+          ...(objectSubtleCrypto ? {subtleCrypto: objectSubtleCrypto} : {})
+        });
+        const databaseName = options.opfsMetadataDatabaseName ??
+          `${options.databaseName ?? DEFAULT_DATABASE_NAME}-opfs-metadata`;
+        const opfsStore: EstablishedOpfsBinaryBundleStore = createOpfsBinaryBundleStore({
+          objectStore,
+          databaseName,
+          ...(options.indexedDB ? {indexedDB: options.indexedDB} : {}),
+          ...(options.subtleCrypto ? {subtleCrypto: options.subtleCrypto} : {}),
+          ...(options.now ? {now: options.now} : {}),
+          ...(options.maxFilesPerBundle ? {maxFilesPerBundle: options.maxFilesPerBundle} : {}),
+          ...(options.maxBundleBytes ? {maxBundleBytes: options.maxBundleBytes} : {}),
+          ...(options.maxStoredBundles ? {maxStoredBundles: options.maxStoredBundles} : {}),
+          ...(options.maxStoreBytes ? {maxStoreBytes: options.maxStoreBytes} : {}),
+          ...(options.ttlMs ? {ttlMs: options.ttlMs} : {}),
+          ...(options.recoveryBatchSize ? {recoveryBatchSize: options.recoveryBatchSize} : {})
+        });
+        await opfsStore.establish();
+        if (released) {
+          await opfsStore.release();
+          throw releasedError();
+        }
+        selected = 'opfs';
+        selectedStore = opfsStore;
+        return opfsStore;
+      } catch (error) {
+        if (policy !== 'opfs-prefer' || !fallbackEligible(error)) throw error;
+        const indexedStore = createIndexedDBBinaryBundleStore({...options, backendPolicy: 'indexeddb'});
+        warning = Object.freeze({
+          code: 'ASSET_BINARY_BACKEND_FALLBACK',
+          causeCode: errorCode(error)
+        });
+        selected = 'indexeddb';
+        selectedStore = indexedStore;
+        return indexedStore;
+      }
+    })();
+    return selection;
+  };
+
+  const store: BinaryBundleStore = {
+    async put(input, operationOptions) {
+      return (await select()).put(input, operationOptions);
+    },
+    async get(input, operationOptions) {
+      return (await select()).get(input, operationOptions);
+    },
+    async delete(input, operationOptions) {
+      return (await select()).delete(input, operationOptions);
+    },
+    async touch(input, operationOptions) {
+      return (await select()).touch(input, operationOptions);
+    },
+    async getStats() {
+      return (await select()).getStats();
+    },
+    async prune() {
+      return (await select()).prune();
+    },
+    async clear() {
+      return (await select()).clear();
+    },
+    getBackendStatus() {
+      return Object.freeze({policy, selected, ...(warning ? {warning} : {})});
+    },
+    async release() {
+      if (released) return;
+      released = true;
+      if (selectedStore) await selectedStore.release();
+      else if (selection) {
+        const store = await selection.catch(() => null);
+        await store?.release();
+      }
     }
   };
   return Object.freeze(store);

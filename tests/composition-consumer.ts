@@ -1,14 +1,18 @@
 import {
   createAssetManagerComposition,
   createBinaryBundleStore,
+  createOpfsBinaryObjectStore,
   createSessionBinaryBacking,
   createVerifiedRemoteCacheDatabaseName,
   type AssetManagerComposition,
   type AssetManagerAudioVoice,
   type BinaryBundlePutInput,
+  type BinaryBundleBackendStatus,
+  type BinaryBundleStoreStats,
   type BinaryBundleRegistration,
   type BinaryBundleResult,
   type BinaryBundleStore,
+  type BinaryObjectStore,
   type DOMImageResource,
   type DOMImageResourceBindingOptions,
   type DOMImageResourceTarget,
@@ -118,11 +122,21 @@ const binaryBundle: BinaryBundlePutInput = {
   ]
 };
 const binaryStore: BinaryBundleStore = createBinaryBundleStore();
+declare const opfsRoot: FileSystemDirectoryHandle;
+const binaryObjectStore: BinaryObjectStore = createOpfsBinaryObjectStore({
+  rootDirectory: opfsRoot
+});
+const opfsBinaryStore: BinaryBundleStore = createBinaryBundleStore({
+  backendPolicy: 'opfs-required',
+  opfs: {rootDirectory: opfsRoot}
+});
 const binaryRegistration: Promise<BinaryBundleRegistration> = composition.putBinaryBundle(
   binaryBundle
 );
 const binaryResult: Promise<BinaryBundleResult> = composition.getBinaryBundle(binaryBundle);
 const binaryDelete: Promise<void> = composition.deleteBinaryBundle(binaryBundle);
+const binaryBackend: BinaryBundleBackendStatus = composition.getBinaryBundleBackendStatus();
+const binaryStats: Promise<BinaryBundleStoreStats> = composition.getBinaryBundleStoreStats();
 const binaryStoreRelease: Promise<void> = composition.releaseBinaryStore();
 const sessionAsset: SessionBinaryBackingAssetInput = {
   namespace: 'story-0001/source-integrity',
@@ -176,9 +190,13 @@ void storyDelete;
 void storyLeaseRenewal;
 void storyLeaseRelease;
 void binaryStore;
+void binaryObjectStore;
+void opfsBinaryStore;
 void binaryRegistration;
 void binaryResult;
 void binaryDelete;
+void binaryBackend;
+void binaryStats;
 void binaryStoreRelease;
 void directSession;
 void compositionSession;

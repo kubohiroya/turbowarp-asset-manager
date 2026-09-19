@@ -46,6 +46,7 @@
     "build:types": "tsc --project tsconfig.build.json",
     "types:composition:check": "tsc --project tsconfig.composition-consumer.json",
     "test": "vitest run",
+    "test:browser:opfs": "node scripts/check-opfs-browser.ts",
     "docs": "node scripts/generate-readme.ts",
     "docs:check": "pnpm run docs && git diff --exit-code -- docs/block-reference.md",
     "docs:site:check": "node scripts/check-site.ts",
@@ -54,7 +55,7 @@
     "archive:check": "node scripts/check-github-archive.ts",
     "pack:check": "npm pack --dry-run --ignore-scripts",
     "release:check": "npm publish --dry-run --access public",
-    "check": "pnpm run typecheck && pnpm run lint && pnpm run test && pnpm run build && pnpm run types:composition:check && pnpm run docs:check && pnpm run docs:site:check && pnpm run check:dist && pnpm run archive:check && pnpm run repo:check && pnpm run pack:check",
+    "check": "pnpm run typecheck && pnpm run lint && pnpm run test && pnpm run build && pnpm run test:browser:opfs && pnpm run types:composition:check && pnpm run docs:check && pnpm run docs:site:check && pnpm run check:dist && pnpm run archive:check && pnpm run repo:check && pnpm run pack:check",
     "prepack": "pnpm run build"
   },
   "devDependencies": {

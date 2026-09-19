@@ -1,12 +1,13 @@
 import { type AssetManagerFeatureFlags } from './feature-flags.js';
-import { type BinaryBundleKeyInput, type BinaryBundleOperationOptions, type BinaryBundlePutInput, type BinaryBundleRegistration, type BinaryBundleResult, type BinaryBundleStoreOptions } from './binary-bundle-store.js';
+import { type BinaryBundleBackendStatus, type BinaryBundlePruneResult, type BinaryBundleStoreStats, type BinaryBundleKeyInput, type BinaryBundleOperationOptions, type BinaryBundlePutInput, type BinaryBundleRegistration, type BinaryBundleResult, type BinaryBundleStoreOptions } from './binary-bundle-store.js';
 import { type VerifiedRemoteBinaryCacheOptions, type VerifiedRemoteBinaryInput, type VerifiedRemoteBinaryResolveOptions, type VerifiedRemoteBinaryResult, type VerifiedRemoteCachePruneResult, type VerifiedRemoteCacheStats, type VerifiedRemoteStoryCacheDeleteResult, type VerifiedRemoteStoryCacheInfo, type VerifiedRemoteStoryCachePruneResult } from './verified-remote-cache.js';
 import { type SessionBinaryBacking, type SessionBinaryBackingInput, type SessionBinaryBackingOptions } from './session-binary-backing.js';
 import { type DOMImageResource } from './dom-image-resource.js';
 export { type AssetManagerAudioVoice, type AssetManagerAudioVoiceOptions } from './audio-voice.js';
 import { type AssetManagerAudioVoice, type AssetManagerAudioVoiceOptions } from './audio-voice.js';
 export { type DOMImageResource } from './dom-image-resource.js';
-export { createBinaryBundleStore, type BinaryBundleFileInput, type BinaryBundleFileRegistration, type BinaryBundleFileResult, type BinaryBundleKeyInput, type BinaryBundleOperationOptions, type BinaryBundlePutInput, type BinaryBundleRegistration, type BinaryBundleResult, type BinaryBundleStore, type BinaryBundleStoreOptions } from './binary-bundle-store.js';
+export { createBinaryBundleStore, type BinaryBundleBackendStatus, type BinaryBundleBackendWarning, type BinaryBundleFileInput, type BinaryBundleFileRegistration, type BinaryBundleFileResult, type BinaryBundleKeyInput, type BinaryBundleOperationOptions, type BinaryBundlePruneResult, type BinaryBundlePutInput, type BinaryBundleRegistration, type BinaryBundleResult, type BinaryBundleStore, type BinaryBundleStoreStats, type BinaryBundleStoreOptions } from './binary-bundle-store.js';
+export { createIndexedDBBinaryObjectStore, createOpfsBinaryObjectStore, type BinaryObjectDescriptor, type BinaryObjectOperationOptions, type BinaryObjectResult, type BinaryObjectStore, type BinaryStorageBackendPolicy, type IndexedDBBinaryObjectStoreOptions, type OpfsBinaryObjectStoreOptions, type OpfsStorageManager } from './binary-object-store.js';
 export { createVerifiedRemoteBinaryCache, createVerifiedRemoteCacheDatabaseName, type NormalizedVerifiedRemoteBinaryInput, type VerifiedRemoteBinaryCache, type VerifiedRemoteBinaryCacheOptions, type VerifiedRemoteBinaryInput, type VerifiedRemoteBinaryLoadResult, type VerifiedRemoteBinaryResolveOptions, type VerifiedRemoteBinaryResult, type VerifiedRemoteCacheWarning, type VerifiedRemoteCacheIdentity, type VerifiedRemoteCacheIdentityInput, type VerifiedRemoteCachePruneResult, type VerifiedRemoteCacheStats, type VerifiedRemoteStoryCacheDeleteResult, type VerifiedRemoteStoryCacheInfo, type VerifiedRemoteStoryCachePruneResult } from './verified-remote-cache.js';
 export { createSessionBinaryBacking, type SessionBinaryBacking, type SessionBinaryBackingAssetInput, type SessionBinaryBackingInput, type SessionBinaryBackingMode, type SessionBinaryBackingOptions, type SessionBinaryBackingPolicy, type SessionBinaryBackingSource, type SessionBinaryBackingSourceAsset, type SessionBinaryBackingWarning } from './session-binary-backing.js';
 export interface EmbeddedAssetBytesInput {
@@ -96,6 +97,10 @@ export interface AssetManagerComposition {
     putBinaryBundle(input: BinaryBundlePutInput, options?: BinaryBundleOperationOptions): Promise<BinaryBundleRegistration>;
     getBinaryBundle(input: BinaryBundleKeyInput, options?: BinaryBundleOperationOptions): Promise<BinaryBundleResult>;
     deleteBinaryBundle(input: BinaryBundleKeyInput, options?: BinaryBundleOperationOptions): Promise<void>;
+    getBinaryBundleBackendStatus(): BinaryBundleBackendStatus;
+    getBinaryBundleStoreStats(): Promise<BinaryBundleStoreStats>;
+    pruneBinaryBundleStore(): Promise<BinaryBundlePruneResult>;
+    clearBinaryBundleStore(): Promise<BinaryBundlePruneResult>;
     releaseBinaryStore(): Promise<void>;
     createSessionBinaryBacking(input: SessionBinaryBackingInput, options?: BinaryBundleOperationOptions): Promise<SessionBinaryBacking>;
 }

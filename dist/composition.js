@@ -2601,6 +2601,1189 @@ var AssetManagerExtension = class {
 	}
 };
 //#endregion
+//#region src/binary-object-store.ts
+function objectError(code, message, cause) {
+	const error = new Error(message, cause === void 0 ? void 0 : { cause });
+	Object.defineProperty(error, "code", {
+		value: code,
+		enumerable: true
+	});
+	return error;
+}
+function abortError$4(cause) {
+	const error = objectError("ASSET_BINARY_ABORTED", "Binary object operation was aborted.", cause);
+	error.name = "AbortError";
+	return error;
+}
+function assertActive(released, signal) {
+	if (released) throw objectError("ASSET_BINARY_STORE_RELEASED", "Binary object store was released.");
+	if (signal?.aborted) throw abortError$4(signal.reason);
+}
+function validateDescriptor(value) {
+	if (!value || typeof value !== "object" || Array.isArray(value)) throw objectError("ASSET_BINARY_OBJECT_INPUT_INVALID", "Binary object descriptor must be an object.");
+	if (!/^[a-z0-9][a-z0-9._:-]{0,511}$/u.test(value.key)) throw objectError("ASSET_BINARY_OBJECT_INPUT_INVALID", "Binary object key is invalid.");
+	if (!Number.isSafeInteger(value.size) || value.size < 0) throw objectError("ASSET_BINARY_OBJECT_INPUT_INVALID", "Binary object size is invalid.");
+	if (!/^sha256-(?:[0-9a-f]{64}|[A-Za-z0-9+/]{43}=)$/u.test(value.integrity)) throw objectError("ASSET_BINARY_OBJECT_INPUT_INVALID", "Binary object integrity is invalid.");
+	if (value.contentType !== void 0 && (typeof value.contentType !== "string" || value.contentType.length === 0 || value.contentType.length > 256)) throw objectError("ASSET_BINARY_OBJECT_INPUT_INVALID", "Binary object content type is invalid.");
+	return value;
+}
+function toHex$2(bytes) {
+	return [...bytes].map((value) => value.toString(16).padStart(2, "0")).join("");
+}
+function integrityHex$1(integrity) {
+	const payload = integrity.slice(7);
+	if (/^[0-9a-f]{64}$/u.test(payload)) return payload;
+	try {
+		const decoded = Uint8Array.from(atob(payload), (character) => character.charCodeAt(0));
+		if (decoded.byteLength === 32) return toHex$2(decoded);
+	} catch {}
+	throw objectError("ASSET_BINARY_OBJECT_INPUT_INVALID", "Binary object integrity is invalid.");
+}
+async function sourceBytes(source, signal) {
+	if (source instanceof ArrayBuffer) return new Uint8Array(source.slice(0));
+	if (source instanceof Uint8Array) return Uint8Array.from(source);
+	if (!source || typeof source !== "object" || typeof source.getReader !== "function") throw objectError("ASSET_BINARY_OBJECT_INPUT_INVALID", "Binary object source is invalid.");
+	const reader = source.getReader();
+	const cancel = () => void reader.cancel(signal?.reason).catch(() => {});
+	signal?.addEventListener("abort", cancel, { once: true });
+	const chunks = [];
+	let length = 0;
+	try {
+		for (;;) {
+			if (signal?.aborted) throw abortError$4(signal.reason);
+			const result = await reader.read();
+			if (signal?.aborted) throw abortError$4(signal.reason);
+			if (result.done) break;
+			if (!(result.value instanceof Uint8Array)) throw objectError("ASSET_BINARY_OBJECT_INPUT_INVALID", "Binary object stream emitted invalid bytes.");
+			chunks.push(Uint8Array.from(result.value));
+			length += result.value.byteLength;
+			if (!Number.isSafeInteger(length)) throw objectError("ASSET_BINARY_OBJECT_INPUT_INVALID", "Binary object source is too large.");
+		}
+	} finally {
+		signal?.removeEventListener("abort", cancel);
+		reader.releaseLock();
+	}
+	const bytes = new Uint8Array(length);
+	let offset = 0;
+	for (const chunk of chunks) {
+		bytes.set(chunk, offset);
+		offset += chunk.byteLength;
+	}
+	return bytes;
+}
+async function readFileBytes(file, signal) {
+	if (signal?.aborted) throw abortError$4(signal.reason);
+	let rejectAbort = null;
+	const aborted = new Promise((_resolve, reject) => {
+		rejectAbort = () => reject(abortError$4(signal?.reason));
+		signal?.addEventListener("abort", rejectAbort, { once: true });
+	});
+	try {
+		const buffer = await Promise.race([file.arrayBuffer(), aborted]);
+		return new Uint8Array(buffer);
+	} finally {
+		if (rejectAbort) signal?.removeEventListener("abort", rejectAbort);
+	}
+}
+async function writeSource(writable, source, expectedSize, signal) {
+	if (source instanceof ArrayBuffer || source instanceof Uint8Array) {
+		const bytes = source instanceof ArrayBuffer ? new Uint8Array(source.slice(0)) : Uint8Array.from(source);
+		if (bytes.byteLength !== expectedSize) throw objectError("ASSET_BINARY_OBJECT_INPUT_INVALID", "Binary object size does not match its source.");
+		assertActive(false, signal);
+		let rejectAbort = null;
+		const aborted = new Promise((_resolve, reject) => {
+			rejectAbort = () => {
+				writable.abort(signal?.reason).catch(() => {});
+				reject(abortError$4(signal?.reason));
+			};
+			signal?.addEventListener("abort", rejectAbort, { once: true });
+		});
+		try {
+			await Promise.race([writable.write(bytes), aborted]);
+		} finally {
+			if (rejectAbort) signal?.removeEventListener("abort", rejectAbort);
+		}
+		return;
+	}
+	if (!source || typeof source !== "object" || typeof source.getReader !== "function") throw objectError("ASSET_BINARY_OBJECT_INPUT_INVALID", "Binary object source is invalid.");
+	const reader = source.getReader();
+	let size = 0;
+	const cancel = () => {
+		reader.cancel(signal?.reason).catch(() => {});
+		writable.abort(signal?.reason).catch(() => {});
+	};
+	signal?.addEventListener("abort", cancel, { once: true });
+	try {
+		for (;;) {
+			if (signal?.aborted) throw abortError$4(signal.reason);
+			const result = await reader.read();
+			if (signal?.aborted) throw abortError$4(signal.reason);
+			if (result.done) break;
+			if (!(result.value instanceof Uint8Array)) throw objectError("ASSET_BINARY_OBJECT_INPUT_INVALID", "Binary object stream emitted invalid bytes.");
+			size += result.value.byteLength;
+			if (!Number.isSafeInteger(size) || size > expectedSize) throw objectError("ASSET_BINARY_OBJECT_INPUT_INVALID", "Binary object stream exceeded its declared size.");
+			await writable.write(Uint8Array.from(result.value));
+		}
+		if (size !== expectedSize) throw objectError("ASSET_BINARY_OBJECT_INPUT_INVALID", "Binary object stream size does not match its descriptor.");
+	} finally {
+		signal?.removeEventListener("abort", cancel);
+		reader.releaseLock();
+	}
+}
+async function closeWritable(writable, signal) {
+	let rejectAbort = null;
+	const aborted = new Promise((_resolve, reject) => {
+		rejectAbort = () => {
+			writable.abort(signal?.reason).catch(() => {});
+			reject(abortError$4(signal?.reason));
+		};
+		signal?.addEventListener("abort", rejectAbort, { once: true });
+	});
+	try {
+		await Promise.race([writable.close(), aborted]);
+	} finally {
+		if (rejectAbort) signal?.removeEventListener("abort", rejectAbort);
+	}
+}
+async function copyFileToWritable(file, writable, signal) {
+	const reader = file.stream().getReader();
+	const cancel = () => {
+		reader.cancel(signal?.reason).catch(() => {});
+		writable.abort(signal?.reason).catch(() => {});
+	};
+	signal?.addEventListener("abort", cancel, { once: true });
+	try {
+		for (;;) {
+			if (signal?.aborted) throw abortError$4(signal.reason);
+			const result = await reader.read();
+			if (result.done) break;
+			await writable.write(Uint8Array.from(result.value));
+		}
+		await writable.close();
+	} finally {
+		signal?.removeEventListener("abort", cancel);
+		reader.releaseLock();
+	}
+}
+async function verify(bytes, descriptor, subtleCrypto) {
+	if (bytes.byteLength !== descriptor.size) throw objectError("ASSET_BINARY_OPFS_CORRUPT", "Binary object size does not match its descriptor.");
+	if (toHex$2(new Uint8Array(await subtleCrypto.digest("SHA-256", bytes))) !== integrityHex$1(descriptor.integrity)) throw objectError("ASSET_BINARY_OPFS_CORRUPT", "Binary object integrity does not match its descriptor.");
+}
+function mappedOpfsError(error, operation) {
+	if (error instanceof Error && "code" in error && typeof error.code === "string") return error;
+	if (error instanceof DOMException && error.name === "AbortError") return abortError$4(error);
+	if (error instanceof DOMException && error.name === "QuotaExceededError") return objectError("ASSET_BINARY_OPFS_QUOTA", "OPFS quota was exceeded.", error);
+	if (error instanceof DOMException && error.name === "NotFoundError" && operation === "read") return objectError("ASSET_BINARY_OPFS_NOT_FOUND", "OPFS binary object was not found.", error);
+	return objectError(operation === "open" ? "ASSET_BINARY_OPFS_OPEN_FAILED" : operation === "write" ? "ASSET_BINARY_OPFS_WRITE_FAILED" : operation === "read" ? "ASSET_BINARY_OPFS_READ_FAILED" : "ASSET_BINARY_OPFS_RECOVERY_FAILED", `OPFS binary object ${operation} failed.`, error);
+}
+async function childDirectory(parent, name) {
+	return parent.getDirectoryHandle(name, { create: true });
+}
+function createOpfsBinaryObjectStore(options = {}) {
+	if (!options || typeof options !== "object" || Array.isArray(options)) throw new TypeError("OPFS binary object store options must be an object.");
+	const subtleCrypto = options.subtleCrypto ?? globalThis.crypto?.subtle;
+	if (!subtleCrypto || typeof subtleCrypto.digest !== "function") throw objectError("ASSET_BINARY_CRYPTO_UNAVAILABLE", "SHA-256 is unavailable.");
+	let released = false;
+	let token = 0;
+	const activeWritables = /* @__PURE__ */ new Set();
+	let rootPromise = null;
+	const roots = () => rootPromise ??= (async () => {
+		try {
+			const originRoot = options.rootDirectory ?? await (options.storage ?? globalThis.navigator?.storage)?.getDirectory();
+			if (!originRoot) throw objectError("ASSET_BINARY_OPFS_UNSUPPORTED", "OPFS is unavailable.");
+			const root = await childDirectory(await childDirectory(originRoot, "tw-asset-manager"), "opfs-v1");
+			return {
+				objects: await childDirectory(root, "objects"),
+				staging: await childDirectory(root, "staging")
+			};
+		} catch (error) {
+			throw mappedOpfsError(error, "open");
+		}
+	})();
+	async function objectLocation(key) {
+		const hash = toHex$2(new Uint8Array(await subtleCrypto.digest("SHA-256", new TextEncoder().encode(key))));
+		const { objects } = await roots();
+		return {
+			directory: await childDirectory(objects, hash.slice(0, 2)),
+			name: hash
+		};
+	}
+	return Object.freeze({
+		kind: "opfs",
+		async put(descriptorValue, source, operationOptions = {}) {
+			const descriptor = validateDescriptor(descriptorValue);
+			assertActive(released, operationOptions.signal);
+			const rootHandles = await roots();
+			assertActive(released, operationOptions.signal);
+			const stageName = `${Date.now().toString(36)}-${(++token).toString(36)}-${crypto.randomUUID?.() ?? "write"}`;
+			let writable = null;
+			try {
+				const stageHandle = await rootHandles.staging.getFileHandle(stageName, { create: true });
+				writable = await stageHandle.createWritable();
+				activeWritables.add(writable);
+				await writeSource(writable, source, descriptor.size, operationOptions.signal);
+				await closeWritable(writable, operationOptions.signal);
+				activeWritables.delete(writable);
+				writable = null;
+				assertActive(released, operationOptions.signal);
+				const stagedFile = await stageHandle.getFile();
+				await verify(await readFileBytes(stagedFile, operationOptions.signal), descriptor, subtleCrypto);
+				assertActive(released, operationOptions.signal);
+				const location = await objectLocation(descriptor.key);
+				assertActive(released, operationOptions.signal);
+				const finalHandle = await location.directory.getFileHandle(location.name, { create: true });
+				writable = await finalHandle.createWritable();
+				activeWritables.add(writable);
+				await copyFileToWritable(stagedFile, writable, operationOptions.signal);
+				activeWritables.delete(writable);
+				writable = null;
+				await verify(await readFileBytes(await finalHandle.getFile(), operationOptions.signal), descriptor, subtleCrypto);
+				assertActive(released, operationOptions.signal);
+				await rootHandles.staging.removeEntry(stageName);
+			} catch (error) {
+				if (writable) {
+					activeWritables.delete(writable);
+					await writable.abort(error).catch(() => {});
+				}
+				await rootHandles.staging.removeEntry(stageName).catch(() => {});
+				throw mappedOpfsError(error, "write");
+			}
+		},
+		async get(descriptorValue, operationOptions = {}) {
+			const descriptor = validateDescriptor(descriptorValue);
+			assertActive(released, operationOptions.signal);
+			try {
+				const location = await objectLocation(descriptor.key);
+				const bytes = await readFileBytes(await (await location.directory.getFileHandle(location.name)).getFile(), operationOptions.signal);
+				assertActive(released, operationOptions.signal);
+				await verify(bytes, descriptor, subtleCrypto);
+				assertActive(released, operationOptions.signal);
+				return Object.freeze({
+					...descriptor,
+					bytes
+				});
+			} catch (error) {
+				throw mappedOpfsError(error, "read");
+			}
+		},
+		async delete(key, operationOptions = {}) {
+			assertActive(released, operationOptions.signal);
+			try {
+				const location = await objectLocation(key);
+				await location.directory.removeEntry(location.name).catch((error) => {
+					if (!(error instanceof DOMException && error.name === "NotFoundError")) throw error;
+				});
+			} catch (error) {
+				throw mappedOpfsError(error, "delete");
+			}
+		},
+		async cleanupStaging(operationOptions = {}) {
+			const limit = operationOptions.limit ?? 64;
+			if (!Number.isSafeInteger(limit) || limit <= 0) throw objectError("ASSET_BINARY_OBJECT_INPUT_INVALID", "Staging cleanup limit is invalid.");
+			assertActive(released, operationOptions.signal);
+			const { staging } = await roots();
+			const createdBefore = operationOptions.createdBefore ?? Date.now() - 36e5;
+			let removed = 0;
+			for await (const entry of staging.values()) {
+				assertActive(released, operationOptions.signal);
+				if (entry.kind !== "file") continue;
+				if ((await entry.getFile()).lastModified > createdBefore) continue;
+				await staging.removeEntry(entry.name);
+				removed += 1;
+				if (removed >= limit) break;
+			}
+			return removed;
+		},
+		async release() {
+			if (released) return;
+			released = true;
+			await Promise.allSettled([...activeWritables].map((writable) => writable.abort()));
+			activeWritables.clear();
+		}
+	});
+}
+/** IndexedDB adapter for consumers that want the object contract without OPFS. */
+function createIndexedDBBinaryObjectStore(options = {}) {
+	if (!options || typeof options !== "object" || Array.isArray(options)) throw new TypeError("IndexedDB binary object store options must be an object.");
+	const indexedDB = options.indexedDB ?? globalThis.indexedDB;
+	const subtleCrypto = options.subtleCrypto ?? globalThis.crypto?.subtle;
+	const databaseName = options.databaseName ?? "tw-asset-manager-binary-objects-v1";
+	if (typeof databaseName !== "string" || databaseName.length === 0 || databaseName.length > 512 || databaseName.includes("\0")) throw new TypeError("databaseName must be a non-empty string of at most 512 code units.");
+	if (!subtleCrypto?.digest) throw objectError("ASSET_BINARY_CRYPTO_UNAVAILABLE", "SHA-256 is unavailable.");
+	let released = false;
+	const open = () => {
+		assertActive(released);
+		if (!indexedDB?.open) throw objectError("ASSET_BINARY_OBJECT_INDEXEDDB_UNAVAILABLE", "IndexedDB is unavailable.");
+		let request;
+		try {
+			request = indexedDB.open(databaseName, 1);
+		} catch (error) {
+			throw objectError("ASSET_BINARY_OBJECT_INDEXEDDB_UNAVAILABLE", "IndexedDB open failed.", error);
+		}
+		return new Promise((resolve, reject) => {
+			request.onupgradeneeded = () => {
+				if (!request.result.objectStoreNames.contains("objects")) request.result.createObjectStore("objects", { keyPath: "key" });
+			};
+			request.onsuccess = () => {
+				request.result.onversionchange = () => request.result.close();
+				resolve(request.result);
+			};
+			request.onerror = () => reject(objectError("ASSET_BINARY_OBJECT_INDEXEDDB_UNAVAILABLE", "IndexedDB open failed.", request.error));
+			request.onblocked = () => reject(objectError("ASSET_BINARY_OBJECT_INDEXEDDB_UNAVAILABLE", "IndexedDB open was blocked."));
+		});
+	};
+	const complete = (transaction) => new Promise((resolve, reject) => {
+		transaction.oncomplete = () => resolve();
+		transaction.onerror = () => reject(transaction.error ?? /* @__PURE__ */ new Error("IndexedDB transaction failed."));
+		transaction.onabort = () => reject(transaction.error ?? /* @__PURE__ */ new Error("IndexedDB transaction aborted."));
+	});
+	const result = (request) => new Promise((resolve, reject) => {
+		request.onsuccess = () => resolve(request.result);
+		request.onerror = () => reject(request.error ?? /* @__PURE__ */ new Error("IndexedDB request failed."));
+	});
+	return Object.freeze({
+		kind: "indexeddb",
+		async put(descriptorValue, source, operationOptions = {}) {
+			const descriptor = validateDescriptor(descriptorValue);
+			assertActive(released, operationOptions.signal);
+			const bytes = await sourceBytes(source, operationOptions.signal);
+			await verify(bytes, descriptor, subtleCrypto);
+			const database = await open();
+			try {
+				const transaction = database.transaction("objects", "readwrite");
+				const abort = () => transaction.abort();
+				operationOptions.signal?.addEventListener("abort", abort, { once: true });
+				transaction.objectStore("objects").put({
+					key: descriptor.key,
+					descriptor: { ...descriptor },
+					data: bytes.buffer
+				});
+				try {
+					await complete(transaction);
+				} finally {
+					operationOptions.signal?.removeEventListener("abort", abort);
+				}
+			} catch (error) {
+				if (operationOptions.signal?.aborted) throw abortError$4(operationOptions.signal.reason);
+				if (error instanceof DOMException && error.name === "QuotaExceededError") throw objectError("ASSET_BINARY_OBJECT_INDEXEDDB_QUOTA", "IndexedDB quota was exceeded.", error);
+				throw objectError("ASSET_BINARY_OBJECT_INDEXEDDB_WRITE_FAILED", "IndexedDB write failed.", error);
+			} finally {
+				database.close();
+			}
+		},
+		async get(descriptorValue, operationOptions = {}) {
+			const descriptor = validateDescriptor(descriptorValue);
+			assertActive(released, operationOptions.signal);
+			const database = await open();
+			try {
+				const transaction = database.transaction("objects", "readonly");
+				const record = await result(transaction.objectStore("objects").get(descriptor.key));
+				await complete(transaction);
+				if (!record || typeof record !== "object" || !(record.data instanceof ArrayBuffer)) throw objectError("ASSET_BINARY_OBJECT_NOT_FOUND", "IndexedDB binary object was not found.");
+				const bytes = new Uint8Array(record.data);
+				await verify(bytes, descriptor, subtleCrypto);
+				return Object.freeze({
+					...descriptor,
+					bytes
+				});
+			} finally {
+				database.close();
+			}
+		},
+		async delete(key, operationOptions = {}) {
+			assertActive(released, operationOptions.signal);
+			validateDescriptor({
+				key,
+				size: 0,
+				integrity: `sha256-${"0".repeat(64)}`
+			});
+			const database = await open();
+			try {
+				const transaction = database.transaction("objects", "readwrite");
+				transaction.objectStore("objects").delete(key);
+				await complete(transaction);
+			} finally {
+				database.close();
+			}
+		},
+		async *listOrphans(operationOptions = {}) {
+			const limit = operationOptions.limit ?? 64;
+			if (!Number.isSafeInteger(limit) || limit <= 0) throw objectError("ASSET_BINARY_OBJECT_INPUT_INVALID", "Orphan scan limit is invalid.");
+			assertActive(released, operationOptions.signal);
+			const database = await open();
+			try {
+				const transaction = database.transaction("objects", "readonly");
+				const keys = await result(transaction.objectStore("objects").getAllKeys());
+				await complete(transaction);
+				for (const key of keys.slice(0, limit)) {
+					assertActive(released, operationOptions.signal);
+					yield String(key);
+				}
+			} finally {
+				database.close();
+			}
+		},
+		async release() {
+			released = true;
+		}
+	});
+}
+//#endregion
+//#region src/opfs-binary-bundle-store.ts
+var DATABASE_VERSION$3 = 3;
+var MANIFEST_STORE = "activeManifests";
+var INTENT_STORE = "pendingIntents";
+var STATE_STORE = "storeState";
+var DELETION_STORE = "pendingObjectDeletions";
+var FORMAT_VERSION$2 = 1;
+var RECOVERY_LIMIT = 64;
+function storeError(code, message, cause) {
+	const error = new Error(message, cause === void 0 ? void 0 : { cause });
+	Object.defineProperty(error, "code", {
+		value: code,
+		enumerable: true
+	});
+	return error;
+}
+function abortError$3(cause) {
+	const error = storeError("ASSET_BINARY_BUNDLE_ABORTED", "Binary bundle operation was aborted.", cause);
+	error.name = "AbortError";
+	return error;
+}
+function assertSignal(signal) {
+	if (signal?.aborted) throw abortError$3(signal.reason);
+}
+function operationSignal$2(options) {
+	if (!options || typeof options !== "object" || Array.isArray(options)) throw storeError("ASSET_BINARY_BUNDLE_INPUT_INVALID", "Binary bundle operation options must be an object.");
+	const signal = options.signal;
+	if (signal !== void 0 && (!signal || typeof signal !== "object" || typeof signal.aborted !== "boolean" || typeof signal.addEventListener !== "function" || typeof signal.removeEventListener !== "function")) throw storeError("ASSET_BINARY_BUNDLE_INPUT_INVALID", "Binary bundle AbortSignal is invalid.");
+	return signal;
+}
+function positiveOption(value, fallback, label) {
+	const normalized = value ?? fallback;
+	if (!Number.isSafeInteger(normalized) || normalized <= 0) throw new TypeError(`${label} must be a positive safe integer.`);
+	return normalized;
+}
+function canonicalIntegrity(value) {
+	if (typeof value !== "string" || !value.startsWith("sha256-")) return false;
+	const payload = value.slice(7);
+	if (/^[0-9a-f]{64}$/u.test(payload)) return true;
+	if (!/^[A-Za-z0-9+/]{43}=$/u.test(payload)) return false;
+	try {
+		const decoded = Uint8Array.from(atob(payload), (character) => character.charCodeAt(0));
+		let binary = "";
+		for (const byte of decoded) binary += String.fromCharCode(byte);
+		return decoded.byteLength === 32 && btoa(binary) === payload;
+	} catch {
+		return false;
+	}
+}
+function requireString$2(value, label, maximum) {
+	if (typeof value !== "string" || value.length === 0 || value.length > maximum || value.includes("\0")) throw storeError("ASSET_BINARY_BUNDLE_INPUT_INVALID", `${label} is invalid.`);
+	return value;
+}
+function normalizeKey$2(input) {
+	if (!input || typeof input !== "object" || Array.isArray(input)) throw storeError("ASSET_BINARY_BUNDLE_INPUT_INVALID", "Binary bundle key must be an object.");
+	const namespace = requireString$2(input.namespace, "Binary bundle namespace", 512);
+	const name = requireString$2(input.name, "Binary bundle name", 256);
+	if (!canonicalIntegrity(input.integrity)) throw storeError("ASSET_BINARY_BUNDLE_INPUT_INVALID", "Binary bundle integrity is invalid.");
+	return {
+		namespace,
+		name,
+		integrity: input.integrity,
+		key: JSON.stringify([
+			FORMAT_VERSION$2,
+			namespace,
+			name,
+			input.integrity
+		])
+	};
+}
+function safePath$1(value) {
+	const path = requireString$2(value, "Binary bundle file path", 1024);
+	if (path.startsWith("/") || path.startsWith("\\") || path.includes("\\") || path.split("/").some((part) => part.length === 0 || part === "." || part === "..")) throw storeError("ASSET_BINARY_BUNDLE_INPUT_INVALID", "Binary bundle file path is unsafe.");
+	return path;
+}
+function ownedBytes(value) {
+	if (value instanceof ArrayBuffer) return new Uint8Array(value.slice(0));
+	if (value instanceof Uint8Array) return Uint8Array.from(value);
+	throw storeError("ASSET_BINARY_BUNDLE_INPUT_INVALID", "Binary bundle file bytes are invalid.");
+}
+function integrityHex(integrity) {
+	const payload = integrity.slice(7);
+	if (/^[0-9a-f]{64}$/u.test(payload)) return payload;
+	return [...Uint8Array.from(atob(payload), (character) => character.charCodeAt(0))].map((value) => value.toString(16).padStart(2, "0")).join("");
+}
+function requestResult$3(request) {
+	return new Promise((resolve, reject) => {
+		request.onsuccess = () => resolve(request.result);
+		request.onerror = () => reject(request.error ?? /* @__PURE__ */ new Error("IndexedDB request failed."));
+	});
+}
+function transactionComplete$4(transaction) {
+	return new Promise((resolve, reject) => {
+		transaction.oncomplete = () => resolve();
+		transaction.onerror = () => reject(transaction.error ?? /* @__PURE__ */ new Error("IndexedDB transaction failed."));
+		transaction.onabort = () => reject(transaction.error ?? /* @__PURE__ */ new Error("IndexedDB transaction aborted."));
+	});
+}
+function mappedMetadataError(error) {
+	if (error instanceof Error && "code" in error && typeof error.code === "string") return error;
+	if (error instanceof DOMException && error.name === "QuotaExceededError") return storeError("ASSET_BINARY_OPFS_QUOTA", "Binary bundle metadata quota was exceeded.", error);
+	return storeError("ASSET_BINARY_OPFS_OPEN_FAILED", "Binary bundle metadata operation failed.", error);
+}
+function manifestValid(value, key) {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+	const candidate = value;
+	if (!(candidate.formatVersion === FORMAT_VERSION$2 && typeof candidate.key === "string" && (key === void 0 || candidate.key === key) && typeof candidate.namespace === "string" && candidate.namespace.length > 0 && candidate.namespace.length <= 512 && !candidate.namespace.includes("\0") && typeof candidate.name === "string" && candidate.name.length > 0 && candidate.name.length <= 256 && !candidate.name.includes("\0") && canonicalIntegrity(candidate.integrity) && candidate.key === JSON.stringify([
+		FORMAT_VERSION$2,
+		candidate.namespace,
+		candidate.name,
+		candidate.integrity
+	]) && Array.isArray(candidate.files) && candidate.files.length > 0 && Number.isSafeInteger(candidate.totalBytes) && Number(candidate.totalBytes) >= 0 && Number.isSafeInteger(candidate.generation) && Number(candidate.generation) > 0 && Number.isSafeInteger(candidate.epoch) && Number(candidate.epoch) >= 0 && Number.isSafeInteger(candidate.createdAt) && Number(candidate.createdAt) >= 0 && Number.isSafeInteger(candidate.lastAccessedAt) && Number(candidate.lastAccessedAt) >= Number(candidate.createdAt))) return false;
+	let totalBytes = 0;
+	let previousPath = null;
+	for (const file of candidate.files) {
+		if (!file || typeof file !== "object" || typeof file.path !== "string" || file.path.length === 0 || file.path.length > 1024 || file.path.includes("\0") || file.path.startsWith("/") || file.path.startsWith("\\") || file.path.includes("\\") || file.path.split("/").some((part) => part.length === 0 || part === "." || part === "..") || previousPath !== null && file.path <= previousPath || !Number.isSafeInteger(file.size) || file.size < 0 || !canonicalIntegrity(file.integrity) || !file.object || !/^[0-9a-f]{64}$/u.test(file.object.key) || file.object.size !== file.size || file.object.integrity !== file.integrity) return false;
+		totalBytes += file.size;
+		if (!Number.isSafeInteger(totalBytes)) return false;
+		previousPath = file.path;
+	}
+	return totalBytes === candidate.totalBytes;
+}
+function createOpfsBinaryBundleStore(options) {
+	if (!options || typeof options !== "object" || Array.isArray(options)) throw new TypeError("OPFS binary bundle store options must be an object.");
+	const indexedDB = options.indexedDB ?? globalThis.indexedDB;
+	const subtleCrypto = options.subtleCrypto ?? globalThis.crypto?.subtle;
+	const now = options.now ?? Date.now;
+	if (typeof options.databaseName !== "string" || options.databaseName.length === 0 || options.databaseName.length > 512 || options.databaseName.includes("\0")) throw new TypeError("databaseName must be a non-empty string of at most 512 code units.");
+	if (typeof now !== "function") throw new TypeError("now must be a function.");
+	const maxFiles = positiveOption(options.maxFilesPerBundle, 256, "maxFilesPerBundle");
+	const maxBytes = positiveOption(options.maxBundleBytes, 268435456, "maxBundleBytes");
+	const maxStoredBundles = positiveOption(options.maxStoredBundles, 1024, "maxStoredBundles");
+	const maxStoreBytes = positiveOption(options.maxStoreBytes, 268435456, "maxStoreBytes");
+	const ttlMs = positiveOption(options.ttlMs, 2592e6, "ttlMs");
+	const intentStaleMs = Math.min(ttlMs, 3e5);
+	const intentHeartbeatMs = Math.max(1, Math.floor(intentStaleMs / 3));
+	const recoveryLimit = positiveOption(options.recoveryBatchSize, RECOVERY_LIMIT, "recoveryBatchSize");
+	let released = false;
+	let establishment = null;
+	const generations = /* @__PURE__ */ new Map();
+	const objectScope = (async () => {
+		if (!subtleCrypto?.digest) return "";
+		return [...new Uint8Array(await subtleCrypto.digest("SHA-256", new TextEncoder().encode(options.databaseName)))].map((value) => value.toString(16).padStart(2, "0")).join("");
+	})();
+	async function scopedObjectKey(integrity) {
+		const scope = await objectScope;
+		return [...new Uint8Array(await subtleCrypto.digest("SHA-256", new TextEncoder().encode(`${scope}:${integrityHex(integrity)}`)))].map((value) => value.toString(16).padStart(2, "0")).join("");
+	}
+	async function openDatabase() {
+		if (released) throw storeError("ASSET_BINARY_BUNDLE_RELEASED", "Binary bundle store was released.");
+		if (!indexedDB?.open) throw storeError("ASSET_BINARY_BUNDLE_INDEXEDDB_UNAVAILABLE", "IndexedDB metadata is unavailable.");
+		let request;
+		try {
+			request = indexedDB.open(options.databaseName, DATABASE_VERSION$3);
+		} catch (error) {
+			throw mappedMetadataError(error);
+		}
+		return new Promise((resolve, reject) => {
+			request.onupgradeneeded = () => {
+				const database = request.result;
+				if (!database.objectStoreNames.contains(MANIFEST_STORE)) database.createObjectStore(MANIFEST_STORE, { keyPath: "key" });
+				if (!database.objectStoreNames.contains(INTENT_STORE)) database.createObjectStore(INTENT_STORE, { keyPath: "token" });
+				if (!database.objectStoreNames.contains(STATE_STORE)) database.createObjectStore(STATE_STORE, { keyPath: "key" });
+				if (!database.objectStoreNames.contains(DELETION_STORE)) database.createObjectStore(DELETION_STORE, { keyPath: "key" });
+			};
+			request.onsuccess = () => {
+				request.result.onversionchange = () => request.result.close();
+				resolve(request.result);
+			};
+			request.onerror = () => reject(mappedMetadataError(request.error));
+			request.onblocked = () => reject(storeError("ASSET_BINARY_OPFS_OPEN_FAILED", "OPFS metadata open was blocked."));
+		});
+	}
+	async function finishObjectDeletions(database, deletions) {
+		for (const deletion of deletions) await options.objectStore.delete(deletion.key);
+		if (deletions.length === 0) return;
+		const transaction = database.transaction(DELETION_STORE, "readwrite");
+		for (const deletion of deletions) transaction.objectStore(DELETION_STORE).delete(deletion.key);
+		await transactionComplete$4(transaction);
+	}
+	async function pendingObjectDeletions(database, keys) {
+		const transaction = database.transaction(DELETION_STORE, "readonly");
+		const values = await requestResult$3(transaction.objectStore(DELETION_STORE).getAll());
+		await transactionComplete$4(transaction);
+		return keys ? values.filter(({ key }) => keys.has(key)) : values;
+	}
+	async function claimUnreferencedObjects(database, objects, excludedIntentTokens = /* @__PURE__ */ new Set(), excludedHeartbeatAtOrBefore = Number.POSITIVE_INFINITY) {
+		if (objects.length === 0) return [];
+		const transaction = database.transaction([
+			MANIFEST_STORE,
+			INTENT_STORE,
+			DELETION_STORE
+		], "readwrite");
+		const manifests = await requestResult$3(transaction.objectStore(MANIFEST_STORE).getAll());
+		const intents = await requestResult$3(transaction.objectStore(INTENT_STORE).getAll());
+		const referenced = /* @__PURE__ */ new Set();
+		for (const manifest of manifests) {
+			if (!manifestValid(manifest)) continue;
+			for (const file of manifest.files) referenced.add(file.object.key);
+		}
+		for (const intent of intents) {
+			const heartbeatAt = Number.isSafeInteger(intent.heartbeatAt) ? intent.heartbeatAt : intent.createdAt;
+			if (excludedIntentTokens.has(intent.token) && heartbeatAt <= excludedHeartbeatAtOrBefore) continue;
+			if (!Array.isArray(intent.objects)) continue;
+			for (const object of intent.objects) referenced.add(object.key);
+		}
+		const claimed = /* @__PURE__ */ new Map();
+		for (const descriptor of objects) {
+			if (referenced.has(descriptor.key) || claimed.has(descriptor.key)) continue;
+			const deletion = {
+				key: descriptor.key,
+				descriptor,
+				createdAt: now()
+			};
+			transaction.objectStore(DELETION_STORE).put(deletion);
+			claimed.set(descriptor.key, deletion);
+		}
+		await transactionComplete$4(transaction);
+		return [...claimed.values()];
+	}
+	async function recover() {
+		const database = await openDatabase();
+		try {
+			await finishObjectDeletions(database, (await pendingObjectDeletions(database)).slice(0, recoveryLimit));
+			const read = database.transaction(INTENT_STORE, "readonly");
+			const intents = await requestResult$3(read.objectStore(INTENT_STORE).getAll());
+			await transactionComplete$4(read);
+			const staleBefore = now() - intentStaleMs;
+			const recovered = intents.filter((intent) => {
+				const heartbeatAt = Number.isSafeInteger(intent.heartbeatAt) ? intent.heartbeatAt : intent.createdAt;
+				return Number.isSafeInteger(heartbeatAt) && heartbeatAt <= staleBefore;
+			}).slice(0, recoveryLimit);
+			await finishObjectDeletions(database, await claimUnreferencedObjects(database, recovered.flatMap(({ objects }) => objects), new Set(recovered.map(({ token }) => token)), staleBefore));
+			const remove = database.transaction(INTENT_STORE, "readwrite");
+			const intentStore = remove.objectStore(INTENT_STORE);
+			for (const intent of recovered) {
+				const request = intentStore.get(intent.token);
+				request.onsuccess = () => {
+					const current = request.result;
+					if (!current) return;
+					if ((Number.isSafeInteger(current.heartbeatAt) ? current.heartbeatAt : current.createdAt) <= staleBefore) intentStore.delete(current.token);
+				};
+			}
+			await transactionComplete$4(remove);
+			await options.objectStore.cleanupStaging?.({
+				limit: recoveryLimit,
+				createdBefore: now() - Math.min(ttlMs, 864e5)
+			});
+		} catch (error) {
+			if (error instanceof Error && "code" in error && typeof error.code === "string" && (/* @__PURE__ */ new Set([
+				"ASSET_BINARY_OPFS_UNSUPPORTED",
+				"ASSET_BINARY_OPFS_INSECURE_CONTEXT",
+				"ASSET_BINARY_OPFS_OPEN_FAILED",
+				"ASSET_BINARY_OPFS_QUOTA"
+			])).has(error.code)) throw error;
+			throw storeError("ASSET_BINARY_OPFS_RECOVERY_FAILED", "OPFS recovery failed.", error);
+		} finally {
+			database.close();
+		}
+	}
+	async function establish() {
+		establishment ??= recover();
+		return establishment;
+	}
+	async function normalize(input, signal) {
+		const key = normalizeKey$2(input);
+		if (!Array.isArray(input.files) || input.files.length === 0 || input.files.length > maxFiles) throw storeError("ASSET_BINARY_BUNDLE_LIMIT_EXCEEDED", "Binary bundle file count is invalid.");
+		if (!subtleCrypto?.digest) throw storeError("ASSET_BINARY_BUNDLE_CRYPTO_UNAVAILABLE", "SHA-256 is unavailable.");
+		const paths = /* @__PURE__ */ new Set();
+		const files = [];
+		let totalBytes = 0;
+		for (const candidate of input.files) {
+			assertSignal(signal);
+			if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) throw storeError("ASSET_BINARY_BUNDLE_INPUT_INVALID", "Binary bundle file is invalid.");
+			const path = safePath$1(candidate.path);
+			if (paths.has(path)) throw storeError("ASSET_BINARY_BUNDLE_INPUT_INVALID", "Binary bundle path is duplicated.");
+			paths.add(path);
+			if (!canonicalIntegrity(candidate.integrity)) throw storeError("ASSET_BINARY_BUNDLE_INPUT_INVALID", "Binary bundle file integrity is invalid.");
+			const bytes = ownedBytes(candidate.bytes);
+			if (candidate.size !== bytes.byteLength) throw storeError("ASSET_BINARY_BUNDLE_INPUT_INVALID", "Binary bundle file size does not match.");
+			if ([...new Uint8Array(await subtleCrypto.digest("SHA-256", bytes))].map((value) => value.toString(16).padStart(2, "0")).join("") !== integrityHex(candidate.integrity)) throw storeError("ASSET_BINARY_BUNDLE_INTEGRITY_MISMATCH", "Binary bundle file integrity does not match.");
+			totalBytes += bytes.byteLength;
+			if (!Number.isSafeInteger(totalBytes) || totalBytes > maxBytes) throw storeError("ASSET_BINARY_BUNDLE_LIMIT_EXCEEDED", "Binary bundle exceeds maxBundleBytes.");
+			const objectKey = await scopedObjectKey(candidate.integrity);
+			files.push({
+				path,
+				size: bytes.byteLength,
+				integrity: candidate.integrity,
+				object: {
+					key: objectKey,
+					size: bytes.byteLength,
+					integrity: candidate.integrity
+				},
+				bytes
+			});
+		}
+		if (totalBytes > maxStoreBytes) throw storeError("ASSET_BINARY_BUNDLE_LIMIT_EXCEEDED", "Binary bundle exceeds maxStoreBytes.");
+		files.sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0);
+		return {
+			key,
+			files,
+			totalBytes
+		};
+	}
+	const store = {
+		establish,
+		getBackendStatus() {
+			return Object.freeze({
+				policy: "opfs-required",
+				selected: "opfs"
+			});
+		},
+		async put(input, operationOptions = {}) {
+			const signal = operationSignal$2(operationOptions);
+			assertSignal(signal);
+			await establish();
+			assertSignal(signal);
+			const normalized = await normalize(input, signal);
+			const currentGeneration = (generations.get(normalized.key.key) ?? 0) + 1;
+			generations.set(normalized.key.key, currentGeneration);
+			const token = `${now()}:${crypto.randomUUID?.() ?? Math.random().toString(36).slice(2)}`;
+			const objects = normalized.files.map(({ object }) => object);
+			const database = await openDatabase();
+			let previous;
+			let evicted = [];
+			let committedDeletions = [];
+			let persistentGeneration = 0;
+			let persistentEpoch = 0;
+			let heartbeatTimer = null;
+			let heartbeatFailure;
+			let heartbeatPromise = Promise.resolve();
+			try {
+				const stateKey = `generation:${normalized.key.key}`;
+				for (;;) {
+					const transaction = database.transaction([
+						INTENT_STORE,
+						STATE_STORE,
+						DELETION_STORE
+					], "readwrite");
+					const completion = transactionComplete$4(transaction);
+					const deletionStore = transaction.objectStore(DELETION_STORE);
+					const conflicts = (await Promise.all(objects.map(({ key }) => requestResult$3(deletionStore.get(key))))).filter((value) => value !== void 0);
+					if (conflicts.length > 0) {
+						transaction.abort();
+						await completion.catch(() => {});
+						await finishObjectDeletions(database, conflicts);
+						continue;
+					}
+					const state = transaction.objectStore(STATE_STORE);
+					const epochValue = await requestResult$3(state.get("epoch"));
+					persistentEpoch = epochValue && typeof epochValue === "object" && Number.isSafeInteger(epochValue.value) ? Number(epochValue.value) : 0;
+					const stateValue = await requestResult$3(state.get(stateKey));
+					persistentGeneration = stateValue && typeof stateValue === "object" && Number.isSafeInteger(stateValue.value) ? Number(stateValue.value) + 1 : 1;
+					state.put({
+						key: stateKey,
+						value: persistentGeneration
+					});
+					const timestamp = now();
+					transaction.objectStore(INTENT_STORE).put({
+						token,
+						key: normalized.key.key,
+						createdAt: timestamp,
+						heartbeatAt: timestamp,
+						generation: persistentGeneration,
+						epoch: persistentEpoch,
+						objects
+					});
+					await completion;
+					break;
+				}
+				const heartbeat = () => {
+					heartbeatPromise = heartbeatPromise.then(async () => {
+						const transaction = database.transaction([INTENT_STORE, DELETION_STORE], "readwrite");
+						const store = transaction.objectStore(INTENT_STORE);
+						const intent = await requestResult$3(store.get(token));
+						if (!intent) throw abortError$3();
+						const deletionStore = transaction.objectStore(DELETION_STORE);
+						if ((await Promise.all(objects.map(({ key }) => requestResult$3(deletionStore.get(key))))).some((value) => value !== void 0)) {
+							transaction.abort();
+							throw abortError$3();
+						}
+						store.put({
+							...intent,
+							heartbeatAt: now()
+						});
+						await transactionComplete$4(transaction);
+					}).catch((error) => {
+						heartbeatFailure ??= error;
+					});
+				};
+				heartbeatTimer = setInterval(heartbeat, intentHeartbeatMs);
+				for (const file of normalized.files) {
+					assertSignal(signal);
+					if (heartbeatFailure) throw heartbeatFailure;
+					if (generations.get(normalized.key.key) !== currentGeneration) throw abortError$3();
+					try {
+						await options.objectStore.put(file.object, file.bytes, signal ? { signal } : void 0);
+					} catch (error) {
+						if (!(error instanceof Error && "code" in error && error.code === "ASSET_BINARY_OPFS_QUOTA")) throw error;
+						await store.prune();
+						await options.objectStore.put(file.object, file.bytes, signal ? { signal } : void 0);
+					}
+					heartbeat();
+					await heartbeatPromise;
+					if (heartbeatFailure) throw heartbeatFailure;
+				}
+				for (const file of normalized.files) await options.objectStore.get(file.object, signal ? { signal } : void 0);
+				const timestamp = now();
+				const transaction = database.transaction([
+					MANIFEST_STORE,
+					INTENT_STORE,
+					STATE_STORE,
+					DELETION_STORE
+				], "readwrite");
+				const manifests = transaction.objectStore(MANIFEST_STORE);
+				const manifestValues = await requestResult$3(manifests.getAll());
+				const previousValue = manifestValues.find((value) => manifestValid(value, normalized.key.key));
+				if (manifestValid(previousValue, normalized.key.key)) previous = previousValue;
+				const retained = manifestValues.filter((value) => manifestValid(value) && value.key !== normalized.key.key).sort((left, right) => left.lastAccessedAt - right.lastAccessedAt);
+				let retainedBytes = retained.reduce((sum, candidate) => sum + candidate.totalBytes, 0);
+				let retainedCount = retained.length;
+				evicted = retained.filter((candidate) => {
+					const expired = timestamp < candidate.lastAccessedAt || timestamp - candidate.lastAccessedAt > ttlMs;
+					const overBudget = retainedBytes + normalized.totalBytes > maxStoreBytes;
+					const overCount = retainedCount + 1 > maxStoredBundles;
+					if (!expired && !overBudget && !overCount) return false;
+					retainedBytes -= candidate.totalBytes;
+					retainedCount -= 1;
+					return true;
+				});
+				const intents = transaction.objectStore(INTENT_STORE);
+				const currentIntent = await requestResult$3(intents.get(token));
+				const committedState = await requestResult$3(transaction.objectStore(STATE_STORE).get(stateKey));
+				const committedEpoch = await requestResult$3(transaction.objectStore(STATE_STORE).get("epoch"));
+				const latestPersistentGeneration = committedState && typeof committedState === "object" ? committedState.value : void 0;
+				const latestEpoch = committedEpoch && typeof committedEpoch === "object" && Number.isSafeInteger(committedEpoch.value) ? Number(committedEpoch.value) : 0;
+				const deletionStore = transaction.objectStore(DELETION_STORE);
+				const deletionConflicts = await Promise.all(objects.map(({ key }) => requestResult$3(deletionStore.get(key))));
+				if (!currentIntent || currentIntent.token !== token || currentIntent.key !== normalized.key.key || currentIntent.generation !== persistentGeneration || currentIntent.epoch !== persistentEpoch || generations.get(normalized.key.key) !== currentGeneration || latestPersistentGeneration !== persistentGeneration || latestEpoch !== persistentEpoch || deletionConflicts.some((value) => value !== void 0)) {
+					transaction.abort();
+					throw abortError$3();
+				}
+				const manifest = {
+					formatVersion: FORMAT_VERSION$2,
+					...normalized.key,
+					files: normalized.files.map(({ path, size, integrity, object }) => ({
+						path,
+						size,
+						integrity,
+						object
+					})),
+					totalBytes: normalized.totalBytes,
+					generation: persistentGeneration,
+					epoch: persistentEpoch,
+					createdAt: timestamp,
+					lastAccessedAt: timestamp
+				};
+				for (const candidate of evicted) manifests.delete(candidate.key);
+				manifests.put(manifest);
+				intents.delete(token);
+				const allIntents = await requestResult$3(intents.getAll());
+				const evictedKeys = new Set(evicted.map((candidate) => candidate.key));
+				const referencedObjects = new Set(manifest.files.map(({ object }) => object.key));
+				for (const candidate of retained) {
+					if (evictedKeys.has(candidate.key)) continue;
+					for (const { object } of candidate.files) referencedObjects.add(object.key);
+				}
+				for (const intent of allIntents) {
+					if (intent.token === token || !Array.isArray(intent.objects)) continue;
+					for (const object of intent.objects) referencedObjects.add(object.key);
+				}
+				const deletionCandidates = [...previous?.files.map(({ object }) => object) ?? [], ...evicted.flatMap((candidate) => candidate.files.map(({ object }) => object))];
+				const pendingByKey = /* @__PURE__ */ new Map();
+				for (const descriptor of deletionCandidates) {
+					if (referencedObjects.has(descriptor.key) || pendingByKey.has(descriptor.key)) continue;
+					const deletion = {
+						key: descriptor.key,
+						descriptor,
+						createdAt: timestamp
+					};
+					deletionStore.put(deletion);
+					pendingByKey.set(descriptor.key, deletion);
+				}
+				committedDeletions = [...pendingByKey.values()];
+				await transactionComplete$4(transaction);
+				await finishObjectDeletions(database, committedDeletions);
+				return Object.freeze({
+					namespace: normalized.key.namespace,
+					name: normalized.key.name,
+					integrity: normalized.key.integrity,
+					files: Object.freeze(manifest.files.map(({ path, size, integrity }) => Object.freeze({
+						path,
+						size,
+						integrity
+					}))),
+					totalBytes: normalized.totalBytes
+				});
+			} finally {
+				if (heartbeatTimer !== null) clearInterval(heartbeatTimer);
+				await heartbeatPromise;
+				database.close();
+			}
+		},
+		async get(input, operationOptions = {}) {
+			const signal = operationSignal$2(operationOptions);
+			assertSignal(signal);
+			await establish();
+			assertSignal(signal);
+			const key = normalizeKey$2(input);
+			const database = await openDatabase();
+			let manifest;
+			try {
+				const transaction = database.transaction(MANIFEST_STORE, "readonly");
+				manifest = await requestResult$3(transaction.objectStore(MANIFEST_STORE).get(key.key));
+				await transactionComplete$4(transaction);
+			} finally {
+				database.close();
+			}
+			if (manifest === void 0) throw storeError("ASSET_BINARY_BUNDLE_NOT_FOUND", "Binary bundle was not found.");
+			if (!manifestValid(manifest, key.key)) throw storeError("ASSET_BINARY_BUNDLE_CORRUPT", "Binary bundle manifest is corrupt.");
+			const timestamp = now();
+			if (timestamp < manifest.lastAccessedAt || timestamp - manifest.lastAccessedAt > ttlMs) {
+				await store.delete(input, operationOptions);
+				throw storeError("ASSET_BINARY_BUNDLE_NOT_FOUND", "Binary bundle has expired.");
+			}
+			const files = [];
+			for (const file of manifest.files) {
+				assertSignal(signal);
+				try {
+					const result = await options.objectStore.get(file.object, signal ? { signal } : void 0);
+					files.push(Object.freeze({
+						path: file.path,
+						size: file.size,
+						integrity: file.integrity,
+						bytes: result.bytes
+					}));
+				} catch (error) {
+					if (error instanceof Error && "code" in error && error.code === "ASSET_BINARY_OPFS_NOT_FOUND") throw error;
+					if (error instanceof Error && "code" in error && error.code === "ASSET_BINARY_OPFS_CORRUPT") throw error;
+					throw storeError("ASSET_BINARY_OPFS_READ_FAILED", "OPFS bundle read failed.", error);
+				}
+			}
+			const touchDatabase = await openDatabase();
+			try {
+				const transaction = touchDatabase.transaction(MANIFEST_STORE, "readwrite");
+				const manifests = transaction.objectStore(MANIFEST_STORE);
+				const current = await requestResult$3(manifests.get(key.key));
+				if (!manifestValid(current, key.key) || current.generation !== manifest.generation || current.epoch !== manifest.epoch) {
+					transaction.abort();
+					throw abortError$3();
+				}
+				manifests.put({
+					...current,
+					lastAccessedAt: timestamp
+				});
+				await transactionComplete$4(transaction);
+			} finally {
+				touchDatabase.close();
+			}
+			return Object.freeze({
+				namespace: key.namespace,
+				name: key.name,
+				integrity: key.integrity,
+				files: Object.freeze(files),
+				totalBytes: manifest.totalBytes
+			});
+		},
+		async delete(input, operationOptions = {}) {
+			const signal = operationSignal$2(operationOptions);
+			assertSignal(signal);
+			await establish();
+			assertSignal(signal);
+			const key = normalizeKey$2(input);
+			generations.set(key.key, (generations.get(key.key) ?? 0) + 1);
+			const database = await openDatabase();
+			let manifest;
+			let deletions = [];
+			try {
+				const transaction = database.transaction([
+					MANIFEST_STORE,
+					INTENT_STORE,
+					STATE_STORE,
+					DELETION_STORE
+				], "readwrite");
+				const manifests = transaction.objectStore(MANIFEST_STORE);
+				manifest = await requestResult$3(manifests.get(key.key));
+				manifests.delete(key.key);
+				const state = transaction.objectStore(STATE_STORE);
+				const stateKey = `generation:${key.key}`;
+				const value = await requestResult$3(state.get(stateKey));
+				const next = value && typeof value === "object" && Number.isSafeInteger(value.value) ? Number(value.value) + 1 : 1;
+				state.put({
+					key: stateKey,
+					value: next
+				});
+				if (manifestValid(manifest, key.key)) {
+					const manifestValues = await requestResult$3(manifests.getAll());
+					const intentValues = await requestResult$3(transaction.objectStore(INTENT_STORE).getAll());
+					const referenced = /* @__PURE__ */ new Set();
+					for (const value of manifestValues) {
+						if (!manifestValid(value)) continue;
+						for (const { object } of value.files) referenced.add(object.key);
+					}
+					for (const intent of intentValues) {
+						if (!Array.isArray(intent.objects)) continue;
+						for (const object of intent.objects) referenced.add(object.key);
+					}
+					const deletionStore = transaction.objectStore(DELETION_STORE);
+					const byKey = /* @__PURE__ */ new Map();
+					for (const { object } of manifest.files) {
+						if (referenced.has(object.key) || byKey.has(object.key)) continue;
+						const deletion = {
+							key: object.key,
+							descriptor: object,
+							createdAt: now()
+						};
+						deletionStore.put(deletion);
+						byKey.set(object.key, deletion);
+					}
+					deletions = [...byKey.values()];
+				}
+				await transactionComplete$4(transaction);
+				await finishObjectDeletions(database, deletions);
+			} finally {
+				database.close();
+			}
+		},
+		async touch(input, operationOptions = {}) {
+			const signal = operationSignal$2(operationOptions);
+			assertSignal(signal);
+			await establish();
+			assertSignal(signal);
+			const key = normalizeKey$2(input);
+			const database = await openDatabase();
+			try {
+				const transaction = database.transaction(MANIFEST_STORE, "readwrite");
+				const manifests = transaction.objectStore(MANIFEST_STORE);
+				const value = await requestResult$3(manifests.get(key.key));
+				if (!manifestValid(value, key.key)) {
+					transaction.abort();
+					throw storeError("ASSET_BINARY_BUNDLE_NOT_FOUND", "Binary bundle was not found.");
+				}
+				manifests.put({
+					...value,
+					lastAccessedAt: now()
+				});
+				await transactionComplete$4(transaction);
+			} finally {
+				database.close();
+			}
+		},
+		async getStats() {
+			await establish();
+			const database = await openDatabase();
+			try {
+				const transaction = database.transaction(MANIFEST_STORE, "readonly");
+				const values = await requestResult$3(transaction.objectStore(MANIFEST_STORE).getAll());
+				await transactionComplete$4(transaction);
+				const manifests = values.filter((value) => manifestValid(value));
+				const objects = /* @__PURE__ */ new Map();
+				for (const manifest of manifests) for (const file of manifest.files) objects.set(file.object.key, file.object.size);
+				return Object.freeze({
+					backend: "opfs",
+					bundles: manifests.length,
+					logicalBytes: manifests.reduce((sum, manifest) => sum + manifest.totalBytes, 0),
+					physicalObjectBytes: [...objects.values()].reduce((sum, size) => sum + size, 0)
+				});
+			} finally {
+				database.close();
+			}
+		},
+		async prune() {
+			await establish();
+			const database = await openDatabase();
+			let manifests;
+			try {
+				const transaction = database.transaction(MANIFEST_STORE, "readonly");
+				const values = await requestResult$3(transaction.objectStore(MANIFEST_STORE).getAll());
+				await transactionComplete$4(transaction);
+				manifests = values.filter((value) => manifestValid(value));
+			} finally {
+				database.close();
+			}
+			const timestamp = now();
+			const expired = manifests.filter((manifest) => timestamp < manifest.lastAccessedAt || timestamp - manifest.lastAccessedAt > ttlMs);
+			for (const manifest of expired) await store.delete({
+				namespace: manifest.namespace,
+				name: manifest.name,
+				integrity: manifest.integrity
+			});
+			return Object.freeze({
+				removedBundles: expired.length,
+				removedBytes: expired.reduce((sum, manifest) => sum + manifest.totalBytes, 0)
+			});
+		},
+		async clear() {
+			await establish();
+			const database = await openDatabase();
+			let manifests;
+			let deletions = [];
+			try {
+				const clear = database.transaction([
+					MANIFEST_STORE,
+					INTENT_STORE,
+					STATE_STORE,
+					DELETION_STORE
+				], "readwrite");
+				const completion = transactionComplete$4(clear);
+				const values = await requestResult$3(clear.objectStore(MANIFEST_STORE).getAll());
+				const intents = await requestResult$3(clear.objectStore(INTENT_STORE).getAll());
+				manifests = values.filter((value) => manifestValid(value));
+				const deletionStore = clear.objectStore(DELETION_STORE);
+				const existing = await requestResult$3(deletionStore.getAll());
+				const byKey = new Map(existing.map((deletion) => [deletion.key, deletion]));
+				const activeIntentObjects = new Set(intents.flatMap(({ objects }) => objects.map(({ key }) => key)));
+				for (const manifest of manifests) for (const { object } of manifest.files) {
+					if (activeIntentObjects.has(object.key)) continue;
+					const deletion = {
+						key: object.key,
+						descriptor: object,
+						createdAt: now()
+					};
+					deletionStore.put(deletion);
+					byKey.set(deletion.key, deletion);
+				}
+				deletions = [...byKey.values()];
+				clear.objectStore(MANIFEST_STORE).clear();
+				const state = clear.objectStore(STATE_STORE);
+				const epochValue = await requestResult$3(state.get("epoch"));
+				const nextEpoch = epochValue && typeof epochValue === "object" && Number.isSafeInteger(epochValue.value) ? Number(epochValue.value) + 1 : 1;
+				state.clear();
+				state.put({
+					key: "epoch",
+					value: nextEpoch
+				});
+				await completion;
+				await finishObjectDeletions(database, deletions);
+			} finally {
+				database.close();
+			}
+			return Object.freeze({
+				removedBundles: manifests.length,
+				removedBytes: manifests.reduce((sum, manifest) => sum + manifest.totalBytes, 0)
+			});
+		},
+		async release() {
+			if (released) return;
+			released = true;
+			generations.clear();
+			await options.objectStore.release();
+		}
+	};
+	return Object.freeze(store);
+}
+//#endregion
 //#region src/binary-bundle-store.ts
 var DEFAULT_DATABASE_NAME$1 = "tw-asset-manager-binary-bundles-v1";
 var DATABASE_VERSION$2 = 1;
@@ -2777,7 +3960,7 @@ function publicRegistration(key, files, totalBytes) {
 * structured-cloned bundle record, and success is published only after the containing transaction
 * completes.
 */
-function createBinaryBundleStore(options = {}) {
+function createIndexedDBBinaryBundleStore(options = {}) {
 	if (!options || typeof options !== "object" || Array.isArray(options)) throw new TypeError("Binary bundle store options must be an object.");
 	const indexedDB = options.indexedDB ?? globalThis.indexedDB;
 	const subtleCrypto = options.subtleCrypto ?? globalThis.crypto?.subtle;
@@ -3246,6 +4429,44 @@ function createBinaryBundleStore(options = {}) {
 			database.close();
 		}
 	}
+	async function touchBundle(input, operationOptions = {}) {
+		ensureActive();
+		assertNotAborted$2(operationSignal$1(operationOptions));
+		const key = normalizeKey$1(input);
+		const metadata = (await metadataRecords()).find((record) => record.key === key.key);
+		if (!metadata) throw bundleError("ASSET_BINARY_BUNDLE_NOT_FOUND", "Binary bundle was not found.");
+		await touch(key.key, metadata.writeToken);
+	}
+	async function metadataRecords() {
+		ensureActive();
+		const database = await openDatabase();
+		try {
+			const transaction = database.transaction(METADATA_STORE$1, "readonly");
+			const values = await requestResult$2(transaction.objectStore(METADATA_STORE$1).getAll());
+			await transactionComplete$3(transaction);
+			return values.filter((value) => Boolean(value && typeof value === "object" && metadataIsValid(value, String(value.key))));
+		} finally {
+			database.close();
+		}
+	}
+	async function clearStore() {
+		const records = await metadataRecords();
+		const database = await openDatabase();
+		try {
+			const transaction = database.transaction([BUNDLE_STORE$1, METADATA_STORE$1], "readwrite");
+			transaction.objectStore(BUNDLE_STORE$1).clear();
+			transaction.objectStore(METADATA_STORE$1).clear();
+			await transactionComplete$3(transaction);
+		} catch (error) {
+			throw mappedStoreError(error, "clear");
+		} finally {
+			database.close();
+		}
+		return Object.freeze({
+			removedBundles: records.length,
+			removedBytes: records.reduce((sum, record) => sum + record.totalBytes, 0)
+		});
+	}
 	return Object.freeze({
 		put(input, operationOptions) {
 			return trackOperation(put(input, operationOptions));
@@ -3255,6 +4476,41 @@ function createBinaryBundleStore(options = {}) {
 		},
 		delete(input, operationOptions) {
 			return trackOperation(deleteBundle(input, operationOptions));
+		},
+		touch(input, operationOptions) {
+			return trackOperation(touchBundle(input, operationOptions));
+		},
+		getStats() {
+			return trackOperation(metadataRecords().then((records) => {
+				const logicalBytes = records.reduce((sum, record) => sum + record.totalBytes, 0);
+				return Object.freeze({
+					backend: "indexeddb",
+					bundles: records.length,
+					logicalBytes,
+					physicalObjectBytes: logicalBytes
+				});
+			}));
+		},
+		prune() {
+			return trackOperation((async () => {
+				const records = await metadataRecords();
+				const timestamp = now();
+				const expired = records.filter((record) => timestamp < record.lastAccessedAt || timestamp - record.lastAccessedAt > limits.ttlMs);
+				for (const record of expired) await deleteIfToken(record.key, record.writeToken);
+				return Object.freeze({
+					removedBundles: expired.length,
+					removedBytes: expired.reduce((sum, record) => sum + record.totalBytes, 0)
+				});
+			})());
+		},
+		clear() {
+			return trackOperation(clearStore());
+		},
+		getBackendStatus() {
+			return Object.freeze({
+				policy: "indexeddb",
+				selected: "indexeddb"
+			});
 		},
 		release() {
 			if (releasePromise) return releasePromise;
@@ -3269,6 +4525,119 @@ function createBinaryBundleStore(options = {}) {
 			const pending = [...activeOperations];
 			releasePromise = Promise.allSettled(pending).then(() => {});
 			return releasePromise;
+		}
+	});
+}
+function errorCode$1(error) {
+	return error instanceof Error && "code" in error && typeof error.code === "string" ? error.code : "ASSET_BINARY_OPFS_OPEN_FAILED";
+}
+function fallbackEligible$1(error) {
+	return (/* @__PURE__ */ new Set([
+		"ASSET_BINARY_OPFS_UNSUPPORTED",
+		"ASSET_BINARY_OPFS_INSECURE_CONTEXT",
+		"ASSET_BINARY_OPFS_OPEN_FAILED",
+		"ASSET_BINARY_OPFS_QUOTA"
+	])).has(errorCode$1(error));
+}
+/**
+* Create a binary bundle store whose backend is selected once, before its first operation.
+* IndexedDB remains the default so existing consumers keep the previous behavior.
+*/
+function createBinaryBundleStore(options = {}) {
+	if (!options || typeof options !== "object" || Array.isArray(options)) throw new TypeError("Binary bundle store options must be an object.");
+	const policy = options.backendPolicy ?? "indexeddb";
+	if (!(/* @__PURE__ */ new Set([
+		"indexeddb",
+		"opfs-prefer",
+		"opfs-required"
+	])).has(policy)) throw new TypeError("backendPolicy must be indexeddb, opfs-prefer, or opfs-required.");
+	if (policy === "indexeddb") return createIndexedDBBinaryBundleStore(options);
+	let selected = "pending";
+	let warning;
+	let selectedStore = null;
+	let selection = null;
+	let released = false;
+	const select = () => {
+		selection ??= (async () => {
+			if (released) throw releasedError();
+			try {
+				if (globalThis.isSecureContext === false && !options.opfs?.rootDirectory) throw bundleError("ASSET_BINARY_OPFS_INSECURE_CONTEXT", "OPFS requires a secure context.");
+				const objectSubtleCrypto = options.opfs?.subtleCrypto ?? options.subtleCrypto;
+				const opfsStore = createOpfsBinaryBundleStore({
+					objectStore: createOpfsBinaryObjectStore({
+						...options.opfs,
+						...objectSubtleCrypto ? { subtleCrypto: objectSubtleCrypto } : {}
+					}),
+					databaseName: options.opfsMetadataDatabaseName ?? `${options.databaseName ?? DEFAULT_DATABASE_NAME$1}-opfs-metadata`,
+					...options.indexedDB ? { indexedDB: options.indexedDB } : {},
+					...options.subtleCrypto ? { subtleCrypto: options.subtleCrypto } : {},
+					...options.now ? { now: options.now } : {},
+					...options.maxFilesPerBundle ? { maxFilesPerBundle: options.maxFilesPerBundle } : {},
+					...options.maxBundleBytes ? { maxBundleBytes: options.maxBundleBytes } : {},
+					...options.maxStoredBundles ? { maxStoredBundles: options.maxStoredBundles } : {},
+					...options.maxStoreBytes ? { maxStoreBytes: options.maxStoreBytes } : {},
+					...options.ttlMs ? { ttlMs: options.ttlMs } : {},
+					...options.recoveryBatchSize ? { recoveryBatchSize: options.recoveryBatchSize } : {}
+				});
+				await opfsStore.establish();
+				if (released) {
+					await opfsStore.release();
+					throw releasedError();
+				}
+				selected = "opfs";
+				selectedStore = opfsStore;
+				return opfsStore;
+			} catch (error) {
+				if (policy !== "opfs-prefer" || !fallbackEligible$1(error)) throw error;
+				const indexedStore = createIndexedDBBinaryBundleStore({
+					...options,
+					backendPolicy: "indexeddb"
+				});
+				warning = Object.freeze({
+					code: "ASSET_BINARY_BACKEND_FALLBACK",
+					causeCode: errorCode$1(error)
+				});
+				selected = "indexeddb";
+				selectedStore = indexedStore;
+				return indexedStore;
+			}
+		})();
+		return selection;
+	};
+	return Object.freeze({
+		async put(input, operationOptions) {
+			return (await select()).put(input, operationOptions);
+		},
+		async get(input, operationOptions) {
+			return (await select()).get(input, operationOptions);
+		},
+		async delete(input, operationOptions) {
+			return (await select()).delete(input, operationOptions);
+		},
+		async touch(input, operationOptions) {
+			return (await select()).touch(input, operationOptions);
+		},
+		async getStats() {
+			return (await select()).getStats();
+		},
+		async prune() {
+			return (await select()).prune();
+		},
+		async clear() {
+			return (await select()).clear();
+		},
+		getBackendStatus() {
+			return Object.freeze({
+				policy,
+				selected,
+				...warning ? { warning } : {}
+			});
+		},
+		async release() {
+			if (released) return;
+			released = true;
+			if (selectedStore) await selectedStore.release();
+			else if (selection) await (await selection.catch(() => null))?.release();
 		}
 	});
 }
@@ -5641,6 +7010,7 @@ function createEstablishedBacking({ input, options, mode, database, source, warn
 	const backing = {
 		sessionId: input.sessionId,
 		mode,
+		backend: mode === "direct" ? "direct" : "indexeddb",
 		...warning === void 0 ? {} : { warning },
 		get(value, operationOptions = {}) {
 			const operation = (async () => {
@@ -5695,6 +7065,139 @@ function createEstablishedBacking({ input, options, mode, database, source, warn
 	};
 	return Object.freeze(backing);
 }
+async function createObjectBackedSession(input, options, rawOptions, signal) {
+	const subtleCrypto = options.subtleCrypto ?? globalThis.crypto?.subtle;
+	if (!subtleCrypto?.digest) throw sessionError("ASSET_SESSION_BINARY_CRYPTO_UNAVAILABLE", "SHA-256 is unavailable.");
+	const store = createBinaryBundleStore({
+		backendPolicy: rawOptions.backendPolicy ?? "opfs-required",
+		subtleCrypto,
+		...rawOptions.indexedDB ? { indexedDB: rawOptions.indexedDB } : {},
+		...rawOptions.databaseName ? { databaseName: rawOptions.databaseName } : {},
+		...rawOptions.opfs ? { opfs: rawOptions.opfs } : {},
+		...rawOptions.opfsMetadataDatabaseName ? { opfsMetadataDatabaseName: rawOptions.opfsMetadataDatabaseName } : {},
+		...rawOptions.maxFilesPerAsset ? { maxFilesPerBundle: rawOptions.maxFilesPerAsset } : {},
+		...rawOptions.maxAssetBytes ? { maxBundleBytes: rawOptions.maxAssetBytes } : {},
+		...rawOptions.leaseTtlMs ? { ttlMs: rawOptions.leaseTtlMs } : {},
+		...rawOptions.orphanCleanupBatchSize ? { recoveryBatchSize: rawOptions.orphanCleanupBatchSize } : {}
+	});
+	const internalKeys = /* @__PURE__ */ new Map();
+	const committed = [];
+	try {
+		for (const asset of input.assets) {
+			assertNotAborted(signal);
+			const identity = new TextEncoder().encode(`${input.sessionId}\0${asset.lookupKey}`);
+			const internalKey = {
+				namespace: `session-${toHex(new Uint8Array(await subtleCrypto.digest("SHA-256", identity)))}`,
+				name: "asset",
+				integrity: asset.integrity
+			};
+			const files = await readSourceAsset(input.source, asset, subtleCrypto, signal);
+			await store.put({
+				...internalKey,
+				files
+			}, { signal });
+			await store.get(internalKey, { signal });
+			internalKeys.set(asset.lookupKey, internalKey);
+			committed.push(internalKey);
+		}
+		await releaseSource(input.source);
+	} catch (error) {
+		await Promise.allSettled(committed.map((key) => store.delete(key)));
+		await store.release();
+		throw error;
+	}
+	const status = store.getBackendStatus();
+	const controller = new AbortController();
+	const activeOperations = /* @__PURE__ */ new Set();
+	let disposed = false;
+	let disposePromise = null;
+	let fatalError = null;
+	const notifyFatal = (error) => {
+		if (!fatalError) {
+			fatalError = error;
+			controller.abort();
+			try {
+				input.onFatalError?.(error);
+			} catch {}
+		}
+		return fatalError;
+	};
+	const ensureUsable = () => {
+		if (disposed) throw sessionError("ASSET_SESSION_BINARY_RELEASED", "Session binary backing was disposed.");
+		if (fatalError) throw fatalError;
+	};
+	const track = (operation) => {
+		activeOperations.add(operation);
+		operation.then(() => activeOperations.delete(operation), () => activeOperations.delete(operation));
+		return operation;
+	};
+	const renew = async () => {
+		ensureUsable();
+		try {
+			await Promise.all(committed.map((key) => store.touch(key, { signal: controller.signal })));
+		} catch (error) {
+			const normalized = error instanceof Error ? error : sessionError("ASSET_SESSION_BINARY_WRITE_FAILED", "Session lease renewal failed.", error);
+			if (disposed) throw normalized;
+			throw notifyFatal(normalized);
+		}
+	};
+	let heartbeat = setInterval(() => {
+		track(renew()).catch(() => {});
+	}, options.heartbeatIntervalMs);
+	const backing = {
+		sessionId: input.sessionId,
+		mode: "session",
+		backend: status.selected === "opfs" ? "opfs" : "indexeddb",
+		...status.warning ? { storageWarning: status.warning } : {},
+		get(value, operationOptions = {}) {
+			const operation = (async () => {
+				ensureUsable();
+				const key = normalizeKey(value);
+				const asset = input.assetsByKey.get(key.lookupKey);
+				const internalKey = internalKeys.get(key.lookupKey);
+				if (!asset || !internalKey) throw sessionError("ASSET_SESSION_BINARY_NOT_FOUND", `Unknown session binary asset: ${key.name}`);
+				const linked = linkSignals(operationSignal(operationOptions), controller.signal);
+				try {
+					const result = await store.get(internalKey, { signal: linked.signal });
+					return Object.freeze({
+						namespace: asset.namespace,
+						name: asset.name,
+						integrity: asset.integrity,
+						files: result.files,
+						totalBytes: result.totalBytes
+					});
+				} catch (error) {
+					if (disposed) throw error;
+					throw notifyFatal(error instanceof Error ? error : sessionError("ASSET_SESSION_BINARY_READ_FAILED", "Session binary read failed.", error));
+				} finally {
+					linked.release();
+				}
+			})();
+			return track(operation);
+		},
+		renewLease() {
+			return track(renew());
+		},
+		dispose() {
+			if (disposePromise) return disposePromise;
+			disposed = true;
+			controller.abort();
+			if (heartbeat !== null) {
+				clearInterval(heartbeat);
+				heartbeat = null;
+			}
+			disposePromise = (async () => {
+				await Promise.allSettled([...activeOperations]);
+				const results = await Promise.allSettled(committed.map((key) => store.delete(key)));
+				await store.release();
+				const failures = results.filter((result) => result.status === "rejected");
+				if (failures.length > 0) throw sessionError("ASSET_SESSION_BINARY_CLEANUP_FAILED", "Session OPFS binary cleanup failed.", new AggregateError(failures.map((result) => result.reason)));
+			})();
+			return disposePromise;
+		}
+	};
+	return Object.freeze(backing);
+}
 /**
 * Establish a fixed direct or IndexedDB-backed binary session without changing persistent caches.
 *
@@ -5719,6 +7222,7 @@ async function createSessionBinaryBacking(inputValue, optionValue = {}, operatio
 			database: null,
 			source: input.source
 		});
+		if (optionValue.backendPolicy && optionValue.backendPolicy !== "indexeddb") return await createObjectBackedSession(input, options, optionValue, signal);
 		try {
 			database = await openDatabase(options, signal);
 			const timestamp = currentTime(options.now);
@@ -6128,6 +7632,18 @@ function createAssetManagerComposition(featureFlags, options = {}) {
 		deleteBinaryBundle(input, operationOptions) {
 			return bundleStore().delete(input, operationOptions);
 		},
+		getBinaryBundleBackendStatus() {
+			return bundleStore().getBackendStatus();
+		},
+		getBinaryBundleStoreStats() {
+			return bundleStore().getStats();
+		},
+		pruneBinaryBundleStore() {
+			return bundleStore().prune();
+		},
+		clearBinaryBundleStore() {
+			return bundleStore().clear();
+		},
 		releaseBinaryStore() {
 			return bundleStore().release();
 		},
@@ -6137,4 +7653,4 @@ function createAssetManagerComposition(featureFlags, options = {}) {
 	});
 }
 //#endregion
-export { createAssetManagerComposition, createBinaryBundleStore, createSessionBinaryBacking, createVerifiedRemoteBinaryCache, createVerifiedRemoteCacheDatabaseName };
+export { createAssetManagerComposition, createBinaryBundleStore, createIndexedDBBinaryObjectStore, createOpfsBinaryObjectStore, createSessionBinaryBacking, createVerifiedRemoteBinaryCache, createVerifiedRemoteCacheDatabaseName };

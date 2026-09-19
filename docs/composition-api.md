@@ -362,6 +362,53 @@ pending operations and prevents later use of that instance without deleting pers
 Missing, unavailable, blocked, aborted, quota, corrupt, and integrity-failure paths expose stable
 `ASSET_BINARY_BUNDLE_*` error codes without including payload bytes in diagnostics.
 
+#### Optional OPFS binary backing
+
+IndexedDB remains the default. A host may explicitly move binary object bytes to the Origin Private
+File System while retaining manifests, the commit journal, LRU timestamps, and the visibility
+boundary in IndexedDB:
+
+```js
+const assets = createAssetManagerComposition(undefined, {
+  binaryBundleStore: {
+    backendPolicy: 'opfs-prefer', // 'indexeddb' | 'opfs-prefer' | 'opfs-required'
+    databaseName: `${storyManifest.cacheDatabaseName}--bundles-v1`
+  }
+});
+
+await assets.putBinaryBundle(bundle);
+console.log(assets.getBinaryBundleBackendStatus());
+console.log(await assets.getBinaryBundleStoreStats());
+```
+
+`opfs-prefer` falls back to IndexedDB only when OPFS cannot be established at startup. The selected
+backend is then fixed: a missing or corrupt OPFS object, quota error, or later read/write failure is
+reported and never causes a per-record backend switch. `opfs-required` fails establishment instead.
+`getBinaryBundleBackendStatus()` reports the selected backend and the stable
+`ASSET_BINARY_BACKEND_FALLBACK` warning when applicable.
+
+OPFS objects live below `tw-asset-manager/opfs-v1/objects/<sha256-prefix>/<sha256>`. Logical
+namespaces, asset names, and bundle paths exist only in IndexedDB metadata and are never used as
+filesystem path segments. Writes use an opaque staging file, verify size and SHA-256 after close,
+establish every content-addressed object, and only then publish the active manifest. Reads consult
+only active manifests. Missing and corrupt objects fail with stable `ASSET_BINARY_OPFS_*` codes and
+are not read from another backend.
+
+`BinaryObjectStore.put` accepts a `ReadableStream<Uint8Array>` and writes its chunks directly to
+the staging file instead of retaining the complete source stream in JavaScript heap. Pending
+intents carry a heartbeat, while physical deletion first commits an IndexedDB tombstone. Writers
+and cleanup therefore serialize through the same metadata transaction across tabs before touching
+the corresponding OPFS object.
+
+`pruneBinaryBundleStore()` applies TTL cleanup, `clearBinaryBundleStore()` explicitly removes the
+selected backend's records, and `getBinaryBundleStoreStats()` separates logical bytes from unique
+physical object bytes. Normal rollback consists of restoring `backendPolicy: 'indexeddb'`; it does
+not implicitly erase an OPFS root that another tab or runtime may still reference.
+
+Run `pnpm test:browser:opfs` for the native Chromium IndexedDB + OPFS smoke test. The normal
+`pnpm check` workflow runs this after building the composition artifact; `CHROME_BIN` can select a
+non-standard Chrome or Chromium executable.
+
 ### Session-only binary backing
 
 Composition hosts that embed large binaries in their current application package can use a
@@ -371,6 +418,7 @@ does not modify the verified remote cache:
 ```js
 const assets = createAssetManagerComposition(undefined, {
   sessionBinaryBacking: {
+    backendPolicy: 'opfs-prefer',
     maxSessionBytes: 512 * 1024 * 1024
   }
 });
@@ -429,3 +477,9 @@ heartbeat interval, and cleanup batch size are configurable through `sessionBina
 limits may be raised to any positive safe integer after the host applies its own resource policy.
 The source must remain readable until Asset Manager calls `release`, including when `prefer`
 selects direct mode.
+
+When `sessionBinaryBacking.backendPolicy` is `opfs-prefer` or `opfs-required`, session bytes use the
+same OPFS object contract and an IndexedDB active-manifest boundary. The returned backing exposes
+`backend` (`opfs`, `indexeddb`, or `direct`) and an optional `storageWarning`. All declared assets
+are written and read back before the backing is returned, and `dispose()` removes the session's
+manifests before reclaiming unreferenced content-addressed objects.
