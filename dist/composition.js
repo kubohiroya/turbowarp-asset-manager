@@ -2808,6 +2808,30 @@ function createOpfsBinaryObjectStore(options = {}) {
 			name: hash
 		};
 	}
+	async function committedObjectMatches(location, descriptor, signal) {
+		assertActive(released, signal);
+		try {
+			await verify(await readFileBytes(await (await location.directory.getFileHandle(location.name)).getFile(), signal), descriptor, subtleCrypto);
+			assertActive(released, signal);
+			return true;
+		} catch (error) {
+			assertActive(released, signal);
+			if (error instanceof DOMException && error.name === "NotFoundError") return false;
+			if (error instanceof Error && "code" in error && error.code === "ASSET_BINARY_OPFS_CORRUPT") return false;
+			throw error;
+		}
+	}
+	async function waitForCommittedObject(location, descriptor, signal) {
+		for (let attempt = 0; attempt < 25; attempt += 1) {
+			if (await committedObjectMatches(location, descriptor, signal)) return true;
+			await new Promise((resolve) => setTimeout(resolve, 40));
+			assertActive(released, signal);
+		}
+		return false;
+	}
+	function writableConflict(error) {
+		return error instanceof DOMException && (error.name === "InvalidStateError" || error.name === "NoModificationAllowedError");
+	}
 	return Object.freeze({
 		kind: "opfs",
 		async put(descriptorValue, source, operationOptions = {}) {
@@ -2831,13 +2855,22 @@ function createOpfsBinaryObjectStore(options = {}) {
 				assertActive(released, operationOptions.signal);
 				const location = await objectLocation(descriptor.key);
 				assertActive(released, operationOptions.signal);
-				const finalHandle = await location.directory.getFileHandle(location.name, { create: true });
-				writable = await finalHandle.createWritable();
-				activeWritables.add(writable);
-				await copyFileToWritable(stagedFile, writable, operationOptions.signal);
-				activeWritables.delete(writable);
-				writable = null;
-				await verify(await readFileBytes(await finalHandle.getFile(), operationOptions.signal), descriptor, subtleCrypto);
+				if (!await committedObjectMatches(location, descriptor, operationOptions.signal)) try {
+					const finalHandle = await location.directory.getFileHandle(location.name, { create: true });
+					writable = await finalHandle.createWritable();
+					activeWritables.add(writable);
+					await copyFileToWritable(stagedFile, writable, operationOptions.signal);
+					activeWritables.delete(writable);
+					writable = null;
+					await verify(await readFileBytes(await finalHandle.getFile(), operationOptions.signal), descriptor, subtleCrypto);
+				} catch (error) {
+					if (writable) {
+						activeWritables.delete(writable);
+						await writable.abort(error).catch(() => {});
+						writable = null;
+					}
+					if (!writableConflict(error) || !await waitForCommittedObject(location, descriptor, operationOptions.signal)) throw error;
+				}
 				assertActive(released, operationOptions.signal);
 				await rootHandles.staging.removeEntry(stageName);
 			} catch (error) {

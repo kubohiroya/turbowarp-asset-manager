@@ -357,6 +357,46 @@ export function createOpfsBinaryObjectStore(
     return {directory: await childDirectory(objects, hash.slice(0, 2)), name: hash};
   }
 
+  async function committedObjectMatches(
+    location: {directory: FileSystemDirectoryHandle; name: string},
+    descriptor: BinaryObjectDescriptor,
+    signal?: AbortSignal
+  ): Promise<boolean> {
+    assertActive(released, signal);
+    try {
+      const handle = await location.directory.getFileHandle(location.name);
+      const bytes = await readFileBytes(await handle.getFile(), signal);
+      await verify(bytes, descriptor, subtleCrypto);
+      assertActive(released, signal);
+      return true;
+    } catch (error) {
+      assertActive(released, signal);
+      if (error instanceof DOMException && error.name === 'NotFoundError') return false;
+      if (error instanceof Error && 'code' in error && error.code === 'ASSET_BINARY_OPFS_CORRUPT') {
+        return false;
+      }
+      throw error;
+    }
+  }
+
+  async function waitForCommittedObject(
+    location: {directory: FileSystemDirectoryHandle; name: string},
+    descriptor: BinaryObjectDescriptor,
+    signal?: AbortSignal
+  ): Promise<boolean> {
+    for (let attempt = 0; attempt < 25; attempt += 1) {
+      if (await committedObjectMatches(location, descriptor, signal)) return true;
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      assertActive(released, signal);
+    }
+    return false;
+  }
+
+  function writableConflict(error: unknown): boolean {
+    return error instanceof DOMException &&
+      (error.name === 'InvalidStateError' || error.name === 'NoModificationAllowedError');
+  }
+
   const store: BinaryObjectStore = {
     kind: 'opfs',
     async put(descriptorValue, source, operationOptions = {}) {
@@ -383,15 +423,27 @@ export function createOpfsBinaryObjectStore(
         assertActive(released, operationOptions.signal);
         const location = await objectLocation(descriptor.key);
         assertActive(released, operationOptions.signal);
-        const finalHandle = await location.directory.getFileHandle(location.name, {create: true});
-        writable = await finalHandle.createWritable();
-        activeWritables.add(writable);
-        await copyFileToWritable(stagedFile, writable, operationOptions.signal);
-        activeWritables.delete(writable);
-        writable = null;
-        {
-          const committed = await readFileBytes(await finalHandle.getFile(), operationOptions.signal);
-          await verify(committed, descriptor, subtleCrypto);
+        if (!await committedObjectMatches(location, descriptor, operationOptions.signal)) {
+          try {
+            const finalHandle = await location.directory.getFileHandle(location.name, {create: true});
+            writable = await finalHandle.createWritable();
+            activeWritables.add(writable);
+            await copyFileToWritable(stagedFile, writable, operationOptions.signal);
+            activeWritables.delete(writable);
+            writable = null;
+            const committed = await readFileBytes(await finalHandle.getFile(), operationOptions.signal);
+            await verify(committed, descriptor, subtleCrypto);
+          } catch (error) {
+            if (writable) {
+              activeWritables.delete(writable);
+              await writable.abort(error).catch(() => {});
+              writable = null;
+            }
+            if (!writableConflict(error) ||
+                !await waitForCommittedObject(location, descriptor, operationOptions.signal)) {
+              throw error;
+            }
+          }
         }
         assertActive(released, operationOptions.signal);
         await rootHandles.staging.removeEntry(stageName);

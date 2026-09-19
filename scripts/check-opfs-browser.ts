@@ -85,7 +85,7 @@ async function devtoolsTarget(devtoolsPort: number): Promise<{webSocketDebuggerU
   throw new Error('Chrome DevTools target did not become available.');
 }
 
-async function browserResult(webSocketDebuggerUrl: string): Promise<string> {
+async function browserResultOnce(webSocketDebuggerUrl: string): Promise<string> {
   const socket = new WebSocket(webSocketDebuggerUrl);
   await new Promise<void>((resolvePromise, reject) => {
     socket.addEventListener('open', () => resolvePromise(), {once: true});
@@ -134,6 +134,36 @@ async function browserResult(webSocketDebuggerUrl: string): Promise<string> {
   }
 }
 
+async function browserResult(webSocketDebuggerUrl: string): Promise<string> {
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    try {
+      return await browserResultOnce(webSocketDebuggerUrl);
+    } catch (error) {
+      if (!(error instanceof Error && error.message.includes('Execution context was destroyed')) ||
+          attempt === 9) {
+        throw error;
+      }
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 100));
+    }
+  }
+  throw new Error('OPFS browser result was unavailable.');
+}
+
+async function stopBrowser(browser: ChildProcess): Promise<void> {
+  if (browser.exitCode !== null) return;
+  const exited = new Promise<void>((resolvePromise) => {
+    browser.once('exit', () => resolvePromise());
+  });
+  browser.kill('SIGTERM');
+  const stopped = await Promise.race([
+    exited.then(() => true),
+    new Promise<false>((resolvePromise) => setTimeout(() => resolvePromise(false), 2_000))
+  ]);
+  if (stopped || browser.exitCode !== null) return;
+  browser.kill('SIGKILL');
+  await exited;
+}
+
 const chrome = chromeExecutable();
 if (!chrome) throw new Error('Chrome/Chromium was not found. Set CHROME_BIN to run the OPFS test.');
 
@@ -169,7 +199,7 @@ try {
   if (!result.startsWith('passed:')) throw new Error(`OPFS browser smoke test failed: ${result}`);
   console.log(result.slice('passed:'.length));
 } finally {
-  browser?.kill('SIGTERM');
+  if (browser) await stopBrowser(browser);
   await new Promise<void>((resolvePromise) => server.close(() => resolvePromise()));
-  await rm(profile, {recursive: true, force: true});
+  await rm(profile, {recursive: true, force: true, maxRetries: 5, retryDelay: 100});
 }
