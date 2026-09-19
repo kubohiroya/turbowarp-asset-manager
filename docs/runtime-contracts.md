@@ -97,12 +97,13 @@ The actor name in `actor=` and the target name in `action=` must match (`Prompt`
 
 ## Safe same-name replacement
 
-Two startup-fixed feature flags control the rollout. Both default to `false`. A host can enable them by defining the configuration object before loading `dist/asset-manager.js`:
+Three startup-fixed feature flags control optional rollouts. All default to `false`. A host can enable them by defining the configuration object before loading `dist/asset-manager.js`:
 
 ```js
 globalThis.__TW_ASSET_MANAGER_FEATURE_FLAGS__ = {
   ENABLE_LIVE_ASSET_REPLACEMENT: true,
-  ENABLE_STRICT_ASSET_KIND_REPLACEMENT: true
+  ENABLE_STRICT_ASSET_KIND_REPLACEMENT: true,
+  NAMED_ASSET_BODY_PROVIDER: true
 };
 ```
 
@@ -113,6 +114,15 @@ Display bindings retain the target ID, asset name, public kind, and applied rend
 With `ENABLE_STRICT_ASSET_KIND_REPLACEMENT`, a name keeps its public DSL kind: `external`, `costume`, `backdrop`, `sound`, or `text`. Replacing it with another kind throws `ASSET_TYPE_CHANGE`; an external image also cannot become external audio or vice versa. Explicitly delete the registration before intentionally reusing its name for another kind.
 
 To roll back either behavior, set its flag to `false` and reload the extension. The default flag-off path retains the earlier registration behavior. Cache-generation and diagnostic fixes are unconditional and can be reverted independently from the two flagged features.
+
+`NAMED_ASSET_BODY_PROVIDER` controls only the read-only, project-scoped `asset` body adapter described
+in the Composition API. Turning it off removes that capability without changing registration,
+rendering, playback, cache, or binary bundle behavior.
+
+When enabled, Asset Manager exposes its existing typed asset registry through the canonical
+`@kubohiroya/turbowarp-named-data` provider contract and registers the `asset` namespace persistently
+on the runtime-shared registry. Project stop clears open body handles but preserves the provider
+registration and registered asset metadata.
 
 ## Diagnostic errors
 

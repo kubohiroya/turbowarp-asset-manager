@@ -46,6 +46,53 @@ await assets.registerProjectAsset({
 Omitting `target` from a sound locator selects the Stage. The existing string `resourceId` grammar
 and its trimmed logical names remain available for saved projects and block-based callers.
 
+### Named HTTP body provider (experimental)
+
+An opt-in, read-only provider exposes in-memory registered assets through the project-scoped
+`asset` namespace. Enable the startup-fixed `NAMED_ASSET_BODY_PROVIDER` flag when constructing the
+composition API, then resolve metadata with `stat` or an owned byte snapshot with `openBody`:
+
+```js
+const assets = createAssetManagerComposition({
+  ENABLE_LIVE_ASSET_REPLACEMENT: false,
+  ENABLE_STRICT_ASSET_KIND_REPLACEMENT: false,
+  NAMED_ASSET_BODY_PROVIDER: true
+});
+const project = Scratch.vm.runtime;
+const provider = assets.getNamedDataProvider();
+const snapshot = await provider.openBody({
+  namespace: 'asset',
+  name: 'Opening',
+  kind: 'asset',
+  scope: 'project'
+}, 'raw', {project, signal: request.signal});
+try {
+  response.send(snapshot.body, {
+    contentType: snapshot.mediaType,
+    contentLength: snapshot.byteLength
+  });
+} finally {
+  snapshot.release();
+}
+```
+
+The body remains a `Uint8Array`; the provider never converts it to base64 or a JavaScript string.
+`getNamedBodyProvider()` remains as a compatibility alias for `getNamedDataProvider()`.
+Metadata follows `@kubohiroya/turbowarp-named-data` and includes the nested reference,
+`nativeRepresentation: 'raw'`, normalized MIME type, byte length, SHA-256 digest, and an opaque
+registration revision string. The provider is registered persistently in the runtime-shared
+registry. `PROJECT_STOP_ALL` clears open session bodies without removing that registration.
+Each open copies one consistent in-memory registration, so a successful later replacement
+changes the revision without changing an already-open snapshot. Callers must invoke the idempotent
+`release()` after completion or failure. Aborting the supplied signal releases an open snapshot;
+project stop, project reload, and runtime disposal release all remaining snapshots.
+
+This first rollout supports only assets whose bytes are already held in the session memory registry,
+including `registerEmbeddedAsset` and loaded external/cache registrations. Project costume, backdrop,
+sound references, runtime text, persistent binary bundles, and OPFS backing fail explicitly instead
+of returning an empty body. The provider itself is absent when the flag is off. Persistent backing
+will use a separate adapter and rollout flag.
+
 ### Audio voices
 
 Composition consumers can start a registered external or project-local sound as an independently

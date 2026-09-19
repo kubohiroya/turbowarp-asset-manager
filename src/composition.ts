@@ -1,4 +1,9 @@
 import {AssetManagerExtension, normalizeName} from './extension.js';
+import type {
+  NamedDataReleaseReason,
+  NamedDataRepresentation,
+  NamedDataResolveContext
+} from '@kubohiroya/turbowarp-named-data/composition';
 import {type AssetManagerFeatureFlags} from './feature-flags.js';
 import {
   createBinaryBundleStore,
@@ -38,6 +43,14 @@ import {
   type DOMImageResource,
   type DOMImageResourceBacking
 } from './dom-image-resource.js';
+import {
+  NAMED_ASSET_BODY_NAMESPACE,
+  requireNamedAssetBodyReference,
+  type NamedAssetBodyMetadata,
+  type NamedAssetBodyProvider,
+  type NamedAssetBodyReference,
+  type NamedAssetBodySnapshot
+} from './named-body-provider.js';
 
 export {
   type AssetManagerAudioVoice,
@@ -49,6 +62,17 @@ import {
 } from './audio-voice.js';
 
 export {type DOMImageResource} from './dom-image-resource.js';
+
+export {
+  NAMED_ASSET_BODY_NAMESPACE,
+  NamedAssetBodyError,
+  type NamedAssetBodyErrorCode,
+  type NamedAssetBodyMetadata,
+  type NamedAssetBodyOpenOptions,
+  type NamedAssetBodyProvider,
+  type NamedAssetBodyReference,
+  type NamedAssetBodySnapshot
+} from './named-body-provider.js';
 
 export {
   createBinaryBundleStore,
@@ -180,6 +204,8 @@ export interface AssetManagerComposition {
   releaseAll(): void;
   isRegistered(name: unknown): boolean;
   getMimeType(name: unknown): string;
+  getNamedBodyProvider(): NamedAssetBodyProvider | null;
+  getNamedDataProvider(): NamedAssetBodyProvider | null;
   resolveDOMImageResource(name: unknown): Promise<DOMImageResource>;
   applyDOMImageResource(
     name: unknown,
@@ -255,6 +281,7 @@ export function createAssetManagerComposition(
   const domImageResourceControllers = new WeakMap<DOMImageResource, ActiveDOMImageResource>();
   const boundDOMImageResources = new WeakMap<DOMImageResourceTarget, ActiveDOMImageResource>();
   const ownerDOMImageResources = new Map<string, Set<ActiveDOMImageResource>>();
+  let namedBodyProvider: NamedAssetBodyProvider | null | undefined;
 
   interface ActiveDOMImageResource {
     readonly name: string;
@@ -353,6 +380,83 @@ export function createAssetManagerComposition(
     return Object.freeze({
       name: external,
       mimeType: extension.getAssetMimeType({NAME: internal})
+    });
+  }
+
+  function externalNamedBodyMetadata(
+    metadata: NamedAssetBodyMetadata,
+    external: string
+  ): NamedAssetBodyMetadata {
+    return Object.freeze({
+      reference: Object.freeze({...metadata.reference, name: external}),
+      nativeRepresentation: metadata.nativeRepresentation,
+      representation: metadata.representation,
+      mediaType: metadata.mediaType,
+      ...(metadata.byteLength === undefined ? {} : {byteLength: metadata.byteLength}),
+      ...(metadata.digest === undefined ? {} : {digest: metadata.digest}),
+      revision: metadata.revision,
+      replayable: metadata.replayable
+    });
+  }
+
+  function createCompositionNamedBodyProvider(
+    underlying: NamedAssetBodyProvider
+  ): NamedAssetBodyProvider {
+    return Object.freeze({
+      namespace: NAMED_ASSET_BODY_NAMESPACE,
+      kind: 'asset' as const,
+      canResolve(
+        reference: NamedAssetBodyReference,
+        representation: NamedDataRepresentation
+      ): boolean {
+        return underlying.canResolve(reference, representation);
+      },
+      async stat(
+        reference: NamedAssetBodyReference,
+        representation: NamedDataRepresentation,
+        context: NamedDataResolveContext
+      ) {
+        reference = requireNamedAssetBodyReference(reference);
+        const owned = ownedName(reference.name);
+        const external = owned?.external ?? normalizeName(reference.name);
+        const metadata = await underlying.stat(
+          {...reference, name: owned?.internal ?? reference.name},
+          representation,
+          context
+        );
+        return externalNamedBodyMetadata(metadata, external);
+      },
+      async openBody(
+        reference: NamedAssetBodyReference,
+        representation: NamedDataRepresentation,
+        context: NamedDataResolveContext
+      ) {
+        reference = requireNamedAssetBodyReference(reference);
+        const owned = ownedName(reference.name);
+        const external = owned?.external ?? normalizeName(reference.name);
+        const opened = await underlying.openBody(
+          {...reference, name: owned?.internal ?? reference.name},
+          representation,
+          context
+        );
+        const metadata = externalNamedBodyMetadata(opened, external);
+        const snapshot: NamedAssetBodySnapshot = Object.freeze({
+          ...metadata,
+          get body() {
+            return opened.body;
+          },
+          release(reason?: NamedDataReleaseReason) {
+            return opened.release(reason);
+          }
+        });
+        return snapshot;
+      },
+      clearSession() {
+        return underlying.clearSession?.();
+      },
+      release(reason?: NamedDataReleaseReason) {
+        return underlying.release(reason);
+      }
     });
   }
 
@@ -629,6 +733,15 @@ export function createAssetManagerComposition(
     getMimeType(name) {
       const owned = ownedName(name);
       return owned ? extension.getAssetMimeType({NAME: owned.internal}) : '';
+    },
+    getNamedBodyProvider() {
+      if (namedBodyProvider !== undefined) return namedBodyProvider;
+      const underlying = extension.getNamedBodyProvider();
+      namedBodyProvider = underlying ? createCompositionNamedBodyProvider(underlying) : null;
+      return namedBodyProvider;
+    },
+    getNamedDataProvider() {
+      return this.getNamedBodyProvider();
     },
     resolveDOMImageResource,
     applyDOMImageResource,

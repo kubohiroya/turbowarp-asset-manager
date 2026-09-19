@@ -2,6 +2,7 @@ import { AssetManagerError } from './asset-manager-error.js';
 import { type AssetManagerFeatureFlags } from './feature-flags.js';
 import { type DOMImageResource } from './dom-image-resource.js';
 import { type AssetManagerAudioVoice, type AssetManagerAudioVoiceOptions } from './audio-voice.js';
+import { type NamedAssetBodyProvider } from './named-body-provider.js';
 export declare const EXTENSION_ID = "kubohiroyaassetmanager";
 export declare const EXTENSION_VERSION = "0.14.0";
 export declare const EXTENSION_DOCS_URI = "https://kubohiroya.github.io/turbowarp-asset-manager/";
@@ -28,6 +29,7 @@ export interface AssetManagerDOMImageCapability {
     getMimeType(name: unknown): string;
     resolveDOMImageResource(name: unknown): Promise<DOMImageResource>;
 }
+export type { NamedAssetBodyMetadata, NamedAssetBodyOpenOptions, NamedAssetBodyProvider, NamedAssetBodyReference, NamedAssetBodySnapshot } from './named-body-provider.js';
 interface ResolvedSkin {
     skinId: number;
     sourceSize: number | null;
@@ -108,9 +110,17 @@ export declare class AssetManagerExtension {
     private readonly activeDOMImageResources;
     private readonly activeDOMImageResourcesByName;
     private domImageCapabilityValue?;
+    private namedBodyProviderValue?;
+    private namedBodyProviderRegistration;
+    private unbindNamedDataRegistryLifecycle;
+    private readonly openNamedBodySnapshots;
+    private namedBodyLifecycleVersion;
+    private listeningForNamedBodyLifecycle;
     private listeningForDOMImageLifecycle;
     private readonly releaseAllDOMImageResourcesForLifecycle;
     private readonly releaseDOMImageResourcesForRuntimeDispose;
+    private readonly releaseNamedBodySnapshotsForLifecycle;
+    private readonly unregisterNamedBodyProviderForRuntimeDispose;
     constructor(featureFlags?: AssetManagerFeatureFlags);
     setLoadingBackdrop(args: BlockArgs): void;
     setLoadingCostumes(args: BlockArgs): void;
@@ -133,6 +143,13 @@ export declare class AssetManagerExtension {
      * resource contract for other unsandboxed extensions.
      */
     getDOMImageCapability(): AssetManagerDOMImageCapability;
+    /**
+     * Returns the optional read-only `asset` body provider. The startup-fixed
+     * feature flag keeps the adapter completely absent from the default path.
+     */
+    getNamedBodyProvider(): NamedAssetBodyProvider | null;
+    /** Canonical typed entry point for the existing asset registry provider. */
+    getNamedDataProvider(): NamedAssetBodyProvider | null;
     validateProjectAssetAddress(args: BlockArgs): string;
     registerProjectAssetLiteral(assetName: unknown, locatorInput: unknown): Promise<void>;
     registerAsset(args: BlockArgs): Promise<void>;
@@ -216,6 +233,11 @@ export declare class AssetManagerExtension {
     private releaseAllDOMImageResources;
     private startListeningForDOMImageLifecycle;
     private stopListeningForDOMImageLifecycle;
+    private createNamedBodyProvider;
+    private resolveNamedBodySource;
+    private releaseOpenNamedBodySnapshots;
+    private startListeningForNamedBodyLifecycle;
+    private stopListeningForNamedBodyLifecycle;
     private ensureExternalAssetSkin;
     private resolveSkinFromAsset;
     private resolveCostumeReference;
@@ -233,4 +255,3 @@ export declare class AssetManagerExtension {
     private playbackError;
     private projectAssetMimeType;
 }
-export {};

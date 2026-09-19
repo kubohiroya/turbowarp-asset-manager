@@ -3,9 +3,11 @@ import { type BinaryBundleBackendStatus, type BinaryBundlePruneResult, type Bina
 import { type VerifiedRemoteBinaryCacheOptions, type VerifiedRemoteBinaryInput, type VerifiedRemoteBinaryResolveOptions, type VerifiedRemoteBinaryResult, type VerifiedRemoteCachePruneResult, type VerifiedRemoteCacheStats, type VerifiedRemoteStoryCacheDeleteResult, type VerifiedRemoteStoryCacheInfo, type VerifiedRemoteStoryCachePruneResult } from './verified-remote-cache.js';
 import { type SessionBinaryBacking, type SessionBinaryBackingInput, type SessionBinaryBackingOptions } from './session-binary-backing.js';
 import { type DOMImageResource } from './dom-image-resource.js';
+import { type NamedAssetBodyProvider } from './named-body-provider.js';
 export { type AssetManagerAudioVoice, type AssetManagerAudioVoiceOptions } from './audio-voice.js';
 import { type AssetManagerAudioVoice, type AssetManagerAudioVoiceOptions } from './audio-voice.js';
 export { type DOMImageResource } from './dom-image-resource.js';
+export { NAMED_ASSET_BODY_NAMESPACE, NamedAssetBodyError, type NamedAssetBodyErrorCode, type NamedAssetBodyMetadata, type NamedAssetBodyOpenOptions, type NamedAssetBodyProvider, type NamedAssetBodyReference, type NamedAssetBodySnapshot } from './named-body-provider.js';
 export { createBinaryBundleStore, type BinaryBundleBackendStatus, type BinaryBundleBackendWarning, type BinaryBundleFileInput, type BinaryBundleFileRegistration, type BinaryBundleFileResult, type BinaryBundleKeyInput, type BinaryBundleOperationOptions, type BinaryBundlePruneResult, type BinaryBundlePutInput, type BinaryBundleRegistration, type BinaryBundleResult, type BinaryBundleStore, type BinaryBundleStoreStats, type BinaryBundleStoreOptions } from './binary-bundle-store.js';
 export { createIndexedDBBinaryObjectStore, createOpfsBinaryObjectStore, type BinaryObjectDescriptor, type BinaryObjectOperationOptions, type BinaryObjectResult, type BinaryObjectStore, type BinaryStorageBackendPolicy, type IndexedDBBinaryObjectStoreOptions, type OpfsBinaryObjectStoreOptions, type OpfsStorageManager } from './binary-object-store.js';
 export { createVerifiedRemoteBinaryCache, createVerifiedRemoteCacheDatabaseName, type NormalizedVerifiedRemoteBinaryInput, type VerifiedRemoteBinaryCache, type VerifiedRemoteBinaryCacheOptions, type VerifiedRemoteBinaryInput, type VerifiedRemoteBinaryLoadResult, type VerifiedRemoteBinaryResolveOptions, type VerifiedRemoteBinaryResult, type VerifiedRemoteCacheWarning, type VerifiedRemoteCacheIdentity, type VerifiedRemoteCacheIdentityInput, type VerifiedRemoteCachePruneResult, type VerifiedRemoteCacheStats, type VerifiedRemoteStoryCacheDeleteResult, type VerifiedRemoteStoryCacheInfo, type VerifiedRemoteStoryCachePruneResult } from './verified-remote-cache.js';
@@ -73,6 +75,8 @@ export interface AssetManagerComposition {
     releaseAll(): void;
     isRegistered(name: unknown): boolean;
     getMimeType(name: unknown): string;
+    getNamedBodyProvider(): NamedAssetBodyProvider | null;
+    getNamedDataProvider(): NamedAssetBodyProvider | null;
     resolveDOMImageResource(name: unknown): Promise<DOMImageResource>;
     applyDOMImageResource(name: unknown, target: DOMImageResourceTarget, options?: DOMImageResourceBindingOptions): Promise<DOMImageResource>;
     releaseDOMImageResource(target: DOMImageResourceTarget): void;

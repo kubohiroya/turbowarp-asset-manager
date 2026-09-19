@@ -1,0 +1,12 @@
+import { NamedDataError, type NamedDataBody, type NamedDataErrorCode, type NamedDataMetadata, type NamedDataProvider, type NamedDataReference, type NamedDataResolveContext } from '@kubohiroya/turbowarp-named-data/composition';
+export declare const NAMED_ASSET_BODY_NAMESPACE: "asset";
+export declare const NamedAssetBodyError: typeof NamedDataError;
+export type NamedAssetBodyErrorCode = NamedDataErrorCode;
+export type NamedAssetBodyMetadata = NamedDataMetadata;
+export type NamedAssetBodyReference = NamedDataReference;
+export type NamedAssetBodySnapshot = NamedDataBody;
+export type NamedAssetBodyOpenOptions = NamedDataResolveContext;
+export type NamedAssetBodyProvider = NamedDataProvider;
+export declare function requireNamedAssetBodyReference(value: unknown): NamedDataReference;
+export declare function namedBodyAbortError(): NamedDataError;
+export declare function throwIfNamedBodyAborted(signal?: AbortSignal): void;

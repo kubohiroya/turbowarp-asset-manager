@@ -1,0 +1,25 @@
+{
+  "reference": {
+    "namespace": "asset",
+    "name": "Poster",
+    "kind": "asset",
+    "scope": "project"
+  },
+  "metadata": {
+    "nativeRepresentation": "raw",
+    "representation": "raw",
+    "mediaType": "image/png",
+    "byteLength": 3,
+    "digest": "sha256-039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81",
+    "revision": "1",
+    "replayable": true
+  },
+  "body": [1, 2, 3],
+  "errors": {
+    "invalidRef": "NAMED_DATA_INVALID_REF",
+    "aborted": "NAMED_DATA_ABORTED",
+    "notFound": "NAMED_DATA_NOT_FOUND",
+    "unsupported": "NAMED_DATA_REPRESENTATION_UNSUPPORTED",
+    "released": "NAMED_DATA_PROVIDER_RELEASED"
+  }
+}

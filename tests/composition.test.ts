@@ -4,9 +4,21 @@ import {
 } from '@xmldom/xmldom';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 
-import {createAssetManagerComposition} from '../src/composition.js';
+import {
+  createAssetManagerComposition,
+  type NamedAssetBodyReference
+} from '../src/composition.js';
+import namedBodyFixture from './fixtures/named-asset-body-provider.json' with {type: 'json'};
+
+const namedBodyReference = (name: string): NamedAssetBodyReference => ({
+  namespace: 'asset',
+  name,
+  kind: 'asset',
+  scope: 'project'
+});
 
 describe('Asset Manager composition API', () => {
+  const project = {};
   const createSVGSkin = vi.fn(() => 41);
   const createBitmapSkin = vi.fn((_bitmap: ImageBitmap, _resolution: number) => 42);
   const destroySkin = vi.fn();
@@ -124,6 +136,110 @@ describe('Asset Manager composition API', () => {
     first.releaseAsset('Beach');
     expect(first.isRegistered('Beach')).toBe(false);
     expect(second.isRegistered('Beach')).toBe(true);
+  });
+
+  it('keeps the named asset body provider disabled by default', () => {
+    const assets = createAssetManagerComposition();
+    expect(assets.getNamedBodyProvider()).toBeNull();
+  });
+
+  it('opens immutable in-memory body snapshots with metadata and revisions', async () => {
+    const assets = createAssetManagerComposition({
+      ENABLE_LIVE_ASSET_REPLACEMENT: true,
+      ENABLE_STRICT_ASSET_KIND_REPLACEMENT: true,
+      NAMED_ASSET_BODY_PROVIDER: true
+    });
+    await assets.registerEmbeddedAsset({
+      name: 'Poster',
+      sourceName: 'poster.png',
+      mimeType: 'image/png',
+      bytes: new Uint8Array([1, 2, 3])
+    });
+    const provider = assets.getNamedBodyProvider();
+    expect(provider).not.toBeNull();
+    expect(Object.isFrozen(provider)).toBe(true);
+
+    const reference = namedBodyReference(namedBodyFixture.reference.name);
+    const first = await provider!.openBody(reference, 'raw', {project});
+    expect(first).toMatchObject({
+      reference: namedBodyFixture.reference,
+      ...namedBodyFixture.metadata,
+    });
+    expect(first.body).toBeInstanceOf(Uint8Array);
+    expect([...(first.body as Uint8Array)]).toEqual(namedBodyFixture.body);
+
+    await assets.registerEmbeddedAsset({
+      name: 'Poster',
+      sourceName: 'poster.png',
+      mimeType: 'image/png',
+      bytes: new Uint8Array([4, 5])
+    });
+    expect(await provider!.stat(reference, 'raw', {project})).toMatchObject({byteLength: 2, revision: '2'});
+    expect([...(first.body as Uint8Array)]).toEqual([1, 2, 3]);
+    const second = await provider!.openBody(reference, 'raw', {project});
+    expect([...(second.body as Uint8Array)]).toEqual([4, 5]);
+
+    first.release();
+    first.release();
+    expect(() => first.body).toThrow(/snapshot has been released/);
+    second.release();
+  });
+
+  it('propagates aborts and releases open bodies at project stop', async () => {
+    const assets = createAssetManagerComposition({
+      ENABLE_LIVE_ASSET_REPLACEMENT: false,
+      ENABLE_STRICT_ASSET_KIND_REPLACEMENT: false,
+      NAMED_ASSET_BODY_PROVIDER: true
+    });
+    await assets.registerEmbeddedAsset({
+      name: 'Sound',
+      sourceName: 'sound.wav',
+      mimeType: 'audio/wav',
+      bytes: new Uint8Array([8, 9])
+    });
+    const provider = assets.getNamedBodyProvider()!;
+    const reference = namedBodyReference('Sound');
+    const aborted = new AbortController();
+    aborted.abort();
+    await expect(provider.openBody(reference, 'raw', {project, signal: aborted.signal}))
+      .rejects.toMatchObject({code: namedBodyFixture.errors.aborted});
+
+    const controller = new AbortController();
+    const abortedAfterOpen = await provider.openBody(reference, 'raw', {
+      project,
+      signal: controller.signal
+    });
+    controller.abort();
+    expect(() => abortedAfterOpen.body).toThrow(/snapshot has been released/);
+
+    const stopped = await provider.openBody(reference, 'raw', {project});
+    for (const listener of runtimeListeners.get('PROJECT_STOP_ALL') ?? []) listener();
+    expect(() => stopped.body).toThrow(/snapshot has been released/);
+    expect(provider.canResolve(reference, 'raw')).toBe(true);
+  });
+
+  it('rejects unsupported project references and provider use after release', async () => {
+    const assets = createAssetManagerComposition({
+      ENABLE_LIVE_ASSET_REPLACEMENT: false,
+      ENABLE_STRICT_ASSET_KIND_REPLACEMENT: false,
+      NAMED_ASSET_BODY_PROVIDER: true
+    });
+    await assets.registerProjectAsset({name: 'Beach', resourceId: 'backdrop:Beach'});
+    const provider = assets.getNamedBodyProvider()!;
+    await expect(provider.openBody(namedBodyReference('Beach'), 'raw', {project})).rejects.toMatchObject({
+      code: namedBodyFixture.errors.unsupported
+    });
+    await expect(provider.openBody(namedBodyReference('Missing'), 'raw', {project})).rejects.toMatchObject({
+      code: namedBodyFixture.errors.notFound
+    });
+    await expect(provider.openBody({name: 'Beach'} as never, 'raw', {project})).rejects.toMatchObject({
+      code: namedBodyFixture.errors.invalidRef
+    });
+    provider.release();
+    provider.release();
+    await expect(provider.stat(namedBodyReference('Beach'), 'raw', {project})).rejects.toMatchObject({
+      code: namedBodyFixture.errors.released
+    });
   });
 
   it('uses existing project backdrop and sound semantics', async () => {

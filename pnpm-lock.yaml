@@ -14,6 +14,9 @@ importers:
       '@kubohiroya/turbowarp-extension-manifest':
         specifier: 0.2.0
         version: 0.2.0
+      '@kubohiroya/turbowarp-named-data':
+        specifier: link:../turbowarp-named-data
+        version: link:../turbowarp-named-data
       '@kubohiroya/vite-plugin-turbowarp-extension':
         specifier: 0.4.0
         version: 0.4.0(vite@8.2.2(@types/node@22.20.1)(esbuild@0.28.1))

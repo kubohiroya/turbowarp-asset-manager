@@ -18,6 +18,7 @@ import {
   type DOMImageResourceTarget,
   type EmbeddedAssetBytesInput,
   type EmbeddedAssetRegistration,
+  type NamedAssetBodyProvider,
   type ProjectAssetLocator,
   type SessionBinaryBacking,
   type SessionBinaryBackingAssetInput,
@@ -44,6 +45,9 @@ const bitmapInput: EmbeddedAssetBytesInput = {
   bitmapResolution: 2
 };
 const composition: AssetManagerComposition = createAssetManagerComposition();
+const namedBodyProvider: NamedAssetBodyProvider | null = composition.getNamedBodyProvider();
+const namedDataProvider: NamedAssetBodyProvider | null = composition.getNamedDataProvider();
+void namedDataProvider;
 const audioVoice: Promise<AssetManagerAudioVoice> = composition.createAudioVoice('OpeningMusic', {
   gain: 0
 });
@@ -201,3 +205,4 @@ void binaryStoreRelease;
 void directSession;
 void compositionSession;
 void audioVoice;
+void namedBodyProvider;

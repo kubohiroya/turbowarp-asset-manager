@@ -7,10 +7,11 @@ import {
 import {FEATURE_FLAGS} from '../src/feature-flags.js';
 
 describe('AssetManagerError', () => {
-  it('keeps both rollout flags disabled by default', () => {
+  it('keeps rollout flags disabled by default', () => {
     expect(FEATURE_FLAGS).toEqual({
       ENABLE_LIVE_ASSET_REPLACEMENT: false,
-      ENABLE_STRICT_ASSET_KIND_REPLACEMENT: false
+      ENABLE_STRICT_ASSET_KIND_REPLACEMENT: false,
+      NAMED_ASSET_BODY_PROVIDER: false
     });
   });
 

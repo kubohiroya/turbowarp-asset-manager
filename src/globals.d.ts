@@ -94,6 +94,7 @@ interface ScratchApi {
 interface AssetManagerFeatureFlagConfiguration {
   ENABLE_LIVE_ASSET_REPLACEMENT?: boolean | 'true' | 'false';
   ENABLE_STRICT_ASSET_KIND_REPLACEMENT?: boolean | 'true' | 'false';
+  NAMED_ASSET_BODY_PROVIDER?: boolean | 'true' | 'false';
 }
 declare var __TW_ASSET_MANAGER_FEATURE_FLAGS__: AssetManagerFeatureFlagConfiguration | undefined;
 declare const Scratch: ScratchApi;

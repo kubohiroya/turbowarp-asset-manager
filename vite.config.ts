@@ -2,6 +2,7 @@ import {defineConfig} from 'vite';
 import {turboWarpExtension} from '@kubohiroya/vite-plugin-turbowarp-extension';
 import {extensionManifestPlugin} from '@kubohiroya/turbowarp-extension-manifest';
 import definitions from './src/block-definitions.json' with {type: 'json'};
+import {normalizeBundleIndentation} from './vite-indent-plugin.js';
 
 const EXTENSION_ID = 'kubohiroyaassetmanager';
 
@@ -18,6 +19,7 @@ export default defineConfig({
     extensionManifestPlugin({
       id: EXTENSION_ID,
       definitions
-    })
+    }),
+    normalizeBundleIndentation()
   ]
 });

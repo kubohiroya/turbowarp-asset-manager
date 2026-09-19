@@ -1,5 +1,14 @@
 import definitions from './block-definitions.json' with {type: 'json'};
 import {
+  bindNamedDataRegistryLifecycle,
+  installNamedDataRegistry,
+  NamedDataError,
+  type NamedDataProviderRegistration,
+  type NamedDataReleaseReason,
+  type NamedDataRepresentation,
+  type NamedDataResolveContext
+} from '@kubohiroya/turbowarp-named-data/composition';
+import {
   AssetManagerError,
   errorMessage,
   suggestNames,
@@ -19,6 +28,16 @@ import {
   type AssetManagerAudioVoice,
   type AssetManagerAudioVoiceOptions
 } from './audio-voice.js';
+import {
+  NAMED_ASSET_BODY_NAMESPACE,
+  namedBodyAbortError,
+  requireNamedAssetBodyReference,
+  throwIfNamedBodyAborted,
+  type NamedAssetBodyMetadata,
+  type NamedAssetBodyProvider,
+  type NamedAssetBodyReference,
+  type NamedAssetBodySnapshot
+} from './named-body-provider.js';
 import {
   DEFAULT_OUTLINE_COLOR,
   DEFAULT_OUTLINE_WIDTH,
@@ -91,6 +110,22 @@ export interface AssetManagerDOMImageCapability {
   isRegistered(name: unknown): boolean;
   getMimeType(name: unknown): string;
   resolveDOMImageResource(name: unknown): Promise<DOMImageResource>;
+}
+
+export type {
+  NamedAssetBodyMetadata,
+  NamedAssetBodyOpenOptions,
+  NamedAssetBodyProvider,
+  NamedAssetBodyReference,
+  NamedAssetBodySnapshot
+} from './named-body-provider.js';
+
+async function sha256Digest(bytes: Uint8Array): Promise<`sha256-${string}`> {
+  const digest = await crypto.subtle.digest('SHA-256', new Uint8Array(bytes).buffer);
+  const hex = Array.from(new Uint8Array(digest), (value) =>
+    value.toString(16).padStart(2, '0')
+  ).join('');
+  return `sha256-${hex}`;
 }
 
 interface ExtensionDOMImageResourceController {
@@ -812,6 +847,12 @@ export class AssetManagerExtension {
   private readonly activeDOMImageResourcesByName =
     new Map<string, Set<ExtensionDOMImageResourceController>>();
   private domImageCapabilityValue?: AssetManagerDOMImageCapability;
+  private namedBodyProviderValue?: NamedAssetBodyProvider;
+  private namedBodyProviderRegistration: NamedDataProviderRegistration | undefined;
+  private unbindNamedDataRegistryLifecycle: (() => void) | undefined;
+  private readonly openNamedBodySnapshots = new Set<NamedAssetBodySnapshot>();
+  private namedBodyLifecycleVersion = 0;
+  private listeningForNamedBodyLifecycle = false;
   private listeningForDOMImageLifecycle = false;
   private readonly releaseAllDOMImageResourcesForLifecycle = (): void => {
     this.releaseAllDOMImageResources();
@@ -820,9 +861,32 @@ export class AssetManagerExtension {
     this.releaseAllDOMImageResources();
     this.stopListeningForDOMImageLifecycle();
   };
+  private readonly releaseNamedBodySnapshotsForLifecycle = (): void => {
+    this.releaseOpenNamedBodySnapshots();
+  };
+  private readonly unregisterNamedBodyProviderForRuntimeDispose = (): void => {
+    void this.namedBodyProviderValue?.release('shutdown');
+    void this.namedBodyProviderRegistration?.unregister();
+    this.namedBodyProviderRegistration = undefined;
+    this.unbindNamedDataRegistryLifecycle?.();
+    this.unbindNamedDataRegistryLifecycle = undefined;
+  };
 
   constructor(featureFlags: AssetManagerFeatureFlags = FEATURE_FLAGS) {
     this.featureFlags = Object.freeze({...featureFlags});
+    if (this.featureFlags.NAMED_ASSET_BODY_PROVIDER) {
+      this.namedBodyProviderValue = this.createNamedBodyProvider();
+      const registry = installNamedDataRegistry(this.runtime);
+      this.namedBodyProviderRegistration = registry.registerProvider(
+        this.namedBodyProviderValue,
+        {lifetime: 'persistent'}
+      );
+      this.unbindNamedDataRegistryLifecycle = bindNamedDataRegistryLifecycle(
+        this.runtime as {on(event: string, listener: () => void): void},
+        registry
+      );
+      this.startListeningForNamedBodyLifecycle();
+    }
     this.runtime.on?.('STOP_FOR_TARGET', (target?: TurboWarpTarget) => {
       if (target && !this.runtime.targets.includes(target)) {
         this.displayedAssets.delete(target.id);
@@ -927,6 +991,20 @@ export class AssetManagerExtension {
         this.resolveExtensionDOMImageResource(name)
     });
     return this.domImageCapabilityValue;
+  }
+
+  /**
+   * Returns the optional read-only `asset` body provider. The startup-fixed
+   * feature flag keeps the adapter completely absent from the default path.
+   */
+  getNamedBodyProvider(): NamedAssetBodyProvider | null {
+    if (this.featureFlags.NAMED_ASSET_BODY_PROVIDER !== true) return null;
+    return this.namedBodyProviderValue ?? null;
+  }
+
+  /** Canonical typed entry point for the existing asset registry provider. */
+  getNamedDataProvider(): NamedAssetBodyProvider | null {
+    return this.getNamedBodyProvider();
   }
 
   validateProjectAssetAddress(args: BlockArgs): string {
@@ -2349,6 +2427,176 @@ export class AssetManagerExtension {
     this.runtime.off('PROJECT_STOP_ALL', this.releaseAllDOMImageResourcesForLifecycle);
     this.runtime.off('PROJECT_LOADED', this.releaseAllDOMImageResourcesForLifecycle);
     this.runtime.off('RUNTIME_DISPOSED', this.releaseDOMImageResourcesForRuntimeDispose);
+  }
+
+  private createNamedBodyProvider(): NamedAssetBodyProvider {
+    let providerReleased = false;
+    const requireProvider = (): void => {
+      if (providerReleased) {
+        throw new NamedDataError(
+          'NAMED_DATA_PROVIDER_RELEASED',
+          'The named asset body provider has been released.'
+        );
+      }
+    };
+    const provider: NamedAssetBodyProvider = Object.freeze({
+      namespace: NAMED_ASSET_BODY_NAMESPACE,
+      kind: 'asset',
+      canResolve: (
+        reference: NamedAssetBodyReference,
+        representation: NamedDataRepresentation
+      ): boolean =>
+        !providerReleased &&
+        reference.namespace === NAMED_ASSET_BODY_NAMESPACE &&
+        reference.kind === 'asset' &&
+        reference.scope === 'project' &&
+        representation === 'raw',
+      stat: async (
+        reference: NamedAssetBodyReference,
+        representation: NamedDataRepresentation,
+        context: NamedDataResolveContext
+      ) => {
+        requireProvider();
+        const resolved = await this.resolveNamedBodySource(reference, representation, context);
+        requireProvider();
+        return resolved.metadata;
+      },
+      openBody: async (
+        reference: NamedAssetBodyReference,
+        representation: NamedDataRepresentation,
+        context: NamedDataResolveContext
+      ) => {
+        requireProvider();
+        const lifecycleVersion = this.namedBodyLifecycleVersion;
+        const {metadata, data} = await this.resolveNamedBodySource(
+          reference,
+          representation,
+          context
+        );
+        requireProvider();
+        if (this.namedBodyLifecycleVersion !== lifecycleVersion) throw namedBodyAbortError();
+        throwIfNamedBodyAborted(context.signal);
+        let body: Uint8Array | null = new Uint8Array(data.slice(0));
+        let released = false;
+        let snapshot!: NamedAssetBodySnapshot;
+        const abortRelease = (): void => release('abort');
+        const release = (reason?: NamedDataReleaseReason): void => {
+          void reason;
+          if (released) return;
+          released = true;
+          body = null;
+          context.signal?.removeEventListener('abort', abortRelease);
+          this.openNamedBodySnapshots.delete(snapshot);
+        };
+        snapshot = Object.freeze({
+          ...metadata,
+          get body() {
+            if (!body) {
+              throw new NamedDataError(
+                'NAMED_DATA_PROVIDER_RELEASED',
+                'The named asset body snapshot has been released.'
+              );
+            }
+            return body;
+          },
+          release
+        });
+        this.openNamedBodySnapshots.add(snapshot);
+        context.signal?.addEventListener('abort', abortRelease, {once: true});
+        if (context.signal?.aborted) {
+          release('abort');
+          throw namedBodyAbortError();
+        }
+        return snapshot;
+      },
+      clearSession: () => {
+        this.releaseOpenNamedBodySnapshots();
+      },
+      release: (reason?: NamedDataReleaseReason) => {
+        void reason;
+        if (providerReleased) return;
+        providerReleased = true;
+        this.releaseOpenNamedBodySnapshots();
+        this.stopListeningForNamedBodyLifecycle();
+      }
+    });
+    return provider;
+  }
+
+  private async resolveNamedBodySource(
+    referenceInput: NamedAssetBodyReference,
+    representation: NamedDataRepresentation,
+    context: NamedDataResolveContext
+  ): Promise<{metadata: NamedAssetBodyMetadata; data: ArrayBuffer}> {
+    throwIfNamedBodyAborted(context.signal);
+    const reference = requireNamedAssetBodyReference(referenceInput);
+    if (reference.scope !== 'project' || context.project === undefined) {
+      throw new NamedDataError(
+        'NAMED_DATA_SCOPE_MISMATCH',
+        'Named asset bodies require project scope and project context.'
+      );
+    }
+    if (representation !== 'raw') {
+      throw new NamedDataError(
+        'NAMED_DATA_REPRESENTATION_UNSUPPORTED',
+        `Named assets cannot be rendered as ${representation}.`
+      );
+    }
+    const name = normalizeName(reference.name);
+    await this.registrationCommits.get(name)?.catch(() => undefined);
+    throwIfNamedBodyAborted(context.signal);
+    const kind = this.assetRegistry.get(name);
+    if (!kind) {
+      throw new NamedDataError(
+        'NAMED_DATA_NOT_FOUND',
+        `No registered asset has the name ${JSON.stringify(name)}.`
+      );
+    }
+    if (kind !== 'external') {
+      throw new NamedDataError(
+        'NAMED_DATA_REPRESENTATION_UNSUPPORTED',
+        `Asset ${JSON.stringify(name)} is not backed by session memory.`
+      );
+    }
+    const asset = this.externalAssets.get(name);
+    if (!asset) {
+      throw new NamedDataError(
+        'NAMED_DATA_NOT_FOUND',
+        `No in-memory asset has the name ${JSON.stringify(name)}.`
+      );
+    }
+    const metadata: NamedAssetBodyMetadata = Object.freeze({
+      reference: Object.freeze({...reference, name}),
+      nativeRepresentation: 'raw',
+      representation: 'raw',
+      mediaType: normalizeMimeType(asset.mimeType, asset.url || name),
+      byteLength: asset.data.byteLength,
+      digest: await sha256Digest(new Uint8Array(asset.data)),
+      revision: String(this.successfulRegistrationVersions.get(name) ?? 0),
+      replayable: true
+    });
+    return {metadata, data: asset.data};
+  }
+
+  private releaseOpenNamedBodySnapshots(): void {
+    this.namedBodyLifecycleVersion += 1;
+    for (const snapshot of [...this.openNamedBodySnapshots]) snapshot.release();
+  }
+
+  private startListeningForNamedBodyLifecycle(): void {
+    if (this.listeningForNamedBodyLifecycle || !this.runtime.on) return;
+    this.listeningForNamedBodyLifecycle = true;
+    this.runtime.on('PROJECT_STOP_ALL', this.releaseNamedBodySnapshotsForLifecycle);
+    this.runtime.on('PROJECT_LOADED', this.releaseNamedBodySnapshotsForLifecycle);
+    this.runtime.on('RUNTIME_DISPOSED', this.unregisterNamedBodyProviderForRuntimeDispose);
+  }
+
+  private stopListeningForNamedBodyLifecycle(): void {
+    if (!this.listeningForNamedBodyLifecycle || !this.runtime.off) return;
+    this.listeningForNamedBodyLifecycle = false;
+    this.runtime.off('PROJECT_STOP_ALL', this.releaseNamedBodySnapshotsForLifecycle);
+    this.runtime.off('PROJECT_LOADED', this.releaseNamedBodySnapshotsForLifecycle);
+    this.runtime.off('RUNTIME_DISPOSED', this.unregisterNamedBodyProviderForRuntimeDispose);
   }
 
   private async ensureExternalAssetSkin(asset: ExternalMemoryAsset, name: string): Promise<number> {

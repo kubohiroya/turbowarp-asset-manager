@@ -8,7 +8,8 @@ interface TestAnimationInternals {
 
 const ALL_FEATURES = {
   ENABLE_LIVE_ASSET_REPLACEMENT: true,
-  ENABLE_STRICT_ASSET_KIND_REPLACEMENT: true
+  ENABLE_STRICT_ASSET_KIND_REPLACEMENT: true,
+  NAMED_ASSET_BODY_PROVIDER: true
 } as const;
 
 function deferred<T>() {
