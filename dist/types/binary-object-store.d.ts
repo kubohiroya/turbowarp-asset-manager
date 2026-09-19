@@ -11,6 +11,16 @@ export interface BinaryObjectResult extends BinaryObjectDescriptor {
 export interface BinaryObjectOperationOptions {
     readonly signal?: AbortSignal;
 }
+export interface BinaryObjectStoreStats {
+    readonly physicalObjectBytes: number;
+    readonly stagingBytes: number;
+    readonly orphanBytes: number;
+    readonly pendingDeletionBytes: number;
+}
+export interface BinaryObjectStatsOptions extends BinaryObjectOperationOptions {
+    readonly referencedKeys?: ReadonlySet<string>;
+    readonly pendingDeletionKeys?: ReadonlySet<string>;
+}
 export interface BinaryObjectStore {
     readonly kind: 'indexeddb' | 'opfs';
     put(descriptor: BinaryObjectDescriptor, source: ArrayBuffer | Uint8Array | ReadableStream<Uint8Array>, options?: BinaryObjectOperationOptions): Promise<void>;
@@ -25,6 +35,7 @@ export interface BinaryObjectStore {
         readonly createdBefore?: number;
         readonly signal?: AbortSignal;
     }): Promise<number>;
+    getStats?(options?: BinaryObjectStatsOptions): Promise<BinaryObjectStoreStats>;
     release(): Promise<void>;
 }
 export interface OpfsStorageManager {

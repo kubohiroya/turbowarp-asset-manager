@@ -188,6 +188,7 @@ try {
   browser = spawn(chrome, [
     '--headless=new',
     '--disable-gpu',
+    '--disable-popup-blocking',
     '--disable-background-networking',
     '--no-first-run',
     '--remote-debugging-port=0',

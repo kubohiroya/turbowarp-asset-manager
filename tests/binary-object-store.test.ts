@@ -151,8 +151,33 @@ async function clearMetadataStore(
   }
 }
 
+async function putMetadataRecord(
+  indexedDB: IDBFactory,
+  databaseName: string,
+  storeName: string,
+  value: unknown
+): Promise<void> {
+  const database = await new Promise<IDBDatabase>((resolve, reject) => {
+    const request = indexedDB.open(databaseName);
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+  try {
+    const transaction = database.transaction(storeName, 'readwrite');
+    transaction.objectStore(storeName).put(value);
+    await new Promise<void>((resolve, reject) => {
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error);
+      transaction.onabort = () => reject(transaction.error);
+    });
+  } finally {
+    database.close();
+  }
+}
+
 function memoryObjectStore(options: {
   readonly beforeGet?: () => Promise<void>;
+  readonly beforeDelete?: (key: string) => Promise<void>;
   readonly deleteError?: Error;
 } = {}): BinaryObjectStore {
   const values = new Map<string, {descriptor: BinaryObjectDescriptor; bytes: Uint8Array}>();
@@ -174,6 +199,7 @@ function memoryObjectStore(options: {
       return {...value.descriptor, bytes: Uint8Array.from(value.bytes)};
     },
     async delete(key) {
+      await options.beforeDelete?.(key);
       if (options.deleteError) throw options.deleteError;
       values.delete(key);
     },
@@ -277,6 +303,47 @@ describe('OPFS binary object store', () => {
     await expect(store.get(descriptor)).resolves.toMatchObject({bytes});
   });
 
+  it('reports physical, staging, pending-deletion, and orphan OPFS bytes', async () => {
+    const root = new MemoryDirectory('root');
+    const referencedBytes = Uint8Array.from([1, 2]);
+    const pendingBytes = Uint8Array.from([3, 4, 5]);
+    const referenced = {
+      key: 'stats:referenced',
+      size: referencedBytes.byteLength,
+      integrity: await integrity(referencedBytes)
+    };
+    const pending = {
+      key: 'stats:pending',
+      size: pendingBytes.byteLength,
+      integrity: await integrity(pendingBytes)
+    };
+    const store = createOpfsBinaryObjectStore({
+      rootDirectory: root as unknown as FileSystemDirectoryHandle
+    });
+    await store.put(referenced, referencedBytes);
+    await store.put(pending, pendingBytes);
+    const product = root.entries.get('tw-asset-manager') as MemoryDirectory;
+    const version = product.entries.get('opfs-v1') as MemoryDirectory;
+    const staging = version.entries.get('staging') as MemoryDirectory;
+    const stage = await staging.getFileHandle('pending-stage', {create: true});
+    const writable = await stage.createWritable();
+    await writable.write(Uint8Array.from([8, 9, 10, 11]));
+    await writable.close();
+
+    await expect(store.getStats?.({
+      referencedKeys: new Set([referenced.key]),
+      pendingDeletionKeys: new Set([pending.key])
+    })).resolves.toEqual({
+      physicalObjectBytes: 5,
+      stagingBytes: 4,
+      orphanBytes: 0,
+      pendingDeletionBytes: 3
+    });
+    await expect(store.getStats?.({
+      referencedKeys: new Set([referenced.key])
+    })).resolves.toMatchObject({orphanBytes: 3, pendingDeletionBytes: 0});
+  });
+
   it('does not create a final object when release happens during staged verification', async () => {
     const root = new MemoryDirectory('root');
     const bytes = Uint8Array.from([5, 4, 3]);
@@ -336,7 +403,10 @@ describe('OPFS binary object store', () => {
       backend: 'opfs',
       bundles: 1,
       logicalBytes: 3,
-      physicalObjectBytes: 3
+      physicalObjectBytes: 3,
+      stagingBytes: 0,
+      orphanBytes: 0,
+      pendingDeletionBytes: 0
     });
     await expect(store.get(input)).resolves.toMatchObject({name: input.name, totalBytes: 3});
     await store.delete(input);
@@ -424,6 +494,143 @@ describe('OPFS binary object store', () => {
 
     await Promise.all([secondStore.put(second), firstStore.delete(first)]);
     await expect(secondStore.get(second)).resolves.toMatchObject({totalBytes: bytes.byteLength});
+  });
+
+  it('lets only one cleanup owner delete a tombstoned object', async () => {
+    const indexedDB = new IDBFactory();
+    const databaseName = 'opfs-cleanup-owner-test';
+    const deleteStarted = deferred();
+    const continueDelete = deferred();
+    let deleteCalls = 0;
+    const objectStore = memoryObjectStore({
+      async beforeDelete() {
+        deleteCalls += 1;
+        if (deleteCalls === 1) {
+          deleteStarted.resolve();
+          await continueDelete.promise;
+        }
+      }
+    });
+    const common = {objectStore, indexedDB, databaseName};
+    const firstStore = createOpfsBinaryBundleStore(common);
+    const secondStore = createOpfsBinaryBundleStore(common);
+    await Promise.all([firstStore.establish(), secondStore.establish()]);
+    const bytes = Uint8Array.from([4, 4]);
+    const fileIntegrity = await integrity(bytes);
+    const first = {
+      namespace: 'story',
+      name: 'cleanup-first',
+      integrity: `sha256-${'b'.repeat(64)}`,
+      files: [{path: 'shared.bin', size: 2, integrity: fileIntegrity, bytes}]
+    };
+    const second = {...first, name: 'cleanup-second', integrity: `sha256-${'c'.repeat(64)}`};
+    await firstStore.put(first);
+
+    const deletion = firstStore.delete(first);
+    await deleteStarted.promise;
+    const replacement = secondStore.put(second);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(deleteCalls).toBe(1);
+    continueDelete.resolve();
+    await Promise.all([deletion, replacement]);
+    await expect(secondStore.get(second)).resolves.toMatchObject({totalBytes: 2});
+  });
+
+  it('removes a stale intent atomically before deleting its objects', async () => {
+    const indexedDB = new IDBFactory();
+    const databaseName = 'opfs-stale-intent-atomic-test';
+    const deleteStarted = deferred();
+    const continueDelete = deferred();
+    const objectStore = memoryObjectStore({
+      async beforeDelete() {
+        deleteStarted.resolve();
+        await continueDelete.promise;
+      }
+    });
+    const seedStore = createOpfsBinaryBundleStore({objectStore, indexedDB, databaseName});
+    await seedStore.establish();
+    const bytes = Uint8Array.from([7, 7]);
+    const descriptor = {
+      key: 'stale:intent-object',
+      size: 2,
+      integrity: await integrity(bytes)
+    };
+    await objectStore.put(descriptor, bytes);
+    await putMetadataRecord(indexedDB, databaseName, 'pendingIntents', {
+      token: 'stale-token',
+      key: 'stale-key',
+      createdAt: 0,
+      heartbeatAt: 0,
+      generation: 1,
+      epoch: 0,
+      objects: [descriptor]
+    });
+    const recoveryStore = createOpfsBinaryBundleStore({
+      objectStore,
+      indexedDB,
+      databaseName,
+      now: () => 10_000,
+      ttlMs: 1_000
+    });
+
+    const recovery = recoveryStore.establish();
+    await deleteStarted.promise;
+    await expect(metadataRecords(indexedDB, databaseName, 'pendingIntents')).resolves.toHaveLength(0);
+    await expect(metadataRecords(indexedDB, databaseName, 'pendingObjectDeletions')).resolves.toHaveLength(1);
+    continueDelete.resolve();
+    await recovery;
+  });
+
+  it('does not delete a manifest refreshed after an expired read', async () => {
+    const indexedDB = new IDBFactory();
+    const databaseName = 'opfs-expired-read-race-test';
+    const objectStore = memoryObjectStore();
+    let timestamp = 0;
+    let refreshOnClockRead = false;
+    let controlDatabase: IDBDatabase | null = null;
+    const common = {
+      objectStore,
+      indexedDB,
+      databaseName,
+      now: () => {
+        if (refreshOnClockRead && controlDatabase) {
+          refreshOnClockRead = false;
+          const transaction = controlDatabase.transaction('activeManifests', 'readwrite');
+          const manifests = transaction.objectStore('activeManifests');
+          const request = manifests.getAll();
+          request.onsuccess = () => {
+            for (const manifest of request.result) {
+              manifests.put({...manifest, lastAccessedAt: timestamp});
+            }
+          };
+        }
+        return timestamp;
+      },
+      ttlMs: 100
+    };
+    const firstStore = createOpfsBinaryBundleStore(common);
+    const secondStore = createOpfsBinaryBundleStore(common);
+    const bytes = Uint8Array.from([9]);
+    const input = {
+      namespace: 'story',
+      name: 'refresh-race',
+      integrity: `sha256-${'d'.repeat(64)}`,
+      files: [{path: 'file.bin', size: 1, integrity: await integrity(bytes), bytes}]
+    };
+    await firstStore.put(input);
+    await secondStore.establish();
+    controlDatabase = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open(databaseName);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    timestamp = 1_000;
+    refreshOnClockRead = true;
+    await expect(firstStore.get(input)).rejects.toMatchObject({
+      code: 'ASSET_BINARY_BUNDLE_NOT_FOUND'
+    });
+    controlDatabase.close();
+    await expect(secondStore.get(input)).resolves.toMatchObject({totalBytes: 1});
   });
 
   it('requires its pending intent to still exist when publishing a manifest', async () => {

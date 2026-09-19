@@ -99,6 +99,8 @@ export {
   type BinaryObjectOperationOptions,
   type BinaryObjectResult,
   type BinaryObjectStore,
+  type BinaryObjectStoreStats,
+  type BinaryObjectStatsOptions,
   type BinaryStorageBackendPolicy,
   type IndexedDBBinaryObjectStoreOptions,
   type OpfsBinaryObjectStoreOptions,

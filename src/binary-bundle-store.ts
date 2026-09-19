@@ -108,6 +108,9 @@ export interface BinaryBundleStoreStats {
   readonly bundles: number;
   readonly logicalBytes: number;
   readonly physicalObjectBytes: number;
+  readonly stagingBytes: number;
+  readonly orphanBytes: number;
+  readonly pendingDeletionBytes: number;
 }
 
 export interface BinaryBundlePruneResult {
@@ -1185,7 +1188,10 @@ function createIndexedDBBinaryBundleStore(options: BinaryBundleStoreOptions = {}
           backend: 'indexeddb' as const,
           bundles: records.length,
           logicalBytes,
-          physicalObjectBytes: logicalBytes
+          physicalObjectBytes: logicalBytes,
+          stagingBytes: 0,
+          orphanBytes: 0,
+          pendingDeletionBytes: 0
         });
       }));
     },

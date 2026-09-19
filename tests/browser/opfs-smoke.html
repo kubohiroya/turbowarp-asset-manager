@@ -18,6 +18,33 @@
           transaction.onerror = () => reject(transaction.error);
           transaction.onabort = () => reject(transaction.error);
         });
+        const peerPut = (options, value) => new Promise((resolve, reject) => {
+          const peerId = crypto.randomUUID();
+          const peer = window.open(`/tests/browser/opfs-peer.html#${peerId}`, '_blank');
+          if (!peer) {
+            reject(new Error('The peer OPFS tab could not be opened.'));
+            return;
+          }
+          const timeout = setTimeout(() => finish(new Error('The peer OPFS tab timed out.')), 10_000);
+          const finish = (error) => {
+            clearTimeout(timeout);
+            window.removeEventListener('message', onMessage);
+            peer.close();
+            if (error) reject(error);
+            else resolve();
+          };
+          const onMessage = (event) => {
+            if (event.origin !== location.origin || event.source !== peer || event.data?.peerId !== peerId) return;
+            if (event.data.type === 'ready') {
+              peer.postMessage({type: 'put', peerId, options, value}, location.origin);
+            } else if (event.data.type === 'complete') {
+              finish();
+            } else if (event.data.type === 'failed') {
+              finish(new Error(`${event.data.code}: ${event.data.message}`));
+            }
+          };
+          window.addEventListener('message', onMessage);
+        });
         document.body.dataset.result = 'imported';
         const bytes = Uint8Array.from([1, 3, 5, 7]);
         const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
@@ -62,15 +89,17 @@
           maxStoredBundles: 1
         };
         const firstStore = createBinaryBundleStore(concurrentOptions);
-        const secondStore = createBinaryBundleStore(concurrentOptions);
         await Promise.all([
           firstStore.put({...input, namespace: `${input.namespace}/first`, name: 'first'}),
-          secondStore.put({...input, namespace: `${input.namespace}/second`, name: 'second'})
+          peerPut(
+            concurrentOptions,
+            {...input, namespace: `${input.namespace}/second`, name: 'second'}
+          )
         ]);
         const concurrentStats = await firstStore.getStats();
         if (concurrentStats.bundles !== 1) throw new Error('Concurrent eviction exceeded the bundle limit.');
         await firstStore.clear();
-        await Promise.all([firstStore.release(), secondStore.release()]);
+        await firstStore.release();
 
         const metadataName = `twam-browser-smoke-${identity}-opfs-metadata`;
         const database = await request(indexedDB.open(metadataName));

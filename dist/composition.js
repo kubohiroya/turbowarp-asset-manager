@@ -3238,8 +3238,11 @@ function createOpfsBinaryObjectStore(options = {}) {
 			throw mappedOpfsError(error, "open");
 		}
 	})();
+	async function objectName(key) {
+		return toHex$2(new Uint8Array(await subtleCrypto.digest("SHA-256", new TextEncoder().encode(key))));
+	}
 	async function objectLocation(key) {
-		const hash = toHex$2(new Uint8Array(await subtleCrypto.digest("SHA-256", new TextEncoder().encode(key))));
+		const hash = await objectName(key);
 		const { objects } = await roots();
 		return {
 			directory: await childDirectory(objects, hash.slice(0, 2)),
@@ -3258,14 +3261,6 @@ function createOpfsBinaryObjectStore(options = {}) {
 			if (error instanceof Error && "code" in error && error.code === "ASSET_BINARY_OPFS_CORRUPT") return false;
 			throw error;
 		}
-	}
-	async function waitForCommittedObject(location, descriptor, signal) {
-		for (let attempt = 0; attempt < 25; attempt += 1) {
-			if (await committedObjectMatches(location, descriptor, signal)) return true;
-			await new Promise((resolve) => setTimeout(resolve, 40));
-			assertActive(released, signal);
-		}
-		return false;
 	}
 	function writableConflict(error) {
 		return error instanceof DOMException && (error.name === "InvalidStateError" || error.name === "NoModificationAllowedError");
@@ -3293,7 +3288,8 @@ function createOpfsBinaryObjectStore(options = {}) {
 				assertActive(released, operationOptions.signal);
 				const location = await objectLocation(descriptor.key);
 				assertActive(released, operationOptions.signal);
-				if (!await committedObjectMatches(location, descriptor, operationOptions.signal)) try {
+				let retryDelayMs = 20;
+				while (!await committedObjectMatches(location, descriptor, operationOptions.signal)) try {
 					const finalHandle = await location.directory.getFileHandle(location.name, { create: true });
 					writable = await finalHandle.createWritable();
 					activeWritables.add(writable);
@@ -3301,13 +3297,17 @@ function createOpfsBinaryObjectStore(options = {}) {
 					activeWritables.delete(writable);
 					writable = null;
 					await verify(await readFileBytes(await finalHandle.getFile(), operationOptions.signal), descriptor, subtleCrypto);
+					break;
 				} catch (error) {
 					if (writable) {
 						activeWritables.delete(writable);
 						await writable.abort(error).catch(() => {});
 						writable = null;
 					}
-					if (!writableConflict(error) || !await waitForCommittedObject(location, descriptor, operationOptions.signal)) throw error;
+					if (!writableConflict(error)) throw error;
+					await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+					assertActive(released, operationOptions.signal);
+					retryDelayMs = Math.min(retryDelayMs * 2, 250);
 				}
 				assertActive(released, operationOptions.signal);
 				await rootHandles.staging.removeEntry(stageName);
@@ -3364,6 +3364,47 @@ function createOpfsBinaryObjectStore(options = {}) {
 				if (removed >= limit) break;
 			}
 			return removed;
+		},
+		async getStats(operationOptions = {}) {
+			assertActive(released, operationOptions.signal);
+			const { objects, staging } = await roots();
+			const referencedNames = /* @__PURE__ */ new Set();
+			const pendingDeletionNames = /* @__PURE__ */ new Set();
+			for (const key of operationOptions.referencedKeys ?? []) {
+				referencedNames.add(await objectName(key));
+				assertActive(released, operationOptions.signal);
+			}
+			for (const key of operationOptions.pendingDeletionKeys ?? []) {
+				pendingDeletionNames.add(await objectName(key));
+				assertActive(released, operationOptions.signal);
+			}
+			let physicalObjectBytes = 0;
+			let orphanBytes = 0;
+			let pendingDeletionBytes = 0;
+			for await (const prefix of objects.values()) {
+				assertActive(released, operationOptions.signal);
+				if (prefix.kind !== "directory") continue;
+				for await (const entry of prefix.values()) {
+					assertActive(released, operationOptions.signal);
+					if (entry.kind !== "file") continue;
+					const file = await entry.getFile();
+					physicalObjectBytes += file.size;
+					if (pendingDeletionNames.has(entry.name)) pendingDeletionBytes += file.size;
+					else if (!referencedNames.has(entry.name)) orphanBytes += file.size;
+				}
+			}
+			let stagingBytes = 0;
+			for await (const entry of staging.values()) {
+				assertActive(released, operationOptions.signal);
+				if (entry.kind !== "file") continue;
+				stagingBytes += (await entry.getFile()).size;
+			}
+			return Object.freeze({
+				physicalObjectBytes,
+				stagingBytes,
+				orphanBytes,
+				pendingDeletionBytes
+			});
 		},
 		async release() {
 			if (released) return;
@@ -3508,6 +3549,7 @@ var STATE_STORE = "storeState";
 var DELETION_STORE = "pendingObjectDeletions";
 var FORMAT_VERSION$2 = 1;
 var RECOVERY_LIMIT = 64;
+var DELETION_CLAIM_STALE_MS = 3e4;
 function storeError(code, message, cause) {
 	const error = new Error(message, cause === void 0 ? void 0 : { cause });
 	Object.defineProperty(error, "code", {
@@ -3674,11 +3716,50 @@ function createOpfsBinaryBundleStore(options) {
 		});
 	}
 	async function finishObjectDeletions(database, deletions) {
-		for (const deletion of deletions) await options.objectStore.delete(deletion.key);
-		if (deletions.length === 0) return;
-		const transaction = database.transaction(DELETION_STORE, "readwrite");
-		for (const deletion of deletions) transaction.objectStore(DELETION_STORE).delete(deletion.key);
-		await transactionComplete$4(transaction);
+		const remaining = new Set(deletions.map(({ key }) => key));
+		const cleanupToken = crypto.randomUUID?.() ?? Math.random().toString(36).slice(2);
+		let retryDelayMs = 20;
+		while (remaining.size > 0) {
+			if (released) throw storeError("ASSET_BINARY_BUNDLE_RELEASED", "Binary bundle store was released.");
+			const claim = database.transaction(DELETION_STORE, "readwrite");
+			const deletionStore = claim.objectStore(DELETION_STORE);
+			const claimed = [];
+			const claimedAt = Date.now();
+			for (const key of remaining) {
+				const current = await requestResult$3(deletionStore.get(key));
+				if (!current) {
+					remaining.delete(key);
+					continue;
+				}
+				if (typeof current.cleanupToken === "string" && Number.isSafeInteger(current.cleanupClaimedAt) && claimedAt - Number(current.cleanupClaimedAt) <= DELETION_CLAIM_STALE_MS && current.cleanupToken !== cleanupToken) continue;
+				const owned = {
+					...current,
+					cleanupToken,
+					cleanupClaimedAt: claimedAt
+				};
+				deletionStore.put(owned);
+				claimed.push(owned);
+			}
+			await transactionComplete$4(claim);
+			if (claimed.length === 0) {
+				await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+				retryDelayMs = Math.min(retryDelayMs * 2, 250);
+				continue;
+			}
+			retryDelayMs = 20;
+			for (const deletion of claimed) {
+				const ownership = database.transaction(DELETION_STORE, "readonly");
+				const owned = await requestResult$3(ownership.objectStore(DELETION_STORE).get(deletion.key));
+				await transactionComplete$4(ownership);
+				if (owned?.cleanupToken !== cleanupToken) continue;
+				await options.objectStore.delete(deletion.key);
+				const complete = database.transaction(DELETION_STORE, "readwrite");
+				const store = complete.objectStore(DELETION_STORE);
+				if ((await requestResult$3(store.get(deletion.key)))?.cleanupToken === cleanupToken) store.delete(deletion.key);
+				await transactionComplete$4(complete);
+				remaining.delete(deletion.key);
+			}
+		}
 	}
 	async function pendingObjectDeletions(database, keys) {
 		const transaction = database.transaction(DELETION_STORE, "readonly");
@@ -3686,8 +3767,7 @@ function createOpfsBinaryBundleStore(options) {
 		await transactionComplete$4(transaction);
 		return keys ? values.filter(({ key }) => keys.has(key)) : values;
 	}
-	async function claimUnreferencedObjects(database, objects, excludedIntentTokens = /* @__PURE__ */ new Set(), excludedHeartbeatAtOrBefore = Number.POSITIVE_INFINITY) {
-		if (objects.length === 0) return [];
+	async function claimStaleIntentObjects(database, staleBefore) {
 		const transaction = database.transaction([
 			MANIFEST_STORE,
 			INTENT_STORE,
@@ -3695,27 +3775,36 @@ function createOpfsBinaryBundleStore(options) {
 		], "readwrite");
 		const manifests = await requestResult$3(transaction.objectStore(MANIFEST_STORE).getAll());
 		const intents = await requestResult$3(transaction.objectStore(INTENT_STORE).getAll());
+		const stale = intents.filter((intent) => {
+			const heartbeatAt = Number.isSafeInteger(intent.heartbeatAt) ? intent.heartbeatAt : intent.createdAt;
+			return Number.isSafeInteger(heartbeatAt) && heartbeatAt <= staleBefore;
+		}).slice(0, recoveryLimit);
+		const staleTokens = new Set(stale.map(({ token }) => token));
 		const referenced = /* @__PURE__ */ new Set();
 		for (const manifest of manifests) {
 			if (!manifestValid(manifest)) continue;
 			for (const file of manifest.files) referenced.add(file.object.key);
 		}
 		for (const intent of intents) {
-			const heartbeatAt = Number.isSafeInteger(intent.heartbeatAt) ? intent.heartbeatAt : intent.createdAt;
-			if (excludedIntentTokens.has(intent.token) && heartbeatAt <= excludedHeartbeatAtOrBefore) continue;
+			if (staleTokens.has(intent.token)) continue;
 			if (!Array.isArray(intent.objects)) continue;
 			for (const object of intent.objects) referenced.add(object.key);
 		}
 		const claimed = /* @__PURE__ */ new Map();
-		for (const descriptor of objects) {
-			if (referenced.has(descriptor.key) || claimed.has(descriptor.key)) continue;
-			const deletion = {
-				key: descriptor.key,
-				descriptor,
-				createdAt: now()
-			};
-			transaction.objectStore(DELETION_STORE).put(deletion);
-			claimed.set(descriptor.key, deletion);
+		const deletionStore = transaction.objectStore(DELETION_STORE);
+		const intentStore = transaction.objectStore(INTENT_STORE);
+		for (const intent of stale) {
+			if (Array.isArray(intent.objects)) for (const descriptor of intent.objects) {
+				if (referenced.has(descriptor.key) || claimed.has(descriptor.key)) continue;
+				const deletion = {
+					key: descriptor.key,
+					descriptor,
+					createdAt: now()
+				};
+				deletionStore.put(deletion);
+				claimed.set(descriptor.key, deletion);
+			}
+			intentStore.delete(intent.token);
 		}
 		await transactionComplete$4(transaction);
 		return [...claimed.values()];
@@ -3724,26 +3813,7 @@ function createOpfsBinaryBundleStore(options) {
 		const database = await openDatabase();
 		try {
 			await finishObjectDeletions(database, (await pendingObjectDeletions(database)).slice(0, recoveryLimit));
-			const read = database.transaction(INTENT_STORE, "readonly");
-			const intents = await requestResult$3(read.objectStore(INTENT_STORE).getAll());
-			await transactionComplete$4(read);
-			const staleBefore = now() - intentStaleMs;
-			const recovered = intents.filter((intent) => {
-				const heartbeatAt = Number.isSafeInteger(intent.heartbeatAt) ? intent.heartbeatAt : intent.createdAt;
-				return Number.isSafeInteger(heartbeatAt) && heartbeatAt <= staleBefore;
-			}).slice(0, recoveryLimit);
-			await finishObjectDeletions(database, await claimUnreferencedObjects(database, recovered.flatMap(({ objects }) => objects), new Set(recovered.map(({ token }) => token)), staleBefore));
-			const remove = database.transaction(INTENT_STORE, "readwrite");
-			const intentStore = remove.objectStore(INTENT_STORE);
-			for (const intent of recovered) {
-				const request = intentStore.get(intent.token);
-				request.onsuccess = () => {
-					const current = request.result;
-					if (!current) return;
-					if ((Number.isSafeInteger(current.heartbeatAt) ? current.heartbeatAt : current.createdAt) <= staleBefore) intentStore.delete(current.token);
-				};
-			}
-			await transactionComplete$4(remove);
+			await finishObjectDeletions(database, await claimStaleIntentObjects(database, now() - intentStaleMs));
 			await options.objectStore.cleanupStaging?.({
 				limit: recoveryLimit,
 				createdBefore: now() - Math.min(ttlMs, 864e5)
@@ -3803,6 +3873,67 @@ function createOpfsBinaryBundleStore(options) {
 			files,
 			totalBytes
 		};
+	}
+	async function deleteNormalized(key, condition) {
+		const database = await openDatabase();
+		let manifest;
+		let deletions = [];
+		try {
+			const transaction = database.transaction([
+				MANIFEST_STORE,
+				INTENT_STORE,
+				STATE_STORE,
+				DELETION_STORE
+			], "readwrite");
+			const manifests = transaction.objectStore(MANIFEST_STORE);
+			manifest = await requestResult$3(manifests.get(key.key));
+			if (condition) {
+				if (!manifestValid(manifest, key.key) || manifest.generation !== condition.generation || manifest.epoch !== condition.epoch || !(condition.expiredAt < manifest.lastAccessedAt || condition.expiredAt - manifest.lastAccessedAt > ttlMs)) {
+					await transactionComplete$4(transaction);
+					return;
+				}
+			}
+			manifests.delete(key.key);
+			const state = transaction.objectStore(STATE_STORE);
+			const stateKey = `generation:${key.key}`;
+			const value = await requestResult$3(state.get(stateKey));
+			const next = value && typeof value === "object" && Number.isSafeInteger(value.value) ? Number(value.value) + 1 : 1;
+			state.put({
+				key: stateKey,
+				value: next
+			});
+			if (manifestValid(manifest, key.key)) {
+				const manifestValues = await requestResult$3(manifests.getAll());
+				const intentValues = await requestResult$3(transaction.objectStore(INTENT_STORE).getAll());
+				const referenced = /* @__PURE__ */ new Set();
+				for (const value of manifestValues) {
+					if (!manifestValid(value)) continue;
+					for (const { object } of value.files) referenced.add(object.key);
+				}
+				for (const intent of intentValues) {
+					if (!Array.isArray(intent.objects)) continue;
+					for (const object of intent.objects) referenced.add(object.key);
+				}
+				const deletionStore = transaction.objectStore(DELETION_STORE);
+				const byKey = /* @__PURE__ */ new Map();
+				for (const { object } of manifest.files) {
+					if (referenced.has(object.key) || byKey.has(object.key)) continue;
+					const deletion = {
+						key: object.key,
+						descriptor: object,
+						createdAt: now()
+					};
+					deletionStore.put(deletion);
+					byKey.set(object.key, deletion);
+				}
+				deletions = [...byKey.values()];
+			}
+			await transactionComplete$4(transaction);
+			await finishObjectDeletions(database, deletions);
+			return manifestValid(manifest, key.key) ? manifest : void 0;
+		} finally {
+			database.close();
+		}
 	}
 	const store = {
 		establish,
@@ -4022,7 +4153,11 @@ function createOpfsBinaryBundleStore(options) {
 			if (!manifestValid(manifest, key.key)) throw storeError("ASSET_BINARY_BUNDLE_CORRUPT", "Binary bundle manifest is corrupt.");
 			const timestamp = now();
 			if (timestamp < manifest.lastAccessedAt || timestamp - manifest.lastAccessedAt > ttlMs) {
-				await store.delete(input, operationOptions);
+				await deleteNormalized(key, {
+					generation: manifest.generation,
+					epoch: manifest.epoch,
+					expiredAt: timestamp
+				});
 				throw storeError("ASSET_BINARY_BUNDLE_NOT_FOUND", "Binary bundle has expired.");
 			}
 			const files = [];
@@ -4074,58 +4209,7 @@ function createOpfsBinaryBundleStore(options) {
 			assertSignal(signal);
 			const key = normalizeKey$2(input);
 			generations.set(key.key, (generations.get(key.key) ?? 0) + 1);
-			const database = await openDatabase();
-			let manifest;
-			let deletions = [];
-			try {
-				const transaction = database.transaction([
-					MANIFEST_STORE,
-					INTENT_STORE,
-					STATE_STORE,
-					DELETION_STORE
-				], "readwrite");
-				const manifests = transaction.objectStore(MANIFEST_STORE);
-				manifest = await requestResult$3(manifests.get(key.key));
-				manifests.delete(key.key);
-				const state = transaction.objectStore(STATE_STORE);
-				const stateKey = `generation:${key.key}`;
-				const value = await requestResult$3(state.get(stateKey));
-				const next = value && typeof value === "object" && Number.isSafeInteger(value.value) ? Number(value.value) + 1 : 1;
-				state.put({
-					key: stateKey,
-					value: next
-				});
-				if (manifestValid(manifest, key.key)) {
-					const manifestValues = await requestResult$3(manifests.getAll());
-					const intentValues = await requestResult$3(transaction.objectStore(INTENT_STORE).getAll());
-					const referenced = /* @__PURE__ */ new Set();
-					for (const value of manifestValues) {
-						if (!manifestValid(value)) continue;
-						for (const { object } of value.files) referenced.add(object.key);
-					}
-					for (const intent of intentValues) {
-						if (!Array.isArray(intent.objects)) continue;
-						for (const object of intent.objects) referenced.add(object.key);
-					}
-					const deletionStore = transaction.objectStore(DELETION_STORE);
-					const byKey = /* @__PURE__ */ new Map();
-					for (const { object } of manifest.files) {
-						if (referenced.has(object.key) || byKey.has(object.key)) continue;
-						const deletion = {
-							key: object.key,
-							descriptor: object,
-							createdAt: now()
-						};
-						deletionStore.put(deletion);
-						byKey.set(object.key, deletion);
-					}
-					deletions = [...byKey.values()];
-				}
-				await transactionComplete$4(transaction);
-				await finishObjectDeletions(database, deletions);
-			} finally {
-				database.close();
-			}
+			await deleteNormalized(key);
 		},
 		async touch(input, operationOptions = {}) {
 			const signal = operationSignal$2(operationOptions);
@@ -4155,17 +4239,36 @@ function createOpfsBinaryBundleStore(options) {
 			await establish();
 			const database = await openDatabase();
 			try {
-				const transaction = database.transaction(MANIFEST_STORE, "readonly");
+				const transaction = database.transaction([
+					MANIFEST_STORE,
+					INTENT_STORE,
+					DELETION_STORE
+				], "readonly");
 				const values = await requestResult$3(transaction.objectStore(MANIFEST_STORE).getAll());
+				const intents = await requestResult$3(transaction.objectStore(INTENT_STORE).getAll());
+				const deletions = await requestResult$3(transaction.objectStore(DELETION_STORE).getAll());
 				await transactionComplete$4(transaction);
 				const manifests = values.filter((value) => manifestValid(value));
 				const objects = /* @__PURE__ */ new Map();
 				for (const manifest of manifests) for (const file of manifest.files) objects.set(file.object.key, file.object.size);
+				const referencedKeys = new Set(objects.keys());
+				for (const intent of intents) {
+					if (!Array.isArray(intent.objects)) continue;
+					for (const object of intent.objects) referencedKeys.add(object.key);
+				}
+				const pendingDeletionKeys = new Set(deletions.map(({ key }) => key));
+				const physical = await options.objectStore.getStats?.({
+					referencedKeys,
+					pendingDeletionKeys
+				});
 				return Object.freeze({
 					backend: "opfs",
 					bundles: manifests.length,
 					logicalBytes: manifests.reduce((sum, manifest) => sum + manifest.totalBytes, 0),
-					physicalObjectBytes: [...objects.values()].reduce((sum, size) => sum + size, 0)
+					physicalObjectBytes: physical?.physicalObjectBytes ?? [...objects.values()].reduce((sum, size) => sum + size, 0),
+					stagingBytes: physical?.stagingBytes ?? 0,
+					orphanBytes: physical?.orphanBytes ?? 0,
+					pendingDeletionBytes: physical?.pendingDeletionBytes ?? 0
 				});
 			} finally {
 				database.close();
@@ -4185,14 +4288,22 @@ function createOpfsBinaryBundleStore(options) {
 			}
 			const timestamp = now();
 			const expired = manifests.filter((manifest) => timestamp < manifest.lastAccessedAt || timestamp - manifest.lastAccessedAt > ttlMs);
-			for (const manifest of expired) await store.delete({
-				namespace: manifest.namespace,
-				name: manifest.name,
-				integrity: manifest.integrity
-			});
+			const removed = [];
+			for (const manifest of expired) {
+				const deleted = await deleteNormalized(normalizeKey$2({
+					namespace: manifest.namespace,
+					name: manifest.name,
+					integrity: manifest.integrity
+				}), {
+					generation: manifest.generation,
+					epoch: manifest.epoch,
+					expiredAt: timestamp
+				});
+				if (deleted) removed.push(deleted);
+			}
 			return Object.freeze({
-				removedBundles: expired.length,
-				removedBytes: expired.reduce((sum, manifest) => sum + manifest.totalBytes, 0)
+				removedBundles: removed.length,
+				removedBytes: removed.reduce((sum, manifest) => sum + manifest.totalBytes, 0)
 			});
 		},
 		async clear() {
@@ -4958,7 +5069,10 @@ function createIndexedDBBinaryBundleStore(options = {}) {
 					backend: "indexeddb",
 					bundles: records.length,
 					logicalBytes,
-					physicalObjectBytes: logicalBytes
+					physicalObjectBytes: logicalBytes,
+					stagingBytes: 0,
+					orphanBytes: 0,
+					pendingDeletionBytes: 0
 				});
 			}));
 		},

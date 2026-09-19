@@ -15,6 +15,18 @@ export interface BinaryObjectOperationOptions {
   readonly signal?: AbortSignal;
 }
 
+export interface BinaryObjectStoreStats {
+  readonly physicalObjectBytes: number;
+  readonly stagingBytes: number;
+  readonly orphanBytes: number;
+  readonly pendingDeletionBytes: number;
+}
+
+export interface BinaryObjectStatsOptions extends BinaryObjectOperationOptions {
+  readonly referencedKeys?: ReadonlySet<string>;
+  readonly pendingDeletionKeys?: ReadonlySet<string>;
+}
+
 export interface BinaryObjectStore {
   readonly kind: 'indexeddb' | 'opfs';
   put(
@@ -33,6 +45,7 @@ export interface BinaryObjectStore {
     readonly createdBefore?: number;
     readonly signal?: AbortSignal;
   }): Promise<number>;
+  getStats?(options?: BinaryObjectStatsOptions): Promise<BinaryObjectStoreStats>;
   release(): Promise<void>;
 }
 
@@ -346,13 +359,17 @@ export function createOpfsBinaryObjectStore(
     }
   })();
 
+  async function objectName(key: string): Promise<string> {
+    return toHex(new Uint8Array(
+      await subtleCrypto.digest('SHA-256', new TextEncoder().encode(key))
+    ));
+  }
+
   async function objectLocation(key: string): Promise<{
     directory: FileSystemDirectoryHandle;
     name: string;
   }> {
-    const hash = toHex(new Uint8Array(
-      await subtleCrypto.digest('SHA-256', new TextEncoder().encode(key))
-    ));
+    const hash = await objectName(key);
     const {objects} = await roots();
     return {directory: await childDirectory(objects, hash.slice(0, 2)), name: hash};
   }
@@ -377,19 +394,6 @@ export function createOpfsBinaryObjectStore(
       }
       throw error;
     }
-  }
-
-  async function waitForCommittedObject(
-    location: {directory: FileSystemDirectoryHandle; name: string},
-    descriptor: BinaryObjectDescriptor,
-    signal?: AbortSignal
-  ): Promise<boolean> {
-    for (let attempt = 0; attempt < 25; attempt += 1) {
-      if (await committedObjectMatches(location, descriptor, signal)) return true;
-      await new Promise((resolve) => setTimeout(resolve, 40));
-      assertActive(released, signal);
-    }
-    return false;
   }
 
   function writableConflict(error: unknown): boolean {
@@ -423,7 +427,8 @@ export function createOpfsBinaryObjectStore(
         assertActive(released, operationOptions.signal);
         const location = await objectLocation(descriptor.key);
         assertActive(released, operationOptions.signal);
-        if (!await committedObjectMatches(location, descriptor, operationOptions.signal)) {
+        let retryDelayMs = 20;
+        while (!await committedObjectMatches(location, descriptor, operationOptions.signal)) {
           try {
             const finalHandle = await location.directory.getFileHandle(location.name, {create: true});
             writable = await finalHandle.createWritable();
@@ -433,16 +438,17 @@ export function createOpfsBinaryObjectStore(
             writable = null;
             const committed = await readFileBytes(await finalHandle.getFile(), operationOptions.signal);
             await verify(committed, descriptor, subtleCrypto);
+            break;
           } catch (error) {
             if (writable) {
               activeWritables.delete(writable);
               await writable.abort(error).catch(() => {});
               writable = null;
             }
-            if (!writableConflict(error) ||
-                !await waitForCommittedObject(location, descriptor, operationOptions.signal)) {
-              throw error;
-            }
+            if (!writableConflict(error)) throw error;
+            await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+            assertActive(released, operationOptions.signal);
+            retryDelayMs = Math.min(retryDelayMs * 2, 250);
           }
         }
         assertActive(released, operationOptions.signal);
@@ -501,6 +507,42 @@ export function createOpfsBinaryObjectStore(
         if (removed >= limit) break;
       }
       return removed;
+    },
+    async getStats(operationOptions = {}) {
+      assertActive(released, operationOptions.signal);
+      const {objects, staging} = await roots();
+      const referencedNames = new Set<string>();
+      const pendingDeletionNames = new Set<string>();
+      for (const key of operationOptions.referencedKeys ?? []) {
+        referencedNames.add(await objectName(key));
+        assertActive(released, operationOptions.signal);
+      }
+      for (const key of operationOptions.pendingDeletionKeys ?? []) {
+        pendingDeletionNames.add(await objectName(key));
+        assertActive(released, operationOptions.signal);
+      }
+      let physicalObjectBytes = 0;
+      let orphanBytes = 0;
+      let pendingDeletionBytes = 0;
+      for await (const prefix of objects.values()) {
+        assertActive(released, operationOptions.signal);
+        if (prefix.kind !== 'directory') continue;
+        for await (const entry of (prefix as FileSystemDirectoryHandle).values()) {
+          assertActive(released, operationOptions.signal);
+          if (entry.kind !== 'file') continue;
+          const file = await (entry as FileSystemFileHandle).getFile();
+          physicalObjectBytes += file.size;
+          if (pendingDeletionNames.has(entry.name)) pendingDeletionBytes += file.size;
+          else if (!referencedNames.has(entry.name)) orphanBytes += file.size;
+        }
+      }
+      let stagingBytes = 0;
+      for await (const entry of staging.values()) {
+        assertActive(released, operationOptions.signal);
+        if (entry.kind !== 'file') continue;
+        stagingBytes += (await (entry as FileSystemFileHandle).getFile()).size;
+      }
+      return Object.freeze({physicalObjectBytes, stagingBytes, orphanBytes, pendingDeletionBytes});
     },
     async release() {
       if (released) return;

@@ -448,9 +448,10 @@ and cleanup therefore serialize through the same metadata transaction across tab
 the corresponding OPFS object.
 
 `pruneBinaryBundleStore()` applies TTL cleanup, `clearBinaryBundleStore()` explicitly removes the
-selected backend's records, and `getBinaryBundleStoreStats()` separates logical bytes from unique
-physical object bytes. Normal rollback consists of restoring `backendPolicy: 'indexeddb'`; it does
-not implicitly erase an OPFS root that another tab or runtime may still reference.
+selected backend's records, and `getBinaryBundleStoreStats()` separates logical bytes, all physical
+object bytes, staging bytes, pending-deletion bytes, and unreferenced orphan bytes. Normal rollback
+consists of restoring `backendPolicy: 'indexeddb'`; it does not implicitly erase an OPFS root that
+another tab or runtime may still reference.
 
 Run `pnpm test:browser:opfs` for the native Chromium IndexedDB + OPFS smoke test. The normal
 `pnpm check` workflow runs this after building the composition artifact; `CHROME_BIN` can select a

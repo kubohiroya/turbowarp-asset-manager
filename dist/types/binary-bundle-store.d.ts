@@ -67,6 +67,9 @@ export interface BinaryBundleStoreStats {
     readonly bundles: number;
     readonly logicalBytes: number;
     readonly physicalObjectBytes: number;
+    readonly stagingBytes: number;
+    readonly orphanBytes: number;
+    readonly pendingDeletionBytes: number;
 }
 export interface BinaryBundlePruneResult {
     readonly removedBundles: number;

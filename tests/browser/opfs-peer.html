@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>OPFS binary backing peer</title>
+  </head>
+  <body>
+    <script type="module">
+      const peerId = location.hash.slice(1);
+      const {createBinaryBundleStore} = await import('/dist/composition.js');
+      window.addEventListener('message', async (event) => {
+        if (event.origin !== location.origin || event.source !== window.opener ||
+            event.data?.type !== 'put' || event.data.peerId !== peerId) return;
+        let store;
+        try {
+          store = createBinaryBundleStore(event.data.options);
+          await store.put(event.data.value);
+          window.opener.postMessage({type: 'complete', peerId}, location.origin);
+        } catch (error) {
+          window.opener.postMessage({
+            type: 'failed',
+            peerId,
+            code: error?.code ?? error?.name,
+            message: error?.message
+          }, location.origin);
+        } finally {
+          await store?.release();
+        }
+      });
+      window.opener.postMessage({type: 'ready', peerId}, location.origin);
+    </script>
+  </body>
+</html>
