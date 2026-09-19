@@ -287,7 +287,7 @@
     ]
   };
   //#endregion
-  //#region ../turbowarp-named-data/dist/composition.js
+  //#region node_modules/.pnpm/@kubohiroya+turbowarp-named-data@https+++codeload.github.com+kubohiroya+turbowarp-named_9c01aa0963d4f4703e15731a8abd37a9/node_modules/@kubohiroya/turbowarp-named-data/dist/composition.js
   var NAMED_DATA_REGISTRY_SYMBOL_KEY = "@kubohiroya/turbowarp-named-data/registry/2.0";
   var NAMED_DATA_REGISTRY_SYMBOL = Symbol.for(NAMED_DATA_REGISTRY_SYMBOL_KEY);
   var NAMED_DATA_KINDS = [
