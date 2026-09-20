@@ -1,7 +1,7 @@
 {
   "name": "@kubohiroya/turbowarp-asset-manager",
   "version": "0.16.0",
-  "description": "An IndexedDB-backed image, audio, and runtime-text asset manager for TurboWarp projects.",
+  "description": "Deprecated compatibility package; use turbowarp-asset-cache and turbowarp-kvs.",
   "author": "Hiroya Kubo <hiroya@cuc.ac.jp>",
   "type": "module",
   "license": "MPL-2.0",
