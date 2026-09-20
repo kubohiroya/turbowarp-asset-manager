@@ -1,10 +1,31 @@
 # TurboWarp-Asset-Manager
 
+> [!WARNING]
+> This package is deprecated. Use
+> [`@kubohiroya/turbowarp-asset-cache`](https://github.com/kubohiroya/turbowarp-asset-cache)
+> for image, audio, runtime-text, rendering, playback, and verified remote-cache APIs. Use
+> [`@kubohiroya/turbowarp-kvs`](https://github.com/kubohiroya/turbowarp-kvs) for portable
+> namespace/key persistence and binary object, bundle, and session-backing APIs. Existing releases
+> remain available for reproducible builds, but no new integrations should depend on this package.
+
 An IndexedDB-backed image, audio, and runtime-text asset manager for TurboWarp projects, with an explicit OPFS hybrid binary backing for composition hosts. It registers external files, project-local costumes/backdrops/sounds, and Temporary Variables text references for use from TurboWarp blocks or composition hosts.
 
 ## User Guide
 
 For setup, safety notes, recipes, and the illustrated block guide, see the [English user guide](https://kubohiroya.github.io/turbowarp-asset-manager/) or [Japanese user guide](https://kubohiroya.github.io/turbowarp-asset-manager/ja/).
+
+## Migration
+
+- Replace `@kubohiroya/turbowarp-asset-manager/composition` with
+  `@kubohiroya/turbowarp-asset-cache/composition` for asset registration, rendering, playback,
+  DOM image resources, and verified remote-cache lifecycle APIs.
+- Import binary storage directly from `@kubohiroya/turbowarp-kvs/binary-object-store`,
+  `@kubohiroya/turbowarp-kvs/binary-bundle-store`, or
+  `@kubohiroya/turbowarp-kvs/session-binary-backing`.
+- Standalone projects must replace the extension ID `kubohiroyaassetmanager` with
+  `kubohiroyaassetcache`; keep already-published SB3 artifacts pinned to their original extension.
+- Asset Manager databases are not deleted or silently migrated. The replacement packages use
+  product-specific storage names, so the first run starts with a cold cache.
 
 ## What It Does
 
