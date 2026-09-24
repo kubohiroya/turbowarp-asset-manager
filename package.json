@@ -73,7 +73,7 @@
     "vitest": "^4.1.10"
   },
   "peerDependencies": {
-    "@kubohiroya/turbowarp-named-data": "^0.1.0"
+    "@kubohiroya/turbowarp-named-data": ">=0.1.0 <1"
   },
   "keywords": [
     "turbowarp",
