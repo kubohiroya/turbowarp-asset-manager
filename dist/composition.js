@@ -1,3 +1,399 @@
+//#region node_modules/.pnpm/@kubohiroya+turbowarp-extension-data-editor@https+++codeload.github.com+kubohiroya+turb_5174995e0659a2991b0bf213cfddbf18/node_modules/@kubohiroya/turbowarp-extension-data-editor/dist/fixed-input-schema.js
+var numberToken = /^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?$/u;
+var invalidNumber = Object.freeze({
+	kind: "invalid",
+	code: "fixed-number-input-invalid"
+});
+/**
+* Parse a NEW numeric draft according to NP-finite-new-input-v1.
+* Never apply this to opening/no-op raw values or use it as an owner validator.
+* Keep the validated token so negative zero, precision and exponent spelling survive.
+*/
+function parseFixedNumberInput(input) {
+	if (typeof input === "number") {
+		if (!Number.isFinite(input)) return invalidNumber;
+		return Object.freeze({
+			kind: "valid",
+			token: Object.is(input, -0) ? "-0" : String(input),
+			value: input
+		});
+	}
+	if (typeof input !== "string") return invalidNumber;
+	const token = input.trim();
+	if (!numberToken.test(token)) return invalidNumber;
+	const value = Number(token);
+	return Number.isFinite(value) ? Object.freeze({
+		kind: "valid",
+		token,
+		value
+	}) : invalidNumber;
+}
+var block_editor_fixed_inputs_schema_default = {
+	$schema: "https://json-schema.org/draft/2020-12/schema",
+	$id: "https://kubohiroya.github.io/turbowarp-asset-manager/schemas/block-editor-fixed-inputs.schema.json",
+	$defs: {
+		"setTextStyle": {
+			"type": "object",
+			"properties": {
+				"PROPERTY": {
+					"type": "string",
+					"enum": [
+						"animation",
+						"font",
+						"color",
+						"width",
+						"align"
+					]
+				},
+				"VALUE": { "type": "string" }
+			},
+			"additionalProperties": false
+		},
+		"animation": {
+			"type": "string",
+			"enum": [
+				"",
+				"none",
+				"type",
+				"rainbow",
+				"zoom",
+				"shake"
+			]
+		},
+		"font": { "type": "string" },
+		"color": {
+			"type": "string",
+			"pattern": "^(?:|#[0-9a-fA-F]{3}|#[0-9a-fA-F]{6})$"
+		},
+		"width": {
+			"type": "string",
+			"$comment": "Empty/trimmed empty resets; otherwise normalizeTextStyleValue requires Number(value) finite and positive. Preserve the existing STRING grammar, including hexadecimal and leading plus."
+		},
+		"align": {
+			"type": "string",
+			"enum": [
+				"",
+				"left",
+				"center",
+				"right"
+			]
+		},
+		"loadingCostumeAt": {
+			"type": "object",
+			"properties": { "INDEX": { "type": "number" } },
+			"additionalProperties": false
+		}
+	}
+};
+//#endregion
+//#region src/fixed-input-schema.ts
+/** Canonical owner schema fragments; no network resources or runtime providers. */
+function fixedInputBundle(fragment, schema) {
+	const source = {
+		repository: "turbowarp-asset-manager",
+		path: "schemas/block-editor-fixed-inputs.schema.json",
+		symbol: {
+			"setTextStyle-PROPERTY": "#/$defs/setTextStyle/properties/PROPERTY",
+			"setTextStyle-VALUE": "#/$defs/setTextStyle/properties/VALUE",
+			"loadingCostumeAt-INDEX": "#/$defs/loadingCostumeAt/properties/INDEX"
+		}[fragment] ?? `#/$defs/${fragment}`
+	};
+	return {
+		identity: {
+			ownerId: "turbowarp-asset-manager",
+			contractId: "fixed-inputs",
+			revision: "1",
+			variantId: fragment
+		},
+		dialect: "2020-12",
+		root: {
+			retrievalUri: block_editor_fixed_inputs_schema_default.$id,
+			document: schema,
+			artifact: {
+				role: "canonical-schema",
+				source
+			}
+		},
+		resources: [],
+		provenance: {
+			canonicalSources: [
+				source,
+				{
+					repository: "turbowarp-asset-manager",
+					path: "src/text-style.ts",
+					symbol: "normalizeTextStyleProperty / normalizeTextStyleValue"
+				},
+				{
+					repository: "turbowarp-asset-manager",
+					path: "src/extension.ts",
+					symbol: "getInfo / loadingCostumeAt"
+				}
+			],
+			generatedFiles: [],
+			referenceSchemas: [],
+			generationSources: []
+		}
+	};
+}
+var fixedSchemas = block_editor_fixed_inputs_schema_default.$defs;
+//#endregion
+//#region src/text-style.ts
+var TEXT_RUNTIME_NAMESPACE = "text";
+var TEXT_STYLE_RUNTIME_NAMESPACE = "textStyle";
+var TEXT_STYLE_PROPERTIES = [
+	"animation",
+	"font",
+	"color",
+	"width",
+	"align"
+];
+var DEFAULT_STAGE_WIDTH = 480;
+var DEFAULT_FONT = "Handwriting";
+var DEFAULT_COLOR = "#ffffff";
+var DEFAULT_ALIGNMENT = "center";
+var DEFAULT_OUTLINE_COLOR = "#000000";
+function textRuntimeVariableName(name) {
+	return `${TEXT_RUNTIME_NAMESPACE}:${name}`;
+}
+function textStyleRuntimeVariableName(name, property) {
+	return `${TEXT_STYLE_RUNTIME_NAMESPACE}:${name}:${property}`;
+}
+function normalizeTextStyleProperty(value) {
+	const property = String(value ?? "").trim().toLowerCase();
+	if (TEXT_STYLE_PROPERTIES.includes(property)) return property;
+	throw new Error(`Unknown text style property: ${property || "(empty)"}`);
+}
+/**
+* Normalize a DSL-facing style value for runtime-variable storage.
+* An empty value intentionally resets the property to its default.
+*/
+function normalizeTextStyleValue(property, value) {
+	const raw = String(value ?? "").trim();
+	if (!raw) return "";
+	switch (property) {
+		case "animation": {
+			const animation = raw.toLowerCase() === "typing" ? "type" : raw.toLowerCase();
+			if (animation === "none" || animation === "type" || animation === "rainbow" || animation === "zoom" || animation === "shake") return animation;
+			throw new Error(`Invalid text animation: ${raw}`);
+		}
+		case "font": return raw;
+		case "color": {
+			if (/^#[0-9a-f]{6}$/i.test(raw)) return raw.toLowerCase();
+			const shortColor = /^#([0-9a-f])([0-9a-f])([0-9a-f])$/i.exec(raw);
+			if (shortColor) return `#${shortColor[1]}${shortColor[1]}${shortColor[2]}${shortColor[2]}${shortColor[3]}${shortColor[3]}`.toLowerCase();
+			throw new Error(`Invalid text color: ${raw}`);
+		}
+		case "width": {
+			const width = Number(raw);
+			if (!Number.isFinite(width) || width <= 0) throw new Error(`Text width must be a positive number: ${raw}`);
+			return String(width);
+		}
+		case "align": {
+			const align = raw.toLowerCase();
+			if (align === "left" || align === "center" || align === "right") return align;
+			throw new Error(`Invalid text alignment: ${raw}`);
+		}
+	}
+}
+function resolveTextStyle(name, stageWidth, getRuntimeVariable) {
+	const width = Number(stageWidth);
+	const defaults = {
+		animation: "none",
+		font: DEFAULT_FONT,
+		color: DEFAULT_COLOR,
+		width: Number.isFinite(width) && width > 0 ? width : DEFAULT_STAGE_WIDTH,
+		align: DEFAULT_ALIGNMENT
+	};
+	const read = (property) => normalizeTextStyleValue(property, getRuntimeVariable(textStyleRuntimeVariableName(name, property)));
+	const animation = read("animation");
+	const font = read("font");
+	const color = read("color");
+	const configuredWidth = read("width");
+	const align = read("align");
+	return {
+		animation: animation ? animation : defaults.animation,
+		font: font || defaults.font,
+		color: color || defaults.color,
+		width: configuredWidth ? Number(configuredWidth) : defaults.width,
+		align: align ? align : defaults.align
+	};
+}
+//#endregion
+//#region src/fixed-input-editors.ts
+var extensionId = "kubohiroyaassetmanager";
+var choices = (values) => values.map((value) => ({ value }));
+var context = () => ({
+	consumerId: "turbowarp-asset-manager",
+	nowMs: 0,
+	settings: null
+});
+var string = (value) => {
+	if (typeof value !== "string") throw new TypeError("Expected a string literal.");
+	return value;
+};
+var issue = () => [{ message: "Invalid asset style value." }];
+/** New edits preserve the candidate token; existing aliases are display projections only. */
+function styleBinding(property) {
+	const values = property === "animation" ? [
+		"",
+		"none",
+		"type",
+		"rainbow",
+		"zoom",
+		"shake"
+	] : property === "align" ? [
+		"",
+		"left",
+		"center",
+		"right"
+	] : void 0;
+	return {
+		argument: "VALUE",
+		schemaBundle: fixedInputBundle(property, fixedSchemas[property]),
+		control: {
+			kind: values ? "enum" : property === "color" ? "color" : property === "width" ? "number" : "text",
+			reset: "",
+			...values ? { choices: choices(values) } : {}
+		},
+		read(value) {
+			return normalizeTextStyleValue(property, string(value));
+		},
+		encode(value) {
+			const raw = string(value);
+			if (property !== "width" || raw === "") return raw;
+			normalizeTextStyleValue(property, raw);
+			return raw;
+		},
+		validateCandidate(value) {
+			try {
+				normalizeTextStyleValue(property, string(value));
+				return [];
+			} catch {
+				return issue();
+			}
+		}
+	};
+}
+var fixedInputEditors = [{
+	apiVersion: 1,
+	extensionId,
+	editorId: "text-style-fixed",
+	opcodes: [`${extensionId}_setTextStyle`],
+	contractId: "CP-asset-manager",
+	contractRevision: "1",
+	validationContext: context,
+	bindings: [{
+		argument: "PROPERTY",
+		schemaBundle: fixedInputBundle("setTextStyle-PROPERTY", fixedSchemas.setTextStyle.properties.PROPERTY),
+		control: {
+			kind: "enum",
+			choices: choices(TEXT_STYLE_PROPERTIES)
+		},
+		read(value) {
+			const raw = string(value);
+			try {
+				return normalizeTextStyleProperty(raw);
+			} catch {
+				return raw;
+			}
+		},
+		encode: (value) => string(value),
+		validateCandidate(value) {
+			try {
+				normalizeTextStyleProperty(value);
+				return [];
+			} catch {
+				return issue();
+			}
+		}
+	}, {
+		argument: "VALUE",
+		schemaBundle: fixedInputBundle("setTextStyle-VALUE", fixedSchemas.setTextStyle.properties.VALUE),
+		read: (value) => string(value),
+		encode: (value) => string(value),
+		validateCandidate: () => []
+	}],
+	dependencies: [{
+		selector: "PROPERTY",
+		dependents: ["VALUE"]
+	}],
+	branchPolicies: [{
+		selector: "PROPERTY",
+		normalize: {
+			trim: true,
+			lowercase: true
+		},
+		cases: TEXT_STYLE_PROPERTIES.map((property) => ({
+			values: [property],
+			activeDependents: ["VALUE"],
+			bindings: [styleBinding(property)]
+		}))
+	}]
+}, {
+	apiVersion: 1,
+	extensionId,
+	editorId: "loading-costume-index-fixed",
+	opcodes: [`${extensionId}_loadingCostumeAt`],
+	contractId: "turbowarp-asset-manager/loadingCostumeAt.INDEX",
+	contractRevision: "1",
+	validationContext: context,
+	bindings: [{
+		argument: "INDEX",
+		schemaBundle: fixedInputBundle("loadingCostumeAt-INDEX", fixedSchemas.loadingCostumeAt.properties.INDEX),
+		control: { kind: "number" },
+		read(value) {
+			if (typeof value !== "number" && typeof value !== "string" || typeof value === "string" && value.trim() === "") throw new TypeError("Non-numeric index.");
+			const number = Number(value);
+			if (!Number.isFinite(number)) throw new TypeError("Nonfinite index.");
+			return number;
+		},
+		encode(value) {
+			const parsed = parseFixedNumberInput(value);
+			if (parsed.kind !== "valid") throw new TypeError("Invalid index.");
+			return parsed.token;
+		},
+		validateCandidate(value) {
+			return Number.isFinite(Number(value)) ? [] : [{ message: "Invalid index." }];
+		}
+	}]
+}];
+/** Per-instance, idempotent registration. Legacy hosts never acquire the fixed capability. */
+function fixedInputRegistration(scratch) {
+	const host = typeof scratch === "object" && scratch !== null ? scratch : {};
+	let active;
+	let removers = [];
+	let disposed = false;
+	const dispose = () => {
+		host.vm?.runtime?.off?.("RUNTIME_DISPOSED", shutdown);
+		for (const remove of removers.splice(0).reverse()) remove();
+		active = void 0;
+	};
+	const shutdown = () => {
+		disposed = true;
+		dispose();
+	};
+	return {
+		ensure(opcodes) {
+			const api = host.gui?.blockEditors;
+			if (disposed || api === active) return;
+			dispose();
+			if (api?.apiVersion !== 1 || typeof api.registerFixedInputEditor !== "function") return;
+			try {
+				for (const definition of fixedInputEditors) if (definition.opcodes.every((opcode) => opcodes.includes(opcode))) {
+					const remove = api.registerFixedInputEditor.call(api, definition);
+					if (typeof remove !== "function") throw new TypeError("Invalid fixed registration cleanup.");
+					removers.push(remove);
+				}
+				active = api;
+				host.vm?.runtime?.on?.("RUNTIME_DISPOSED", shutdown);
+			} catch (error) {
+				dispose();
+				throw error;
+			}
+		},
+		dispose: shutdown
+	};
+}
 var block_definitions_default = {
 	extensionName: "Asset Manager",
 	blocks: [
@@ -948,88 +1344,6 @@ function throwIfNamedBodyAborted(signal) {
 	if (signal?.aborted) throw namedBodyAbortError();
 }
 //#endregion
-//#region src/text-style.ts
-var TEXT_RUNTIME_NAMESPACE = "text";
-var TEXT_STYLE_RUNTIME_NAMESPACE = "textStyle";
-var TEXT_STYLE_PROPERTIES = [
-	"animation",
-	"font",
-	"color",
-	"width",
-	"align"
-];
-var DEFAULT_STAGE_WIDTH = 480;
-var DEFAULT_FONT = "Handwriting";
-var DEFAULT_COLOR = "#ffffff";
-var DEFAULT_ALIGNMENT = "center";
-var DEFAULT_OUTLINE_COLOR = "#000000";
-function textRuntimeVariableName(name) {
-	return `${TEXT_RUNTIME_NAMESPACE}:${name}`;
-}
-function textStyleRuntimeVariableName(name, property) {
-	return `${TEXT_STYLE_RUNTIME_NAMESPACE}:${name}:${property}`;
-}
-function normalizeTextStyleProperty(value) {
-	const property = String(value ?? "").trim().toLowerCase();
-	if (TEXT_STYLE_PROPERTIES.includes(property)) return property;
-	throw new Error(`Unknown text style property: ${property || "(empty)"}`);
-}
-/**
-* Normalize a DSL-facing style value for runtime-variable storage.
-* An empty value intentionally resets the property to its default.
-*/
-function normalizeTextStyleValue(property, value) {
-	const raw = String(value ?? "").trim();
-	if (!raw) return "";
-	switch (property) {
-		case "animation": {
-			const animation = raw.toLowerCase() === "typing" ? "type" : raw.toLowerCase();
-			if (animation === "none" || animation === "type" || animation === "rainbow" || animation === "zoom" || animation === "shake") return animation;
-			throw new Error(`Invalid text animation: ${raw}`);
-		}
-		case "font": return raw;
-		case "color": {
-			if (/^#[0-9a-f]{6}$/i.test(raw)) return raw.toLowerCase();
-			const shortColor = /^#([0-9a-f])([0-9a-f])([0-9a-f])$/i.exec(raw);
-			if (shortColor) return `#${shortColor[1]}${shortColor[1]}${shortColor[2]}${shortColor[2]}${shortColor[3]}${shortColor[3]}`.toLowerCase();
-			throw new Error(`Invalid text color: ${raw}`);
-		}
-		case "width": {
-			const width = Number(raw);
-			if (!Number.isFinite(width) || width <= 0) throw new Error(`Text width must be a positive number: ${raw}`);
-			return String(width);
-		}
-		case "align": {
-			const align = raw.toLowerCase();
-			if (align === "left" || align === "center" || align === "right") return align;
-			throw new Error(`Invalid text alignment: ${raw}`);
-		}
-	}
-}
-function resolveTextStyle(name, stageWidth, getRuntimeVariable) {
-	const width = Number(stageWidth);
-	const defaults = {
-		animation: "none",
-		font: DEFAULT_FONT,
-		color: DEFAULT_COLOR,
-		width: Number.isFinite(width) && width > 0 ? width : DEFAULT_STAGE_WIDTH,
-		align: DEFAULT_ALIGNMENT
-	};
-	const read = (property) => normalizeTextStyleValue(property, getRuntimeVariable(textStyleRuntimeVariableName(name, property)));
-	const animation = read("animation");
-	const font = read("font");
-	const color = read("color");
-	const configuredWidth = read("width");
-	const align = read("align");
-	return {
-		animation: animation ? animation : defaults.animation,
-		font: font || defaults.font,
-		color: color || defaults.color,
-		width: configuredWidth ? Number(configuredWidth) : defaults.width,
-		align: align ? align : defaults.align
-	};
-}
-//#endregion
 //#region src/extension.ts
 var EXTENSION_ID = "kubohiroyaassetmanager";
 var EXTENSION_VERSION = "0.14.0";
@@ -1534,6 +1848,7 @@ var AssetManagerExtension = class {
 		this.unbindNamedDataRegistryLifecycle?.();
 		this.unbindNamedDataRegistryLifecycle = void 0;
 	};
+	fixedEditors = fixedInputRegistration(Scratch);
 	constructor(featureFlags = FEATURE_FLAGS) {
 		this.featureFlags = Object.freeze({ ...featureFlags });
 		if (this.featureFlags.NAMED_ASSET_BODY_PROVIDER) {
@@ -1600,6 +1915,8 @@ var AssetManagerExtension = class {
 		return loadingCostumes[((Number.isFinite(numericIndex) ? Math.max(1, Math.trunc(numericIndex)) : 1) - 1) % loadingCostumes.length];
 	}
 	getInfo() {
+		const blocks = blockDefinitions.map((block) => this.toScratchBlock(block));
+		this.fixedEditors.ensure(blocks.map((block) => `${EXTENSION_ID}_${block.opcode}`));
 		return {
 			id: EXTENSION_ID,
 			name: Scratch.translate(block_definitions_default.extensionName),
@@ -1608,8 +1925,12 @@ var AssetManagerExtension = class {
 			color1: "#5b7cfa",
 			color2: "#425ed8",
 			color3: "#2f46aa",
-			blocks: blockDefinitions.map((block) => this.toScratchBlock(block))
+			blocks
 		};
+	}
+	/** Release only this optional editor registration; runtime data remains unchanged. */
+	dispose() {
+		this.fixedEditors.dispose();
 	}
 	/**
 	* Exposes the stock extension registry through a host-neutral DOM image

@@ -1,3 +1,4 @@
+import {fixedInputRegistration} from './fixed-input-editors.js';
 import definitions from './block-definitions.json' with {type: 'json'};
 import {
   bindNamedDataRegistryLifecycle,
@@ -872,6 +873,8 @@ export class AssetManagerExtension {
     this.unbindNamedDataRegistryLifecycle = undefined;
   };
 
+  private readonly fixedEditors = fixedInputRegistration(Scratch);
+
   constructor(featureFlags: AssetManagerFeatureFlags = FEATURE_FLAGS) {
     this.featureFlags = Object.freeze({...featureFlags});
     if (this.featureFlags.NAMED_ASSET_BODY_PROVIDER) {
@@ -966,14 +969,21 @@ export class AssetManagerExtension {
   }
 
   getInfo() {
+    const blocks = blockDefinitions.map((block) => this.toScratchBlock(block));
+    this.fixedEditors.ensure(blocks.map(block => `${EXTENSION_ID}_${block.opcode}`));
     return {
       id: EXTENSION_ID,
       name: Scratch.translate(definitions.extensionName),
       docsURI: EXTENSION_DOCS_URI,
       blockIconURI: BLOCK_ICON_URI,
       color1: '#5b7cfa', color2: '#425ed8', color3: '#2f46aa',
-      blocks: blockDefinitions.map((block) => this.toScratchBlock(block))
+      blocks
     };
+  }
+
+  /** Release only this optional editor registration; runtime data remains unchanged. */
+  dispose(): void {
+    this.fixedEditors.dispose();
   }
 
   /**

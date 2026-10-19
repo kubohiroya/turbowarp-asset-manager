@@ -121,6 +121,7 @@ export declare class AssetManagerExtension {
     private readonly releaseDOMImageResourcesForRuntimeDispose;
     private readonly releaseNamedBodySnapshotsForLifecycle;
     private readonly unregisterNamedBodyProviderForRuntimeDispose;
+    private readonly fixedEditors;
     constructor(featureFlags?: AssetManagerFeatureFlags);
     setLoadingBackdrop(args: BlockArgs): void;
     setLoadingCostumes(args: BlockArgs): void;
@@ -138,6 +139,8 @@ export declare class AssetManagerExtension {
         color3: string;
         blocks: Record<string, unknown>[];
     };
+    /** Release only this optional editor registration; runtime data remains unchanged. */
+    dispose(): void;
     /**
      * Exposes the stock extension registry through a host-neutral DOM image
      * resource contract for other unsandboxed extensions.
