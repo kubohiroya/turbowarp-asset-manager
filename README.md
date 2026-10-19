@@ -60,13 +60,13 @@ The built JavaScript file is committed to this repository so users do not need t
 The versioned npm package contains the same reviewed build:
 
 ```bash
-pnpm add --save-exact @kubohiroya/turbowarp-asset-manager@0.16.0
+pnpm add --save-exact @kubohiroya/turbowarp-asset-manager@0.16.1
 ```
 
 Load `node_modules/@kubohiroya/turbowarp-asset-manager/dist/asset-manager.js`, or use the version-pinned CDN URL:
 
 ```text
-https://cdn.jsdelivr.net/npm/@kubohiroya/turbowarp-asset-manager@0.16.0/dist/asset-manager.js
+https://cdn.jsdelivr.net/npm/@kubohiroya/turbowarp-asset-manager@0.16.1/dist/asset-manager.js
 ```
 
 ## Quick Start
@@ -128,3 +128,8 @@ The npm package archive must include README, LICENSE, the Standalone bundle, the
 ## License
 
 SPDX-License-Identifier: MPL-2.0
+
+
+## 固定入力の編集
+
+既定OFFの固定入力フォームと既存データの保持規則は[固定入力エディターの契約](docs/fixed-input-editors.ja.md)を参照してください。

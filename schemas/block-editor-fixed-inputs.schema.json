@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kubohiroya.github.io/turbowarp-asset-manager/schemas/block-editor-fixed-inputs.schema.json",
+  "$defs": {
+    "setTextStyle": {
+      "type": "object",
+      "properties": {
+        "PROPERTY": {"type": "string", "enum": ["animation", "font", "color", "width", "align"]},
+        "VALUE": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "animation": {"type": "string", "enum": ["", "none", "type", "rainbow", "zoom", "shake"]},
+    "font": {"type": "string"},
+    "color": {"type": "string", "pattern": "^(?:|#[0-9a-fA-F]{3}|#[0-9a-fA-F]{6})$"},
+    "width": {"type": "string", "$comment": "Empty/trimmed empty resets; otherwise normalizeTextStyleValue requires Number(value) finite and positive. Preserve the existing STRING grammar, including hexadecimal and leading plus."},
+    "align": {"type": "string", "enum": ["", "left", "center", "right"]},
+    "loadingCostumeAt": {
+      "type": "object",
+      "properties": {"INDEX": {"type": "number"}},
+      "additionalProperties": false
+    }
+  }
+}
