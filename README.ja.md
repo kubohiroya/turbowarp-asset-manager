@@ -1,5 +1,7 @@
 # TurboWarp-Asset-Manager
 
+<img src="assets/block-icon.svg" alt="" width="48" height="48">
+
 [English](README.md)
 
 > [!WARNING]

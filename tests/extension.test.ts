@@ -518,9 +518,8 @@ describe('project-local assets', () => {
     const svg = decodeURIComponent(BLOCK_ICON_URI.slice('data:image/svg+xml,'.length));
 
     expect(info.blockIconURI).toBe(BLOCK_ICON_URI);
-    expect(svg).toContain('viewBox="0 0 64 64"');
-    expect(svg).toContain('M19 47 29 17h7l10 30');
-    expect(svg).not.toContain('<rect');
+    expect(svg).toContain('viewBox="0 0 48 48"');
+    expect(svg).toContain('M14 20h12l3 3h7v12');
   });
 
   it('validates project asset addresses without registration side effects', () => {
