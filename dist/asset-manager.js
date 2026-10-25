@@ -1414,7 +1414,7 @@
   var EXTENSION_ID = "kubohiroyaassetmanager";
   var EXTENSION_VERSION = "0.14.0";
   var EXTENSION_DOCS_URI = "https://kubohiroya.github.io/turbowarp-asset-manager/";
-  var BLOCK_ICON_URI = `data:image/svg+xml,${encodeURIComponent("<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 64 64\"><path fill=\"#fff\" d=\"M19 47 29 17h7l10 30h-7l-2-7H27l-2 7h-6Zm10-13h6l-3-10-3 10Z\"/></svg>")}`;
+  var BLOCK_ICON_URI = `data:image/svg+xml,${encodeURIComponent("<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 48 48\"><rect x=\"4\" y=\"8\" width=\"40\" height=\"32\" rx=\"6\" fill=\"#9AA6B8\"/><path d=\"M14 20h12l3 3h7v12a2 2 0 0 1-2 2H14a2 2 0 0 1-2-2V22a2 2 0 0 1 2-2z\" fill=\"#fff\"/><path d=\"M24 17v8M21 22l3 3 3-3\" fill=\"none\" stroke=\"#9AA6B8\" stroke-width=\"2.6\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg>")}`;
   var DB_NAME = "tw-asset-manager";
   var DB_VERSION = 1;
   var STORE_NAME = "assets";
