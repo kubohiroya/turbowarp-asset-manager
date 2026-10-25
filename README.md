@@ -1,5 +1,7 @@
 # TurboWarp-Asset-Manager
 
+[日本語](README.ja.md)
+
 > [!WARNING]
 > This package is deprecated. Use
 > [`@kubohiroya/turbowarp-asset-cache`](https://github.com/kubohiroya/turbowarp-asset-cache)
