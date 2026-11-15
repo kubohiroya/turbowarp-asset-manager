@@ -240,6 +240,32 @@ describe('optional registration and lifetime', () => {
     const failed = fixedInputRegistration({gui: {blockEditors: {apiVersion: 1, registerFixedInputEditor() {if (++count === 2) throw Error('fail'); return undo;}}}});
     expect(() => failed.ensure(fixedInputEditors.flatMap(d => d.opcodes))).toThrow('fail');expect(undo).toHaveBeenCalledOnce();
   });
+  it('registers the same editors again after each project load until the owner disposes', () => {
+    // vm.loadProject disposes the runtime but keeps the extension loaded.
+    const removes: Array<ReturnType<typeof vi.fn>> = [];
+    const register = vi.fn(() => {const remove = vi.fn();removes.push(remove);return remove;});
+    const listeners = new Map<string, Set<() => void>>();
+    const runtime = {
+      on: (event: string, listener: () => void) => {if (!listeners.has(event)) listeners.set(event, new Set());listeners.get(event)!.add(listener);},
+      off: (event: string, listener: () => void) => listeners.get(event)?.delete(listener)
+    };
+    const emit = (event: string) => {for (const listener of [...listeners.get(event) ?? []]) listener();};
+    const registration = fixedInputRegistration({gui: {blockEditors: {apiVersion: 1, registerFixedInputEditor: register}}, vm: {runtime}});
+    registration.ensure(fixedInputEditors.flatMap(d => d.opcodes));
+    const first = register.mock.calls.map(call => (call as unknown[])[0]);
+    expect(first).toHaveLength(fixedInputEditors.length);
+    emit('RUNTIME_DISPOSED');
+    expect(removes.every(remove => remove.mock.calls.length === 1)).toBe(true);
+    emit('PROJECT_LOADED');
+    expect(register.mock.calls.slice(first.length).map(call => (call as unknown[])[0])).toEqual(first);
+    emit('PROJECT_LOADED');registration.ensure(fixedInputEditors.flatMap(d => d.opcodes));
+    expect(register).toHaveBeenCalledTimes(first.length * 2);
+    registration.dispose();
+    expect(removes.every(remove => remove.mock.calls.length === 1)).toBe(true);
+    expect(listeners.get('RUNTIME_DISPOSED')?.size ?? 0).toBe(0);expect(listeners.get('PROJECT_LOADED')?.size ?? 0).toBe(0);
+    emit('RUNTIME_DISPOSED');emit('PROJECT_LOADED');
+    expect(register).toHaveBeenCalledTimes(first.length * 2);
+  });
   it('registers only after getInfo, preserves all metadata and supports API replacement without duplication', () => {
     const remove = vi.fn();const register = vi.fn(() => remove);const runtime = {renderer: {}, targets: [], on: vi.fn(), off: vi.fn()};
     const host = {gui: {blockEditors: {apiVersion: 1, registerFixedInputEditor: register}}, vm: {runtime},
