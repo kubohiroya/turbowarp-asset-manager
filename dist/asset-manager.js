@@ -366,40 +366,68 @@
       }
     }]
   }];
-  /** Per-instance, idempotent registration. Legacy hosts never acquire the fixed capability. */
+  /**
+  * Per-instance, idempotent registration. Legacy hosts never acquire the fixed capability.
+  * Loading a project disposes the runtime but keeps this extension loaded, so RUNTIME_DISPOSED only
+  * releases the editors until the next PROJECT_LOADED; the owner's dispose is final.
+  */
   function fixedInputRegistration(scratch) {
     const host = typeof scratch === "object" && scratch !== null ? scratch : {};
     let active;
-    let removers = [];
+    const removers = [];
     let disposed = false;
-    const dispose = () => {
-      host.vm?.runtime?.off?.("RUNTIME_DISPOSED", shutdown);
+    let released = false;
+    let listening = false;
+    let lastOpcodes;
+    const unregister = () => {
       for (const remove of removers.splice(0).reverse()) remove();
       active = void 0;
     };
+    const releaseForRuntimeDispose = () => {
+      if (disposed || active === void 0) return;
+      unregister();
+      released = true;
+    };
+    const restoreAfterProjectLoad = () => {
+      if (disposed || !released || lastOpcodes === void 0) return;
+      released = false;
+      ensure(lastOpcodes);
+    };
+    function ensure(opcodes) {
+      const api = host.gui?.blockEditors;
+      if (disposed || api === active) return;
+      unregister();
+      if (api?.apiVersion !== 1 || typeof api.registerFixedInputEditor !== "function") return;
+      lastOpcodes = opcodes;
+      released = false;
+      try {
+        for (const definition of fixedInputEditors) if (definition.opcodes.every((opcode) => opcodes.includes(opcode))) {
+          const remove = api.registerFixedInputEditor.call(api, definition);
+          if (typeof remove !== "function") throw new TypeError("Invalid fixed registration cleanup.");
+          removers.push(remove);
+        }
+        active = api;
+        if (!listening) {
+          listening = true;
+          host.vm?.runtime?.on?.("RUNTIME_DISPOSED", releaseForRuntimeDispose);
+          host.vm?.runtime?.on?.("PROJECT_LOADED", restoreAfterProjectLoad);
+        }
+      } catch (error) {
+        unregister();
+        throw error;
+      }
+    }
     const shutdown = () => {
       disposed = true;
-      dispose();
+      if (listening) {
+        listening = false;
+        host.vm?.runtime?.off?.("RUNTIME_DISPOSED", releaseForRuntimeDispose);
+        host.vm?.runtime?.off?.("PROJECT_LOADED", restoreAfterProjectLoad);
+      }
+      unregister();
     };
     return {
-      ensure(opcodes) {
-        const api = host.gui?.blockEditors;
-        if (disposed || api === active) return;
-        dispose();
-        if (api?.apiVersion !== 1 || typeof api.registerFixedInputEditor !== "function") return;
-        try {
-          for (const definition of fixedInputEditors) if (definition.opcodes.every((opcode) => opcodes.includes(opcode))) {
-            const remove = api.registerFixedInputEditor.call(api, definition);
-            if (typeof remove !== "function") throw new TypeError("Invalid fixed registration cleanup.");
-            removers.push(remove);
-          }
-          active = api;
-          host.vm?.runtime?.on?.("RUNTIME_DISPOSED", shutdown);
-        } catch (error) {
-          dispose();
-          throw error;
-        }
-      },
+      ensure,
       dispose: shutdown
     };
   }
