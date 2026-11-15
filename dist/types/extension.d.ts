@@ -118,9 +118,8 @@ export declare class AssetManagerExtension {
     private listeningForNamedBodyLifecycle;
     private listeningForDOMImageLifecycle;
     private readonly releaseAllDOMImageResourcesForLifecycle;
-    private readonly releaseDOMImageResourcesForRuntimeDispose;
     private readonly releaseNamedBodySnapshotsForLifecycle;
-    private readonly unregisterNamedBodyProviderForRuntimeDispose;
+    private readonly unregisterNamedBodyProvider;
     private readonly fixedEditors;
     constructor(featureFlags?: AssetManagerFeatureFlags);
     setLoadingBackdrop(args: BlockArgs): void;
@@ -139,7 +138,10 @@ export declare class AssetManagerExtension {
         color3: string;
         blocks: Record<string, unknown>[];
     };
-    /** Release only this optional editor registration; runtime data remains unchanged. */
+    /**
+     * Final teardown of this extension instance. Loading a project emits RUNTIME_DISPOSED but keeps
+     * the extension loaded, so that event only releases per-project state; registrations end here.
+     */
     dispose(): void;
     /**
      * Exposes the stock extension registry through a host-neutral DOM image

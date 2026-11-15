@@ -453,7 +453,8 @@ describe('project-local assets', () => {
       .mockImplementationOnce(() => 'blob:portrait-2')
       .mockImplementationOnce(() => 'blob:portrait-3')
       .mockImplementationOnce(() => 'blob:portrait-4')
-      .mockImplementationOnce(() => 'blob:portrait-5');
+      .mockImplementationOnce(() => 'blob:portrait-5')
+      .mockImplementationOnce(() => 'blob:portrait-6');
     const revokeObjectURL = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
     const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
     await extension.registerEmbeddedAsset({
@@ -492,13 +493,18 @@ describe('project-local assets', () => {
     emitRuntime('PROJECT_LOADED');
     expect(beforeReload.released).toBe(true);
 
-    const beforeDispose = await capability.resolveDOMImageResource('Portrait');
+    const beforeRuntimeDispose = await capability.resolveDOMImageResource('Portrait');
     emitRuntime('RUNTIME_DISPOSED');
+    expect(beforeRuntimeDispose.released).toBe(true);
+    expect(runtimeListeners.get('PROJECT_STOP_ALL')?.size ?? 0).toBeGreaterThan(0);
+
+    const beforeDispose = await capability.resolveDOMImageResource('Portrait');
+    extension.dispose();
     expect(beforeDispose.released).toBe(true);
     expect(runtimeListeners.get('PROJECT_STOP_ALL')?.size ?? 0).toBe(0);
     expect(runtimeListeners.get('PROJECT_LOADED')?.size ?? 0).toBe(0);
     expect(runtimeListeners.get('RUNTIME_DISPOSED')?.size ?? 0).toBe(0);
-    expect(revokeObjectURL).toHaveBeenCalledTimes(5);
+    expect(revokeObjectURL).toHaveBeenCalledTimes(6);
 
     createObjectURL.mockRestore();
     revokeObjectURL.mockRestore();
