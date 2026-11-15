@@ -858,14 +858,10 @@ export class AssetManagerExtension {
   private readonly releaseAllDOMImageResourcesForLifecycle = (): void => {
     this.releaseAllDOMImageResources();
   };
-  private readonly releaseDOMImageResourcesForRuntimeDispose = (): void => {
-    this.releaseAllDOMImageResources();
-    this.stopListeningForDOMImageLifecycle();
-  };
   private readonly releaseNamedBodySnapshotsForLifecycle = (): void => {
     this.releaseOpenNamedBodySnapshots();
   };
-  private readonly unregisterNamedBodyProviderForRuntimeDispose = (): void => {
+  private readonly unregisterNamedBodyProvider = (): void => {
     void this.namedBodyProviderValue?.release('shutdown');
     void this.namedBodyProviderRegistration?.unregister();
     this.namedBodyProviderRegistration = undefined;
@@ -981,9 +977,15 @@ export class AssetManagerExtension {
     };
   }
 
-  /** Release only this optional editor registration; runtime data remains unchanged. */
+  /**
+   * Final teardown of this extension instance. Loading a project emits RUNTIME_DISPOSED but keeps
+   * the extension loaded, so that event only releases per-project state; registrations end here.
+   */
   dispose(): void {
     this.fixedEditors.dispose();
+    this.unregisterNamedBodyProvider();
+    this.releaseAllDOMImageResources();
+    this.stopListeningForDOMImageLifecycle();
   }
 
   /**
@@ -2428,7 +2430,7 @@ export class AssetManagerExtension {
     this.listeningForDOMImageLifecycle = true;
     this.runtime.on('PROJECT_STOP_ALL', this.releaseAllDOMImageResourcesForLifecycle);
     this.runtime.on('PROJECT_LOADED', this.releaseAllDOMImageResourcesForLifecycle);
-    this.runtime.on('RUNTIME_DISPOSED', this.releaseDOMImageResourcesForRuntimeDispose);
+    this.runtime.on('RUNTIME_DISPOSED', this.releaseAllDOMImageResourcesForLifecycle);
   }
 
   private stopListeningForDOMImageLifecycle(): void {
@@ -2436,7 +2438,7 @@ export class AssetManagerExtension {
     this.listeningForDOMImageLifecycle = false;
     this.runtime.off('PROJECT_STOP_ALL', this.releaseAllDOMImageResourcesForLifecycle);
     this.runtime.off('PROJECT_LOADED', this.releaseAllDOMImageResourcesForLifecycle);
-    this.runtime.off('RUNTIME_DISPOSED', this.releaseDOMImageResourcesForRuntimeDispose);
+    this.runtime.off('RUNTIME_DISPOSED', this.releaseAllDOMImageResourcesForLifecycle);
   }
 
   private createNamedBodyProvider(): NamedAssetBodyProvider {
@@ -2598,7 +2600,7 @@ export class AssetManagerExtension {
     this.listeningForNamedBodyLifecycle = true;
     this.runtime.on('PROJECT_STOP_ALL', this.releaseNamedBodySnapshotsForLifecycle);
     this.runtime.on('PROJECT_LOADED', this.releaseNamedBodySnapshotsForLifecycle);
-    this.runtime.on('RUNTIME_DISPOSED', this.unregisterNamedBodyProviderForRuntimeDispose);
+    this.runtime.on('RUNTIME_DISPOSED', this.releaseNamedBodySnapshotsForLifecycle);
   }
 
   private stopListeningForNamedBodyLifecycle(): void {
@@ -2606,7 +2608,7 @@ export class AssetManagerExtension {
     this.listeningForNamedBodyLifecycle = false;
     this.runtime.off('PROJECT_STOP_ALL', this.releaseNamedBodySnapshotsForLifecycle);
     this.runtime.off('PROJECT_LOADED', this.releaseNamedBodySnapshotsForLifecycle);
-    this.runtime.off('RUNTIME_DISPOSED', this.unregisterNamedBodyProviderForRuntimeDispose);
+    this.runtime.off('RUNTIME_DISPOSED', this.releaseNamedBodySnapshotsForLifecycle);
   }
 
   private async ensureExternalAssetSkin(asset: ExternalMemoryAsset, name: string): Promise<number> {
